@@ -93,7 +93,7 @@ for _ in range(height):
     rows.append(row)
     previous = row
 
-pixels = []
+rgba_pixels = []
 
 for row in rows:
     for x in range(width):
@@ -109,19 +109,43 @@ for row in rows:
             offset = x * 4
             r, g, b, alpha = row[offset:offset + 4]
 
-        if alpha < 255:
-            r = (r * alpha + 127) // 255
-            g = (g * alpha + 127) // 255
-            b = (b * alpha + 127) // 255
+        rgba_pixels.append((r, g, b, alpha))
 
-        pixels.append(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3))
+def flatten_to_rgb565(src, bg):
+    bg_r, bg_g, bg_b = bg
+    dst = []
+    for r, g, b, alpha in src:
+        if alpha < 255:
+            inverse = 255 - alpha
+            r = (r * alpha + bg_r * inverse + 127) // 255
+            g = (g * alpha + bg_g * inverse + 127) // 255
+            b = (b * alpha + bg_b * inverse + 127) // 255
+        dst.append(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3))
+    return dst
+
+def resize_nearest(src, src_w, src_h, dst_w, dst_h):
+    dst = []
+    for y in range(dst_h):
+        src_y = min(src_h - 1, (y * src_h + dst_h // 2) // dst_h)
+        for x in range(dst_w):
+            src_x = min(src_w - 1, (x * src_w + dst_w // 2) // dst_w)
+            dst.append(src[src_y * src_w + src_x])
+    return dst
+
+pixels = flatten_to_rgb565(rgba_pixels, (0x00, 0x00, 0x00))
+header_width = 96
+header_height = max(1, round(height * header_width / width))
+header_rgba_pixels = resize_nearest(rgba_pixels, width, height, header_width, header_height)
+header_pixels = flatten_to_rgb565(header_rgba_pixels, (0x11, 0x18, 0x21))
 
 target.parent.mkdir(parents=True, exist_ok=True)
 
-pixel_values = [f"0x{pixel:04X}" for pixel in pixels]
-lines = []
-for i in range(0, len(pixel_values), 10):
-    lines.append("  " + ", ".join(pixel_values[i:i + 10]) + ",")
+def format_pixels(values):
+    formatted = [f"0x{pixel:04X}" for pixel in values]
+    result = []
+    for i in range(0, len(formatted), 10):
+        result.append("  " + ", ".join(formatted[i:i + 10]) + ",")
+    return chr(10).join(result)
 
 content = f"""#pragma once
 
@@ -139,9 +163,16 @@ content = f"""#pragma once
 constexpr uint32_t kWledLogoWidth = {width};
 constexpr uint32_t kWledLogoHeight = {height};
 constexpr size_t kWledLogoPixelCount = {len(pixels)};
+constexpr uint32_t kWledLogoHeaderWidth = {header_width};
+constexpr uint32_t kWledLogoHeaderHeight = {header_height};
+constexpr size_t kWledLogoHeaderPixelCount = {len(header_pixels)};
 
 const uint16_t kWledLogoPixels[] PROGMEM = {{
-{chr(10).join(lines)}
+{format_pixels(pixels)}
+}};
+
+const uint16_t kWledLogoHeaderPixels[] PROGMEM = {{
+{format_pixels(header_pixels)}
 }};
 """
 
