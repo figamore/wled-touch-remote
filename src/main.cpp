@@ -192,34 +192,34 @@ void applyPendingStatus() {
 
   switch (code) {
     case StatusCode::kBoot:
-      setStatusDirect("boot", lv_color_hex(0xD8A84F));
+      setStatusDirect("boot", lv_color_hex(0x38BDF8));
       break;
     case StatusCode::kOffline:
-      setStatusDirect("offline", lv_color_hex(0xD85D5D));
+      setStatusDirect("offline", lv_color_hex(0xF87171));
       break;
     case StatusCode::kSent:
-      setStatusDirect("sent", lv_color_hex(0x6BCB9B));
+      setStatusDirect("sent", lv_color_hex(0x34D399));
       break;
     case StatusCode::kOk:
-      setStatusDirect("ok", lv_color_hex(0x6BCB9B));
+      setStatusDirect("ok", lv_color_hex(0x34D399));
       break;
     case StatusCode::kNoAck:
-      setStatusDirect("no ack", lv_color_hex(0xD8A84F));
+      setStatusDirect("no ack", lv_color_hex(0xA78BFA));
       break;
     case StatusCode::kSendError:
-      setStatusDirect("send err", lv_color_hex(0xD85D5D));
+      setStatusDirect("send err", lv_color_hex(0xF87171));
       break;
     case StatusCode::kEspFail:
-      setStatusDirect("esp fail", lv_color_hex(0xD85D5D));
+      setStatusDirect("esp fail", lv_color_hex(0xF87171));
       break;
     case StatusCode::kPeerError:
-      setStatusDirect("peer err", lv_color_hex(0xD85D5D));
+      setStatusDirect("peer err", lv_color_hex(0xF87171));
       break;
     case StatusCode::kBroadcast:
-      setStatusDirect("broadcast", lv_color_hex(0x6BCB9B));
+      setStatusDirect("broadcast", lv_color_hex(0x34D399));
       break;
     case StatusCode::kReady:
-      setStatusDirect("ready", lv_color_hex(0x6BCB9B));
+      setStatusDirect("ready", lv_color_hex(0x34D399));
       break;
   }
 }
@@ -475,7 +475,7 @@ void createInfoTab(lv_obj_t* tab) {
   lv_obj_set_width(mac_label, LV_PCT(100));
   lv_obj_set_style_text_align(mac_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_font(mac_label, &lv_font_montserrat_18, LV_PART_MAIN);
-  lv_obj_set_style_text_color(mac_label, lv_color_hex(0xF6C85F), LV_PART_MAIN);
+  lv_obj_set_style_text_color(mac_label, lv_color_hex(0x38BDF8), LV_PART_MAIN);
 
   lv_obj_t* hint = lv_label_create(panel);
   lv_label_set_text(hint, "Enter this in WLED Hardware MAC");
@@ -495,11 +495,11 @@ void createInfoTab(lv_obj_t* tab) {
 
 void initStyles() {
   lv_style_init(&style_screen);
-  lv_style_set_bg_color(&style_screen, lv_color_hex(0x101114));
-  lv_style_set_text_color(&style_screen, lv_color_hex(0xF4F0E7));
+  lv_style_set_bg_color(&style_screen, lv_color_hex(0x0B1014));
+  lv_style_set_text_color(&style_screen, lv_color_hex(0xEAF2F8));
 
   lv_style_init(&style_topbar);
-  lv_style_set_bg_color(&style_topbar, lv_color_hex(0x17191E));
+  lv_style_set_bg_color(&style_topbar, lv_color_hex(0x111821));
   lv_style_set_bg_opa(&style_topbar, LV_OPA_COVER);
   lv_style_set_border_width(&style_topbar, 0);
   lv_style_set_radius(&style_topbar, 0);
@@ -507,41 +507,42 @@ void initStyles() {
   lv_style_set_pad_right(&style_topbar, 10);
 
   lv_style_init(&style_panel);
-  lv_style_set_bg_color(&style_panel, lv_color_hex(0x1D2026));
+  lv_style_set_bg_color(&style_panel, lv_color_hex(0x18212B));
   lv_style_set_bg_opa(&style_panel, LV_OPA_COVER);
   lv_style_set_border_width(&style_panel, 1);
-  lv_style_set_border_color(&style_panel, lv_color_hex(0x30343B));
+  lv_style_set_border_color(&style_panel, lv_color_hex(0x263342));
   lv_style_set_radius(&style_panel, 8);
 
   lv_style_init(&style_label_muted);
-  lv_style_set_text_color(&style_label_muted, lv_color_hex(0xAAA79F));
+  lv_style_set_text_color(&style_label_muted, lv_color_hex(0x8FA3B8));
   lv_style_set_text_font(&style_label_muted, &lv_font_montserrat_12);
 
   lv_style_init(&style_button);
-  lv_style_set_bg_color(&style_button, lv_color_hex(0x2B3037));
+  lv_style_set_bg_color(&style_button, lv_color_hex(0x22303C));
   lv_style_set_bg_opa(&style_button, LV_OPA_COVER);
   lv_style_set_border_width(&style_button, 1);
-  lv_style_set_border_color(&style_button, lv_color_hex(0x3B424B));
+  lv_style_set_border_color(&style_button, lv_color_hex(0x344556));
   lv_style_set_radius(&style_button, 7);
   lv_style_set_shadow_width(&style_button, 0);
-  lv_style_set_text_color(&style_button, lv_color_hex(0xF4F0E7));
+  lv_style_set_text_color(&style_button, lv_color_hex(0xEAF2F8));
 
   lv_style_init(&style_button_checked);
-  lv_style_set_bg_color(&style_button_checked, lv_color_hex(0xF6C85F));
-  lv_style_set_text_color(&style_button_checked, lv_color_hex(0x101114));
+  lv_style_set_bg_color(&style_button_checked, lv_color_hex(0x0F766E));
+  lv_style_set_border_color(&style_button_checked, lv_color_hex(0x2DD4BF));
+  lv_style_set_text_color(&style_button_checked, lv_color_hex(0xFFFFFF));
 
   lv_style_init(&style_slider);
-  lv_style_set_bg_color(&style_slider, lv_color_hex(0x343A43));
+  lv_style_set_bg_color(&style_slider, lv_color_hex(0x2A3846));
   lv_style_set_bg_opa(&style_slider, LV_OPA_COVER);
   lv_style_set_radius(&style_slider, 4);
 
   lv_style_init(&style_slider_indicator);
-  lv_style_set_bg_color(&style_slider_indicator, lv_color_hex(0xF6C85F));
+  lv_style_set_bg_color(&style_slider_indicator, lv_color_hex(0x38BDF8));
   lv_style_set_radius(&style_slider_indicator, 4);
 
   lv_style_init(&style_knob);
-  lv_style_set_bg_color(&style_knob, lv_color_hex(0xF4F0E7));
-  lv_style_set_border_color(&style_knob, lv_color_hex(0xF6C85F));
+  lv_style_set_bg_color(&style_knob, lv_color_hex(0xEAF2F8));
+  lv_style_set_border_color(&style_knob, lv_color_hex(0x38BDF8));
   lv_style_set_border_width(&style_knob, 2);
   lv_style_set_pad_all(&style_knob, 4);
 }
@@ -568,7 +569,7 @@ void createUi() {
   lv_obj_t* title = lv_label_create(topbar);
   lv_label_set_text(title, "WLED NOW");
   lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(0xF6C85F), LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(0x38BDF8), LV_PART_MAIN);
 
   lv_obj_t* status = lv_obj_create(topbar);
   lv_obj_remove_style_all(status);
@@ -582,26 +583,26 @@ void createUi() {
   lv_obj_set_size(status_dot, 9, 9);
   lv_obj_set_style_radius(status_dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(status_dot, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(status_dot, lv_color_hex(0xD8A84F), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(status_dot, lv_color_hex(0x38BDF8), LV_PART_MAIN);
 
   status_label = lv_label_create(status);
   lv_label_set_text(status_label, "boot");
   lv_obj_set_style_text_font(status_label, &lv_font_montserrat_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(status_label, lv_color_hex(0xD9D4C9), LV_PART_MAIN);
+  lv_obj_set_style_text_color(status_label, lv_color_hex(0xCBD5E1), LV_PART_MAIN);
 
   lv_obj_t* tabs = lv_tabview_create(root, LV_DIR_TOP, 30);
   lv_obj_set_size(tabs, LV_PCT(100), kScreenHeight - 34);
-  lv_obj_set_style_bg_color(tabs, lv_color_hex(0x101114), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(tabs, lv_color_hex(0x0B1014), LV_PART_MAIN);
   lv_obj_set_style_border_width(tabs, 0, LV_PART_MAIN);
 
   lv_obj_t* tab_btns = lv_tabview_get_tab_btns(tabs);
-  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x17191E), LV_PART_MAIN);
-  lv_obj_set_style_text_color(tab_btns, lv_color_hex(0xCFC8BA), LV_PART_MAIN);
-  lv_obj_set_style_text_color(tab_btns, lv_color_hex(0x101114), LV_PART_ITEMS | LV_STATE_CHECKED);
-  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0xF6C85F), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x111821), LV_PART_MAIN);
+  lv_obj_set_style_text_color(tab_btns, lv_color_hex(0x9DB3C7), LV_PART_MAIN);
+  lv_obj_set_style_text_color(tab_btns, lv_color_hex(0xFFFFFF), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x2563EB), LV_PART_ITEMS | LV_STATE_CHECKED);
 
   lv_obj_t* live = lv_tabview_add_tab(tabs, "Live");
-  lv_obj_t* looks = lv_tabview_add_tab(tabs, "Looks");
+  lv_obj_t* looks = lv_tabview_add_tab(tabs, "Presets");
   lv_obj_t* info = lv_tabview_add_tab(tabs, "Info");
 
   createLiveTab(live);
