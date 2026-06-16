@@ -180,6 +180,12 @@ lv_style_t style_slider;
 lv_style_t style_slider_indicator;
 lv_style_t style_knob;
 
+const lv_img_dsc_t kHeaderLogoImage = {
+    {LV_IMG_CF_TRUE_COLOR, 0, 0, kWledLogoHeaderWidth, kWledLogoHeaderHeight},
+    kWledLogoHeaderPixelCount * sizeof(kWledLogoHeaderPixels[0]),
+    reinterpret_cast<const uint8_t*>(kWledLogoHeaderPixels),
+};
+
 void setStatusDirect(const char* text, lv_color_t color) {
   if (status_label) {
     lv_label_set_text(status_label, text);
@@ -764,10 +770,9 @@ void createUi() {
   lv_obj_set_flex_align(topbar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_scrollbar_mode(topbar, LV_SCROLLBAR_MODE_OFF);
 
-  lv_obj_t* title = lv_label_create(topbar);
-  lv_label_set_text(title, "WLED NOW");
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(0x38BDF8), LV_PART_MAIN);
+  lv_obj_t* title = lv_img_create(topbar);
+  lv_img_set_src(title, &kHeaderLogoImage);
+  lv_obj_set_size(title, kWledLogoHeaderWidth, kWledLogoHeaderHeight);
 
   lv_obj_t* status = lv_obj_create(topbar);
   lv_obj_remove_style_all(status);
