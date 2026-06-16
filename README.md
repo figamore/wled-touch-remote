@@ -1,6 +1,6 @@
 # WLED CYD ESP-NOW Remote
 
-Elegant LVGL + LovyanGFX firmware for the capacitive Cheap Yellow Display ESP32-2432S028C. It gives you a touch remote for power, brightness, color, presets, effects, palettes, speed, and intensity, then sends native WLED ESP-NOW remote packets.
+Elegant LVGL + LovyanGFX firmware for the capacitive Cheap Yellow Display ESP32-2432S028C. It gives you a touch remote for WLED's built-in ESP-NOW actions: power, brightness slider control, and presets 1-7.
 
 ## Configure
 
@@ -9,7 +9,6 @@ Edit `include/app_config.h` if needed:
 - `CYD_PANEL_TYPE` / `CYD_TOUCH_TYPE`: default to the tested capacitive CYD profile, `ST7789 + CST816S`.
 - `CYD_BACKLIGHT_INVERT`: flip this from `0` to `1` if serial boot works and the profile is right but the screen is black.
 - `CYD_TFT_*` and `CYD_TOUCH_*`: display and touch pins for clone boards.
-- `WLED_ESPNOW_PROTOCOL`: defaults to `WLED_PROTOCOL_WIZMOTE`, which is WLED's native ESP-NOW remote support.
 - `WLED_WIZMOTE_SCAN_CHANNELS`: broadcasts across channels 1 through 13 by default.
 
 ## WLED Pairing
@@ -22,7 +21,7 @@ WLED's built-in ESP-NOW support is WizMote-style button-code based. In WLED:
 4. Tap a control.
 5. Copy the `Last Seen` MAC into the `Hardware MAC` field and save.
 
-Default WLED behavior supports power, brightness, and presets 1-4. For the extra CYD controls, upload `docs/remote.json` to WLED using `/edit`.
+Default WLED behavior supports power, brightness up/down, and presets 1-7. The brightness slider translates movement into native WLED brightness step packets.
 
 ## Build and Upload
 

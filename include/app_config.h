@@ -34,20 +34,10 @@
 
 #define UI_DISPLAY_SELF_TEST_MS 1200
 
-// WLED's built-in ESP-NOW remote support expects WizMote-style button packets,
-// not JSON state packets. Keep this as the default for normal WLED.
-#define WLED_PROTOCOL_WIZMOTE 1
-#define WLED_PROTOCOL_JSON_BRIDGE 2
-#define WLED_ESPNOW_PROTOCOL WLED_PROTOCOL_WIZMOTE
-
 // WizMote remotes broadcast across channels so WLED can receive them whether it
 // is on Wi-Fi, AP mode, or a different channel. Set to 0 to use only the channel below.
 #define WLED_WIZMOTE_SCAN_CHANNELS 1
 #define WLED_ESPNOW_CHANNEL 1
-
-// Only used in JSON bridge mode.
-#define WLED_ESPNOW_PEER_MAC { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }
-#define WLED_SEND_RAW_JSON 1
 
 #define UI_IDLE_BRIGHTNESS 72
 #define UI_ACTIVE_BRIGHTNESS 255
