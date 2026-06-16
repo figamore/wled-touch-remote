@@ -32,7 +32,7 @@
 #define CYD_TOUCH_I2C_PORT 0
 #define CYD_TOUCH_OFFSET_ROTATION 0
 
-#define UI_DISPLAY_SELF_TEST_MS 1200
+#define UI_SPLASH_MS 2000
 
 // WizMote remotes broadcast across channels so WLED can receive them whether it
 // is on Wi-Fi, AP mode, or a different channel. Set to 0 to use only the channel below.

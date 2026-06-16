@@ -33,6 +33,8 @@ pio run -e esp32-cyd-capacitive -t upload
 pio device monitor -b 115200
 ```
 
+The startup logo is converted from `wled.png` into an RGB565 bitmap at build time. A display-sized PNG, around 320 pixels wide, avoids runtime scaling artifacts.
+
 ## Hardware Notes
 
 The default display config targets the tested capacitive CYD layout:
@@ -42,4 +44,4 @@ The default display config targets the tested capacitive CYD layout:
 
 Some CYD sellers swap panels and touch controllers. If your board is the other common capacitive style, set `CYD_PANEL_TYPE` to `CYD_PANEL_ILI9341`, `CYD_TOUCH_TYPE` to `CYD_TOUCH_FT5X06`, `CYD_TFT_BL` to `21`, `CYD_TOUCH_INT` to `36`, `CYD_TOUCH_ADDR` to `0x38`, and `CYD_TOUCH_I2C_PORT` to `1`.
 
-On every boot the firmware paints red, green, and blue before LVGL starts. If serial shows `Display self-test: color bars` but the panel stays black, change `CYD_BACKLIGHT_INVERT` first. If the backlight is on but there are no color bars, the LCD pinout or driver profile does not match your board.
+On every boot the firmware shows `wled.png` for two seconds before LVGL starts. If the serial log reaches `Display splash: WLED logo` but the panel stays black, change `CYD_BACKLIGHT_INVERT` first. If the backlight is on but there is no logo or fallback text, the LCD pinout or driver profile does not match your board.
