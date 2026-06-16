@@ -26,9 +26,10 @@ These work with WLED's built-in WizMote behavior:
 - `2`: off
 - `8`: brightness down
 - `9`: brightness up
-- `16` through `19`: presets 1 through 4
+- `16` through `22`: presets 1 through 7
+- `100` through `103`: WIZ Smart Button duplicates for on, off, brightness up, and brightness down
 
-The display also sends stable custom button codes for richer UI controls. Add a `remote.json` file to WLED if you want those custom codes to run exact JSON commands.
+The stock UI sends the non-duplicate native button codes WLED handles without a `/remote.json` file.
 
 ## Packet Shape
 
@@ -50,7 +51,3 @@ struct WizMotePacket {
 ```
 
 The firmware broadcasts each button packet across channels 1 through 13 by default, matching the behavior of common WLED ESP-NOW remotes.
-
-## JSON Bridge Mode
-
-`include/app_config.h` still has a `WLED_PROTOCOL_JSON_BRIDGE` mode for a custom bridge or usermod that receives raw WLED JSON over ESP-NOW. Stock WLED ESP-NOW remote support does not use that JSON transport.
