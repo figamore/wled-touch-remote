@@ -4,6 +4,7 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <lvgl.h>
+#include <Preferences.h>
 
 #include "app_config.h"
 
@@ -19,6 +20,9 @@ constexpr uint8_t kWizMoteButtonBrightUp = 9;
 constexpr uint8_t kWizMoteButtonOne = 16;
 constexpr uint8_t kWizMotePresetCount = 7;
 constexpr uint8_t kBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+constexpr const char* kPrefsNamespace = "wled-cyd";
+constexpr const char* kPrefsFlipKey = "flip";
+constexpr const char* kPrefsIdleOffKey = "idleOff";
 
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Bus_SPI bus_;
@@ -147,6 +151,9 @@ lv_color_t draw_buf_2[kScreenWidth * kLvglBufferLines];
 RemoteState state;
 uint32_t sequence_id = 0;
 bool espnow_ready = false;
+bool display_flipped = false;
+bool idle_display_off = false;
+bool display_idle_applied = false;
 uint32_t last_touch_ms = 0;
 volatile bool pending_status = false;
 volatile uint8_t pending_status_code = static_cast<uint8_t>(StatusCode::kBoot);
@@ -157,6 +164,9 @@ lv_obj_t* power_button = nullptr;
 lv_obj_t* power_button_label = nullptr;
 lv_obj_t* brightness_label = nullptr;
 lv_obj_t* mac_label = nullptr;
+lv_obj_t* settings_dialog = nullptr;
+lv_obj_t* orientation_label = nullptr;
+lv_obj_t* idle_label = nullptr;
 
 lv_style_t style_screen;
 lv_style_t style_topbar;
@@ -226,7 +236,32 @@ void applyPendingStatus() {
 
 void touchActivity() {
   last_touch_ms = millis();
+  display_idle_applied = false;
   gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
+}
+
+void applyDisplayRotation() {
+  gfx.setRotation(display_flipped ? 3 : 1);
+}
+
+void loadSettings() {
+  Preferences prefs;
+  if (prefs.begin(kPrefsNamespace, true)) {
+    display_flipped = prefs.getBool(kPrefsFlipKey, false);
+    idle_display_off = prefs.getBool(kPrefsIdleOffKey, false);
+    prefs.end();
+  }
+  Serial.printf("Display orientation: %s\n", display_flipped ? "flipped" : "normal");
+  Serial.printf("Display idle action: %s\n", idle_display_off ? "off" : "dim");
+}
+
+void saveSettings() {
+  Preferences prefs;
+  if (prefs.begin(kPrefsNamespace, false)) {
+    prefs.putBool(kPrefsFlipKey, display_flipped);
+    prefs.putBool(kPrefsIdleOffKey, idle_display_off);
+    prefs.end();
+  }
 }
 
 void flushDisplay(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_p) {
@@ -347,6 +382,43 @@ void onPing(lv_event_t*) {
   sendWizMoteButton(kWizMoteButtonOn);
 }
 
+void closeSettingsDialog(lv_event_t*) {
+  if (settings_dialog) {
+    lv_obj_del(settings_dialog);
+    settings_dialog = nullptr;
+    orientation_label = nullptr;
+    idle_label = nullptr;
+  }
+}
+
+void updateOrientationLabel() {
+  if (orientation_label) {
+    lv_label_set_text(orientation_label, display_flipped ? "Orientation: Flipped" : "Orientation: Normal");
+  }
+}
+
+void updateIdleLabel() {
+  if (idle_label) {
+    lv_label_set_text(idle_label, idle_display_off ? "Inactivity: Display Off" : "Inactivity: Dim");
+  }
+}
+
+void onFlipDisplay(lv_event_t*) {
+  display_flipped = !display_flipped;
+  saveSettings();
+  applyDisplayRotation();
+  gfx.fillScreen(TFT_BLACK);
+  updateOrientationLabel();
+  lv_obj_invalidate(lv_scr_act());
+}
+
+void onToggleIdleAction(lv_event_t*) {
+  idle_display_off = !idle_display_off;
+  saveSettings();
+  updateIdleLabel();
+  touchActivity();
+}
+
 void addLabel(lv_obj_t* parent, const char* text, lv_coord_t width = LV_SIZE_CONTENT) {
   lv_obj_t* label = lv_label_create(parent);
   lv_label_set_text(label, text);
@@ -359,6 +431,68 @@ lv_obj_t* createPanel(lv_obj_t* parent) {
   lv_obj_add_style(panel, &style_panel, LV_PART_MAIN);
   lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
   return panel;
+}
+
+void openSettingsDialog(lv_event_t*) {
+  if (settings_dialog) {
+    return;
+  }
+
+  settings_dialog = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(settings_dialog);
+  lv_obj_set_size(settings_dialog, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(settings_dialog, lv_color_hex(0x020617), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(settings_dialog, LV_OPA_70, LV_PART_MAIN);
+
+  lv_obj_t* panel = createPanel(settings_dialog);
+  lv_obj_set_size(panel, 280, 186);
+  lv_obj_center(panel);
+  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
+
+  lv_obj_t* title = lv_label_create(panel);
+  lv_label_set_text(title, "Settings");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
+
+  orientation_label = lv_label_create(panel);
+  lv_obj_add_style(orientation_label, &style_label_muted, LV_PART_MAIN);
+  updateOrientationLabel();
+
+  idle_label = lv_label_create(panel);
+  lv_obj_add_style(idle_label, &style_label_muted, LV_PART_MAIN);
+  updateIdleLabel();
+
+  lv_obj_t* row_one = lv_obj_create(panel);
+  lv_obj_remove_style_all(row_one);
+  lv_obj_set_size(row_one, LV_PCT(100), 38);
+  lv_obj_set_flex_flow(row_one, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row_one, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t* flip = lv_btn_create(row_one);
+  lv_obj_add_style(flip, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(flip, 118, 34);
+  lv_obj_add_event_cb(flip, onFlipDisplay, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* flip_label = lv_label_create(flip);
+  lv_label_set_text(flip_label, "Flip");
+  lv_obj_center(flip_label);
+
+  lv_obj_t* idle = lv_btn_create(row_one);
+  lv_obj_add_style(idle, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(idle, 118, 34);
+  lv_obj_add_event_cb(idle, onToggleIdleAction, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* idle_button_label = lv_label_create(idle);
+  lv_label_set_text(idle_button_label, "Idle Mode");
+  lv_obj_center(idle_button_label);
+
+  lv_obj_t* close = lv_btn_create(panel);
+  lv_obj_add_style(close, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(close, LV_PCT(100), 34);
+  lv_obj_add_event_cb(close, closeSettingsDialog, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* close_label = lv_label_create(close);
+  lv_label_set_text(close_label, "Close");
+  lv_obj_center(close_label);
 }
 
 lv_obj_t* createSlider(lv_obj_t* parent,
@@ -483,7 +617,13 @@ void createInfoTab(lv_obj_t* tab) {
   lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_add_style(hint, &style_label_muted, LV_PART_MAIN);
 
-  lv_obj_t* ping = lv_btn_create(panel);
+  lv_obj_t* actions = lv_obj_create(panel);
+  lv_obj_remove_style_all(actions);
+  lv_obj_set_size(actions, LV_PCT(100), 38);
+  lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t* ping = lv_btn_create(actions);
   lv_obj_add_style(ping, &style_button, LV_PART_MAIN);
   lv_obj_set_size(ping, 118, 34);
   lv_obj_add_event_cb(ping, onPing, LV_EVENT_CLICKED, nullptr);
@@ -491,6 +631,15 @@ void createInfoTab(lv_obj_t* tab) {
   lv_obj_t* label = lv_label_create(ping);
   lv_label_set_text(label, "Ping WLED");
   lv_obj_center(label);
+
+  lv_obj_t* settings = lv_btn_create(actions);
+  lv_obj_add_style(settings, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(settings, 118, 34);
+  lv_obj_add_event_cb(settings, openSettingsDialog, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* settings_label = lv_label_create(settings);
+  lv_label_set_text(settings_label, "Settings");
+  lv_obj_center(settings_label);
 }
 
 void initStyles() {
@@ -694,7 +843,7 @@ void initDisplay() {
                 CYD_TOUCH_I2C_PORT);
   const bool display_ok = gfx.init();
   Serial.printf("Display init: %s\n", display_ok ? "ok" : "failed");
-  gfx.setRotation(1);
+  applyDisplayRotation();
   gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
 
 #if UI_DISPLAY_SELF_TEST_MS > 0
@@ -734,6 +883,7 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
+  loadSettings();
   initDisplay();
   createUi();
   initEspNow();
@@ -747,8 +897,9 @@ void loop() {
   last_tick_ms = now;
   lv_tick_inc(elapsed);
 
-  if (now - last_touch_ms > UI_DIM_AFTER_MS) {
-    gfx.setBrightness(UI_IDLE_BRIGHTNESS);
+  if (!display_idle_applied && now - last_touch_ms > UI_DIM_AFTER_MS) {
+    display_idle_applied = true;
+    gfx.setBrightness(idle_display_off ? 0 : UI_IDLE_BRIGHTNESS);
   }
 
   applyPendingStatus();

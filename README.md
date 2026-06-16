@@ -23,6 +23,8 @@ WLED's built-in ESP-NOW support is WizMote-style button-code based. In WLED:
 
 Default WLED behavior supports power, brightness up/down, and presets 1-7. The brightness slider translates movement into native WLED brightness step packets.
 
+The Info tab shows the ESP-NOW MAC address and includes Settings, where the display orientation can be flipped and the inactivity action can be set to dim or turn the display off. Settings are saved in ESP32 NVS and restored after reboot.
+
 ## Build and Upload
 
 ```sh
