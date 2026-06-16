@@ -553,15 +553,20 @@ lv_obj_t* createSlider(lv_obj_t* parent,
   lv_obj_t* row = lv_obj_create(parent);
   lv_obj_remove_style_all(row);
   lv_obj_set_width(row, LV_PCT(100));
-  lv_obj_set_height(row, 30);
+  lv_obj_set_height(row, 38);
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_left(row, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_column(row, 8, LV_PART_MAIN);
+  lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
 
   lv_obj_t* slider = lv_slider_create(row);
   lv_slider_set_range(slider, min, max);
   lv_slider_set_value(slider, value, LV_ANIM_OFF);
-  lv_obj_set_size(slider, 190, 8);
+  lv_obj_set_size(slider, 190, 12);
+  lv_obj_add_flag(slider, LV_OBJ_FLAG_PRESS_LOCK);
+  lv_obj_clear_flag(slider, LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
   lv_obj_add_style(slider, &style_slider, LV_PART_MAIN);
   lv_obj_add_style(slider, &style_slider_indicator, LV_PART_INDICATOR);
   lv_obj_add_style(slider, &style_knob, LV_PART_KNOB);
@@ -569,6 +574,7 @@ lv_obj_t* createSlider(lv_obj_t* parent,
 
   *value_label = lv_label_create(row);
   lv_obj_set_width(*value_label, 34);
+  lv_obj_clear_flag(*value_label, LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
   lv_label_set_text_fmt(*value_label, "%d", value);
   lv_obj_set_style_text_align(*value_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
 
