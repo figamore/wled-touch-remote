@@ -7,6 +7,7 @@
 #include <Preferences.h>
 
 #include "app_config.h"
+#include "generated/wled_logo_png.h"
 
 namespace {
 
@@ -242,6 +243,33 @@ void touchActivity() {
 
 void applyDisplayRotation() {
   gfx.setRotation(display_flipped ? 3 : 1);
+}
+
+void drawSplash() {
+  gfx.fillScreen(TFT_BLACK);
+
+  const bool can_draw_logo = kWledLogoPixelCount == kWledLogoWidth * kWledLogoHeight &&
+                             kWledLogoWidth <= kScreenWidth &&
+                             kWledLogoHeight <= kScreenHeight;
+  if (can_draw_logo) {
+    const int32_t x = (kScreenWidth - kWledLogoWidth) / 2;
+    const int32_t y = (kScreenHeight - kWledLogoHeight) / 2;
+    gfx.pushImage(x,
+                  y,
+                  kWledLogoWidth,
+                  kWledLogoHeight,
+                  reinterpret_cast<const lgfx::rgb565_t*>(kWledLogoPixels));
+  }
+
+  if (!can_draw_logo) {
+    gfx.setTextColor(TFT_WHITE, TFT_BLACK);
+    gfx.setTextDatum(middle_center);
+    gfx.setTextSize(3);
+    gfx.drawString("WLED", kScreenWidth / 2, kScreenHeight / 2);
+  }
+
+  delay(UI_SPLASH_MS);
+  gfx.fillScreen(TFT_BLACK);
 }
 
 void loadSettings() {
@@ -570,15 +598,28 @@ void createLooksTab(lv_obj_t* tab) {
 
   addLabel(panel, "Presets");
 
-  lv_obj_t* grid = lv_obj_create(panel);
-  lv_obj_remove_style_all(grid);
-  lv_obj_set_size(grid, LV_PCT(100), 96);
-  lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-  lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(grid, 8, LV_PART_MAIN);
+  lv_obj_t* rows = lv_obj_create(panel);
+  lv_obj_remove_style_all(rows);
+  lv_obj_set_size(rows, LV_PCT(100), 88);
+  lv_obj_set_flex_flow(rows, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(rows, 10, LV_PART_MAIN);
+
+  lv_obj_t* row_one = lv_obj_create(rows);
+  lv_obj_remove_style_all(row_one);
+  lv_obj_set_size(row_one, LV_PCT(100), 38);
+  lv_obj_set_flex_flow(row_one, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row_one, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t* row_two = lv_obj_create(rows);
+  lv_obj_remove_style_all(row_two);
+  lv_obj_set_size(row_two, LV_PCT(100), 38);
+  lv_obj_set_flex_flow(row_two, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row_two, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(row_two, 8, LV_PART_MAIN);
 
   for (uintptr_t i = 1; i <= kWizMotePresetCount; ++i) {
-    lv_obj_t* btn = lv_btn_create(grid);
+    lv_obj_t* parent = i <= 4 ? row_one : row_two;
+    lv_obj_t* btn = lv_btn_create(parent);
     lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
     lv_obj_set_size(btn, 64, 38);
     lv_obj_add_event_cb(btn, onPreset, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
@@ -846,15 +887,9 @@ void initDisplay() {
   applyDisplayRotation();
   gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
 
-#if UI_DISPLAY_SELF_TEST_MS > 0
-  Serial.println("Display self-test: color bars");
-  gfx.fillScreen(TFT_RED);
-  delay(UI_DISPLAY_SELF_TEST_MS / 3);
-  gfx.fillScreen(TFT_GREEN);
-  delay(UI_DISPLAY_SELF_TEST_MS / 3);
-  gfx.fillScreen(TFT_BLUE);
-  delay(UI_DISPLAY_SELF_TEST_MS / 3);
-  gfx.fillScreen(TFT_BLACK);
+#if UI_SPLASH_MS > 0
+  Serial.println("Display splash: WLED logo");
+  drawSplash();
 #endif
 
   lv_init();
