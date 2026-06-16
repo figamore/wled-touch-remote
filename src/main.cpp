@@ -153,6 +153,8 @@ volatile uint8_t pending_status_code = static_cast<uint8_t>(StatusCode::kBoot);
 
 lv_obj_t* status_label = nullptr;
 lv_obj_t* status_dot = nullptr;
+lv_obj_t* power_button = nullptr;
+lv_obj_t* power_button_label = nullptr;
 lv_obj_t* brightness_label = nullptr;
 lv_obj_t* mac_label = nullptr;
 
@@ -314,7 +316,16 @@ void sendPreset(uint8_t preset) {
 }
 
 void onPower(lv_event_t* event) {
-  state.power = lv_obj_has_state(lv_event_get_target(event), LV_STATE_CHECKED);
+  state.power = !state.power;
+  lv_obj_t* target = lv_event_get_target(event);
+  if (state.power) {
+    lv_obj_add_state(target, LV_STATE_CHECKED);
+  } else {
+    lv_obj_clear_state(target, LV_STATE_CHECKED);
+  }
+  if (power_button_label) {
+    lv_label_set_text(power_button_label, state.power ? "Power On" : "Power Off");
+  }
   sendPower(state.power);
 }
 
@@ -393,20 +404,18 @@ void createLiveTab(lv_obj_t* tab) {
   lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 12, LV_PART_MAIN);
 
-  lv_obj_t* top = lv_obj_create(panel);
-  lv_obj_remove_style_all(top);
-  lv_obj_set_size(top, LV_PCT(100), 28);
-  lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(top, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  power_button = lv_btn_create(panel);
+  lv_obj_add_style(power_button, &style_button, LV_PART_MAIN);
+  lv_obj_add_style(power_button, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
+  lv_obj_set_size(power_button, LV_PCT(100), 50);
+  lv_obj_add_flag(power_button, LV_OBJ_FLAG_CHECKABLE);
+  lv_obj_add_state(power_button, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(power_button, onPower, LV_EVENT_CLICKED, nullptr);
 
-  lv_obj_t* power_label = lv_label_create(top);
-  lv_label_set_text(power_label, "Power");
-  lv_obj_set_style_text_font(power_label, &lv_font_montserrat_18, LV_PART_MAIN);
-
-  lv_obj_t* power = lv_switch_create(top);
-  lv_obj_set_size(power, 54, 28);
-  lv_obj_add_state(power, LV_STATE_CHECKED);
-  lv_obj_add_event_cb(power, onPower, LV_EVENT_VALUE_CHANGED, nullptr);
+  power_button_label = lv_label_create(power_button);
+  lv_label_set_text(power_button_label, "Power On");
+  lv_obj_set_style_text_font(power_button_label, &lv_font_montserrat_18, LV_PART_MAIN);
+  lv_obj_center(power_button_label);
 
   addLabel(panel, "Brightness");
   createSlider(panel, 1, 255, state.brightness, onBrightness, &brightness_label);
