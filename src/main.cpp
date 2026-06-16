@@ -377,6 +377,20 @@ void sendPower(bool power) {
   sendWizMoteButton(power ? kWizMoteButtonOn : kWizMoteButtonOff);
 }
 
+void setPowerUi(bool power) {
+  state.power = power;
+  if (power_button) {
+    if (state.power) {
+      lv_obj_add_state(power_button, LV_STATE_CHECKED);
+    } else {
+      lv_obj_clear_state(power_button, LV_STATE_CHECKED);
+    }
+  }
+  if (power_button_label) {
+    lv_label_set_text(power_button_label, state.power ? "Power On" : "Power Off");
+  }
+}
+
 void sendBrightnessDelta(int delta) {
   const uint8_t button = delta > 0 ? kWizMoteButtonBrightUp : kWizMoteButtonBrightDown;
   const uint8_t repeats = min<uint8_t>(6, max<uint8_t>(1, abs(delta) / 25));
@@ -394,16 +408,7 @@ void sendPreset(uint8_t preset) {
 }
 
 void onPower(lv_event_t* event) {
-  state.power = !state.power;
-  lv_obj_t* target = lv_event_get_target(event);
-  if (state.power) {
-    lv_obj_add_state(target, LV_STATE_CHECKED);
-  } else {
-    lv_obj_clear_state(target, LV_STATE_CHECKED);
-  }
-  if (power_button_label) {
-    lv_label_set_text(power_button_label, state.power ? "Power On" : "Power Off");
-  }
+  setPowerUi(!state.power);
   sendPower(state.power);
 }
 
@@ -419,6 +424,7 @@ void onBrightness(lv_event_t* event) {
 void onPreset(lv_event_t* event) {
   const uintptr_t preset = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
   sendPreset(static_cast<uint8_t>(preset));
+  setPowerUi(true);
 }
 
 void onPing(lv_event_t*) {
