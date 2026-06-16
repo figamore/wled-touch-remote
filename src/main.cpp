@@ -127,8 +127,8 @@ struct WizMotePacket {
 } __attribute__((packed));
 
 struct RemoteState {
-  bool power = true;
-  uint8_t brightness = 180;
+  bool power = false;
+  uint8_t brightness = 255;
 };
 
 enum class StatusCode : uint8_t {
@@ -155,6 +155,7 @@ bool espnow_ready = false;
 bool display_flipped = false;
 bool idle_display_off = false;
 bool display_idle_applied = false;
+bool suppress_touch_until_release = false;
 uint32_t last_touch_ms = 0;
 volatile bool pending_status = false;
 volatile uint8_t pending_status_code = static_cast<uint8_t>(StatusCode::kBoot);
@@ -308,11 +309,19 @@ void readTouch(lv_indev_drv_t*, lv_indev_data_t* data) {
   uint16_t x = 0;
   uint16_t y = 0;
   if (gfx.getTouch(&x, &y)) {
+    if (display_idle_applied || suppress_touch_until_release) {
+      suppress_touch_until_release = true;
+      data->state = LV_INDEV_STATE_REL;
+      touchActivity();
+      return;
+    }
+
     data->state = LV_INDEV_STATE_PR;
     data->point.x = x;
     data->point.y = y;
     touchActivity();
   } else {
+    suppress_touch_until_release = false;
     data->state = LV_INDEV_STATE_REL;
   }
 }
@@ -571,11 +580,10 @@ void createLiveTab(lv_obj_t* tab) {
   lv_obj_add_style(power_button, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
   lv_obj_set_size(power_button, LV_PCT(100), 50);
   lv_obj_add_flag(power_button, LV_OBJ_FLAG_CHECKABLE);
-  lv_obj_add_state(power_button, LV_STATE_CHECKED);
   lv_obj_add_event_cb(power_button, onPower, LV_EVENT_CLICKED, nullptr);
 
   power_button_label = lv_label_create(power_button);
-  lv_label_set_text(power_button_label, "Power On");
+  lv_label_set_text(power_button_label, "Power Off");
   lv_obj_set_style_text_font(power_button_label, &lv_font_montserrat_18, LV_PART_MAIN);
   lv_obj_center(power_button_label);
 
@@ -791,7 +799,7 @@ void createUi() {
   lv_obj_set_style_text_color(tab_btns, lv_color_hex(0xFFFFFF), LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x2563EB), LV_PART_ITEMS | LV_STATE_CHECKED);
 
-  lv_obj_t* live = lv_tabview_add_tab(tabs, "Live");
+  lv_obj_t* live = lv_tabview_add_tab(tabs, "Power");
   lv_obj_t* looks = lv_tabview_add_tab(tabs, "Presets");
   lv_obj_t* info = lv_tabview_add_tab(tabs, "Info");
 
