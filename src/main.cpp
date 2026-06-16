@@ -1,0 +1,1017 @@
+#include <Arduino.h>
+#include <LovyanGFX.hpp>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
+#include <lvgl.h>
+
+#include "app_config.h"
+
+namespace {
+
+constexpr int kScreenWidth = 320;
+constexpr int kScreenHeight = 240;
+constexpr size_t kLvglBufferLines = 20;
+constexpr uint32_t kStateCoalesceMs = 90;
+constexpr uint8_t kPacketVersion = 1;
+constexpr uint8_t kPacketTypeJson = 1;
+constexpr uint8_t kWizMoteButtonOn = 1;
+constexpr uint8_t kWizMoteButtonOff = 2;
+constexpr uint8_t kWizMoteButtonBrightDown = 8;
+constexpr uint8_t kWizMoteButtonBrightUp = 9;
+constexpr uint8_t kWizMoteButtonOne = 16;
+constexpr uint8_t kCustomButtonFxDown = 24;
+constexpr uint8_t kCustomButtonFxUp = 25;
+constexpr uint8_t kCustomButtonPaletteDown = 26;
+constexpr uint8_t kCustomButtonPaletteUp = 27;
+constexpr uint8_t kCustomButtonSpeedDown = 28;
+constexpr uint8_t kCustomButtonSpeedUp = 29;
+constexpr uint8_t kCustomButtonIntensityDown = 30;
+constexpr uint8_t kCustomButtonIntensityUp = 31;
+constexpr uint8_t kCustomButtonColorBase = 32;
+constexpr uint8_t kBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+class LGFX : public lgfx::LGFX_Device {
+  lgfx::Bus_SPI bus_;
+  lgfx::Light_PWM light_;
+#if CYD_PANEL_TYPE == CYD_PANEL_ST7789
+  lgfx::Panel_ST7789 panel_;
+#else
+  lgfx::Panel_ILI9341 panel_;
+#endif
+#if CYD_TOUCH_TYPE == CYD_TOUCH_CST816S
+  lgfx::Touch_CST816S touch_;
+#else
+  lgfx::Touch_FT5x06 touch_;
+#endif
+
+ public:
+  LGFX() {
+    {
+      auto cfg = bus_.config();
+      cfg.spi_host = HSPI_HOST;
+      cfg.spi_mode = 0;
+      cfg.freq_write = 55000000;
+      cfg.freq_read = 16000000;
+      cfg.spi_3wire = false;
+      cfg.use_lock = true;
+      cfg.dma_channel = SPI_DMA_CH_AUTO;
+      cfg.pin_sclk = CYD_TFT_SCLK;
+      cfg.pin_mosi = CYD_TFT_MOSI;
+      cfg.pin_miso = CYD_TFT_MISO;
+      cfg.pin_dc = CYD_TFT_DC;
+      bus_.config(cfg);
+      panel_.setBus(&bus_);
+    }
+
+    {
+      auto cfg = panel_.config();
+      cfg.pin_cs = CYD_TFT_CS;
+      cfg.pin_rst = CYD_TFT_RST;
+      cfg.pin_busy = -1;
+      cfg.panel_width = 240;
+      cfg.panel_height = 320;
+      cfg.memory_width = 240;
+      cfg.memory_height = 320;
+      cfg.offset_x = 0;
+      cfg.offset_y = 0;
+      cfg.offset_rotation = CYD_PANEL_OFFSET_ROTATION;
+      cfg.dummy_read_pixel = 8;
+      cfg.dummy_read_bits = 1;
+      cfg.readable = true;
+      cfg.invert = CYD_PANEL_INVERT;
+      cfg.rgb_order = CYD_PANEL_RGB_ORDER;
+      cfg.dlen_16bit = false;
+      cfg.bus_shared = false;
+      panel_.config(cfg);
+    }
+
+    {
+      auto cfg = light_.config();
+      cfg.pin_bl = CYD_TFT_BL;
+      cfg.invert = CYD_BACKLIGHT_INVERT;
+      cfg.freq = 44100;
+      cfg.pwm_channel = 7;
+      light_.config(cfg);
+      panel_.setLight(&light_);
+    }
+
+    {
+      auto cfg = touch_.config();
+      cfg.x_min = 0;
+      cfg.x_max = 240;
+      cfg.y_min = 0;
+      cfg.y_max = 320;
+      cfg.pin_int = CYD_TOUCH_INT;
+      cfg.pin_rst = CYD_TOUCH_RST;
+      cfg.bus_shared = false;
+      cfg.offset_rotation = CYD_TOUCH_OFFSET_ROTATION;
+      cfg.i2c_port = CYD_TOUCH_I2C_PORT;
+      cfg.i2c_addr = CYD_TOUCH_ADDR;
+      cfg.pin_sda = CYD_TOUCH_SDA;
+      cfg.pin_scl = CYD_TOUCH_SCL;
+      cfg.freq = 400000;
+      touch_.config(cfg);
+      panel_.setTouch(&touch_);
+    }
+
+    setPanel(&panel_);
+  }
+};
+
+struct WledNowPacket {
+  char magic[4];
+  uint8_t version;
+  uint8_t type;
+  uint16_t sequence;
+  char json[220];
+};
+
+struct WizMotePacket {
+  uint8_t program;
+  uint8_t seq[4];
+  uint8_t dt1;
+  uint8_t button;
+  uint8_t dt2;
+  uint8_t batLevel;
+  uint8_t byte10;
+  uint8_t byte11;
+  uint8_t byte12;
+  uint8_t byte13;
+} __attribute__((packed));
+
+struct Rgb {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+};
+
+struct ColorAction {
+  Rgb color;
+  uint8_t button;
+};
+
+struct RemoteState {
+  bool power = true;
+  uint8_t brightness = 180;
+  uint8_t effect = 0;
+  uint8_t palette = 0;
+  uint8_t speed = 128;
+  uint8_t intensity = 128;
+  Rgb color = {255, 190, 82};
+};
+
+enum class StatusCode : uint8_t {
+  kBoot,
+  kOffline,
+  kSent,
+  kOk,
+  kNoAck,
+  kSendError,
+  kEspFail,
+  kPeerError,
+  kBroadcast,
+  kReady,
+};
+
+LGFX gfx;
+lv_disp_draw_buf_t draw_buf;
+lv_color_t draw_buf_1[kScreenWidth * kLvglBufferLines];
+lv_color_t draw_buf_2[kScreenWidth * kLvglBufferLines];
+
+RemoteState state;
+uint8_t peer_mac[] = WLED_ESPNOW_PEER_MAC;
+uint32_t sequence_id = 0;
+bool espnow_ready = false;
+bool state_dirty = false;
+uint32_t state_due_ms = 0;
+uint32_t last_touch_ms = 0;
+volatile bool pending_status = false;
+volatile uint8_t pending_status_code = static_cast<uint8_t>(StatusCode::kBoot);
+
+lv_obj_t* status_label = nullptr;
+lv_obj_t* status_dot = nullptr;
+lv_obj_t* brightness_label = nullptr;
+lv_obj_t* effect_label = nullptr;
+lv_obj_t* palette_label = nullptr;
+lv_obj_t* speed_label = nullptr;
+lv_obj_t* intensity_label = nullptr;
+lv_obj_t* color_chip = nullptr;
+lv_obj_t* mac_label = nullptr;
+
+lv_style_t style_screen;
+lv_style_t style_topbar;
+lv_style_t style_panel;
+lv_style_t style_label_muted;
+lv_style_t style_button;
+lv_style_t style_button_checked;
+lv_style_t style_slider;
+lv_style_t style_slider_indicator;
+lv_style_t style_knob;
+
+uint32_t rgbToHex(const Rgb& c) {
+  return (static_cast<uint32_t>(c.r) << 16) | (static_cast<uint32_t>(c.g) << 8) | c.b;
+}
+
+bool isBroadcastPeer() {
+  for (uint8_t b : peer_mac) {
+    if (b != 0xFF) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void setStatusDirect(const char* text, lv_color_t color) {
+  if (status_label) {
+    lv_label_set_text(status_label, text);
+  }
+  if (status_dot) {
+    lv_obj_set_style_bg_color(status_dot, color, LV_PART_MAIN);
+  }
+}
+
+void requestStatus(StatusCode code) {
+  pending_status_code = static_cast<uint8_t>(code);
+  pending_status = true;
+}
+
+void applyPendingStatus() {
+  if (!pending_status) {
+    return;
+  }
+
+  const auto code = static_cast<StatusCode>(pending_status_code);
+  pending_status = false;
+
+  switch (code) {
+    case StatusCode::kBoot:
+      setStatusDirect("boot", lv_color_hex(0xD8A84F));
+      break;
+    case StatusCode::kOffline:
+      setStatusDirect("offline", lv_color_hex(0xD85D5D));
+      break;
+    case StatusCode::kSent:
+      setStatusDirect("sent", lv_color_hex(0x6BCB9B));
+      break;
+    case StatusCode::kOk:
+      setStatusDirect("ok", lv_color_hex(0x6BCB9B));
+      break;
+    case StatusCode::kNoAck:
+      setStatusDirect("no ack", lv_color_hex(0xD8A84F));
+      break;
+    case StatusCode::kSendError:
+      setStatusDirect("send err", lv_color_hex(0xD85D5D));
+      break;
+    case StatusCode::kEspFail:
+      setStatusDirect("esp fail", lv_color_hex(0xD85D5D));
+      break;
+    case StatusCode::kPeerError:
+      setStatusDirect("peer err", lv_color_hex(0xD85D5D));
+      break;
+    case StatusCode::kBroadcast:
+      setStatusDirect("broadcast", lv_color_hex(0x6BCB9B));
+      break;
+    case StatusCode::kReady:
+      setStatusDirect("ready", lv_color_hex(0x6BCB9B));
+      break;
+  }
+}
+
+void touchActivity() {
+  last_touch_ms = millis();
+  gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
+}
+
+void flushDisplay(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_p) {
+  const int32_t width = area->x2 - area->x1 + 1;
+  const int32_t height = area->y2 - area->y1 + 1;
+
+  gfx.startWrite();
+  gfx.setAddrWindow(area->x1, area->y1, width, height);
+  gfx.writePixels(reinterpret_cast<lgfx::rgb565_t*>(color_p), width * height);
+  gfx.endWrite();
+
+  lv_disp_flush_ready(disp);
+}
+
+void readTouch(lv_indev_drv_t*, lv_indev_data_t* data) {
+  uint16_t x = 0;
+  uint16_t y = 0;
+  if (gfx.getTouch(&x, &y)) {
+    data->state = LV_INDEV_STATE_PR;
+    data->point.x = x;
+    data->point.y = y;
+    touchActivity();
+  } else {
+    data->state = LV_INDEV_STATE_REL;
+  }
+}
+
+esp_err_t sendJson(const char* json) {
+  if (!espnow_ready) {
+    requestStatus(StatusCode::kOffline);
+    return ESP_ERR_INVALID_STATE;
+  }
+
+#if WLED_SEND_RAW_JSON
+  const size_t len = strnlen(json, 240) + 1;
+  esp_err_t result = esp_now_send(peer_mac, reinterpret_cast<const uint8_t*>(json), len);
+#else
+  WledNowPacket packet = {{'W', 'L', 'D', 'N'}, kPacketVersion, kPacketTypeJson, sequence_id++, {0}};
+  strlcpy(packet.json, json, sizeof(packet.json));
+  esp_err_t result = esp_now_send(peer_mac, reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
+#endif
+
+  if (result == ESP_OK) {
+    requestStatus(StatusCode::kSent);
+  } else {
+    requestStatus(StatusCode::kSendError);
+  }
+  return result;
+}
+
+esp_err_t sendWizMoteButton(uint8_t button_code) {
+  if (!espnow_ready) {
+    requestStatus(StatusCode::kOffline);
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  sequence_id++;
+  WizMotePacket packet = {
+      static_cast<uint8_t>(button_code == kWizMoteButtonOn ? 0x91 : 0x81),
+      {static_cast<uint8_t>(sequence_id),
+       static_cast<uint8_t>(sequence_id >> 8),
+       static_cast<uint8_t>(sequence_id >> 16),
+       static_cast<uint8_t>(sequence_id >> 24)},
+      0x20,
+      button_code,
+      0x01,
+      90,
+      0,
+      0,
+      0,
+      0,
+  };
+
+  esp_err_t last_result = ESP_OK;
+
+#if WLED_WIZMOTE_SCAN_CHANNELS
+  for (uint8_t channel = 1; channel <= 13; channel++) {
+    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    last_result = esp_now_send(kBroadcastMac, reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
+    delay(3);
+  }
+  esp_wifi_set_channel(WLED_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+#else
+  last_result = esp_now_send(kBroadcastMac, reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
+#endif
+
+  requestStatus(last_result == ESP_OK ? StatusCode::kSent : StatusCode::kSendError);
+  Serial.printf("WizMote button sent: %u result=%d\n", button_code, last_result);
+  return last_result;
+}
+
+void sendFullStateJson() {
+  char json[220];
+  snprintf(json, sizeof(json),
+           "{\"on\":%s,\"bri\":%u,\"transition\":7,"
+           "\"seg\":[{\"col\":[[%u,%u,%u]],\"fx\":%u,\"sx\":%u,\"ix\":%u,\"pal\":%u}]}",
+           state.power ? "true" : "false",
+           state.brightness,
+           state.color.r,
+           state.color.g,
+           state.color.b,
+           state.effect,
+           state.speed,
+           state.intensity,
+           state.palette);
+  sendJson(json);
+}
+
+void sendFullState() {
+#if WLED_ESPNOW_PROTOCOL == WLED_PROTOCOL_JSON_BRIDGE
+  sendFullStateJson();
+#endif
+}
+
+void sendPower(bool power) {
+#if WLED_ESPNOW_PROTOCOL == WLED_PROTOCOL_WIZMOTE
+  sendWizMoteButton(power ? kWizMoteButtonOn : kWizMoteButtonOff);
+#else
+  sendFullStateJson();
+#endif
+}
+
+void sendBrightnessDelta(int delta) {
+#if WLED_ESPNOW_PROTOCOL == WLED_PROTOCOL_WIZMOTE
+  const uint8_t button = delta > 0 ? kWizMoteButtonBrightUp : kWizMoteButtonBrightDown;
+  const uint8_t repeats = min<uint8_t>(6, max<uint8_t>(1, abs(delta) / 25));
+  for (uint8_t i = 0; i < repeats; i++) {
+    sendWizMoteButton(button);
+    delay(10);
+  }
+#else
+  sendFullStateJson();
+#endif
+}
+
+void sendPreset(uint8_t preset) {
+#if WLED_ESPNOW_PROTOCOL == WLED_PROTOCOL_WIZMOTE
+  sendWizMoteButton(kWizMoteButtonOne + preset - 1);
+#else
+  char json[32];
+  snprintf(json, sizeof(json), "{\"ps\":%u}", preset);
+  sendJson(json);
+#endif
+}
+
+void sendCustomButton(uint8_t button_code) {
+#if WLED_ESPNOW_PROTOCOL == WLED_PROTOCOL_WIZMOTE
+  sendWizMoteButton(button_code);
+#else
+  sendFullStateJson();
+#endif
+}
+
+void markStateDirty(uint32_t delay_ms = kStateCoalesceMs) {
+  state_dirty = true;
+  state_due_ms = millis() + delay_ms;
+}
+
+void updateValueLabels() {
+  if (brightness_label) {
+    lv_label_set_text_fmt(brightness_label, "%u", state.brightness);
+  }
+  if (effect_label) {
+    lv_label_set_text_fmt(effect_label, "%u", state.effect);
+  }
+  if (palette_label) {
+    lv_label_set_text_fmt(palette_label, "%u", state.palette);
+  }
+  if (speed_label) {
+    lv_label_set_text_fmt(speed_label, "%u", state.speed);
+  }
+  if (intensity_label) {
+    lv_label_set_text_fmt(intensity_label, "%u", state.intensity);
+  }
+  if (color_chip) {
+    lv_obj_set_style_bg_color(color_chip, lv_color_hex(rgbToHex(state.color)), LV_PART_MAIN);
+  }
+}
+
+void onPower(lv_event_t* event) {
+  state.power = lv_obj_has_state(lv_event_get_target(event), LV_STATE_CHECKED);
+  sendPower(state.power);
+}
+
+void onBrightness(lv_event_t* event) {
+  const uint8_t previous = state.brightness;
+  state.brightness = lv_slider_get_value(lv_event_get_target(event));
+  updateValueLabels();
+  sendBrightnessDelta(static_cast<int>(state.brightness) - previous);
+}
+
+void onEffect(lv_event_t* event) {
+  const uint8_t previous = state.effect;
+  state.effect = lv_slider_get_value(lv_event_get_target(event));
+  updateValueLabels();
+  sendCustomButton(state.effect > previous ? kCustomButtonFxUp : kCustomButtonFxDown);
+}
+
+void onPalette(lv_event_t* event) {
+  const uint8_t previous = state.palette;
+  state.palette = lv_slider_get_value(lv_event_get_target(event));
+  updateValueLabels();
+  sendCustomButton(state.palette > previous ? kCustomButtonPaletteUp : kCustomButtonPaletteDown);
+}
+
+void onSpeed(lv_event_t* event) {
+  const uint8_t previous = state.speed;
+  state.speed = lv_slider_get_value(lv_event_get_target(event));
+  updateValueLabels();
+  sendCustomButton(state.speed > previous ? kCustomButtonSpeedUp : kCustomButtonSpeedDown);
+}
+
+void onIntensity(lv_event_t* event) {
+  const uint8_t previous = state.intensity;
+  state.intensity = lv_slider_get_value(lv_event_get_target(event));
+  updateValueLabels();
+  sendCustomButton(state.intensity > previous ? kCustomButtonIntensityUp : kCustomButtonIntensityDown);
+}
+
+void onColor(lv_event_t* event) {
+  auto* action = static_cast<ColorAction*>(lv_event_get_user_data(event));
+  state.color = action->color;
+  updateValueLabels();
+  sendCustomButton(action->button);
+}
+
+void onPreset(lv_event_t* event) {
+  const uintptr_t preset = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+  sendPreset(static_cast<uint8_t>(preset));
+}
+
+void onPing(lv_event_t*) {
+  sendWizMoteButton(kWizMoteButtonOn);
+}
+
+void addLabel(lv_obj_t* parent, const char* text, lv_coord_t width = LV_SIZE_CONTENT) {
+  lv_obj_t* label = lv_label_create(parent);
+  lv_label_set_text(label, text);
+  lv_obj_add_style(label, &style_label_muted, LV_PART_MAIN);
+  lv_obj_set_width(label, width);
+}
+
+lv_obj_t* createPanel(lv_obj_t* parent) {
+  lv_obj_t* panel = lv_obj_create(parent);
+  lv_obj_add_style(panel, &style_panel, LV_PART_MAIN);
+  lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+  return panel;
+}
+
+lv_obj_t* createSlider(lv_obj_t* parent,
+                       int min,
+                       int max,
+                       int value,
+                       lv_event_cb_t cb,
+                       lv_obj_t** value_label) {
+  lv_obj_t* row = lv_obj_create(parent);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_width(row, LV_PCT(100));
+  lv_obj_set_height(row, 30);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(row, 8, LV_PART_MAIN);
+
+  lv_obj_t* slider = lv_slider_create(row);
+  lv_slider_set_range(slider, min, max);
+  lv_slider_set_value(slider, value, LV_ANIM_OFF);
+  lv_obj_set_size(slider, 190, 8);
+  lv_obj_add_style(slider, &style_slider, LV_PART_MAIN);
+  lv_obj_add_style(slider, &style_slider_indicator, LV_PART_INDICATOR);
+  lv_obj_add_style(slider, &style_knob, LV_PART_KNOB);
+  lv_obj_add_event_cb(slider, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  *value_label = lv_label_create(row);
+  lv_obj_set_width(*value_label, 34);
+  lv_label_set_text_fmt(*value_label, "%d", value);
+  lv_obj_set_style_text_align(*value_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+
+  return slider;
+}
+
+void createLiveTab(lv_obj_t* tab) {
+  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
+  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* panel = createPanel(tab);
+  lv_obj_set_size(panel, LV_PCT(100), 86);
+  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(panel, 7, LV_PART_MAIN);
+
+  lv_obj_t* top = lv_obj_create(panel);
+  lv_obj_remove_style_all(top);
+  lv_obj_set_size(top, LV_PCT(100), 28);
+  lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(top, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t* power_label = lv_label_create(top);
+  lv_label_set_text(power_label, "Power");
+  lv_obj_set_style_text_font(power_label, &lv_font_montserrat_18, LV_PART_MAIN);
+
+  lv_obj_t* power = lv_switch_create(top);
+  lv_obj_set_size(power, 54, 28);
+  lv_obj_add_state(power, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(power, onPower, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  addLabel(panel, "Brightness");
+  createSlider(panel, 1, 255, state.brightness, onBrightness, &brightness_label);
+
+  lv_obj_t* color_panel = createPanel(tab);
+  lv_obj_set_size(color_panel, LV_PCT(100), 88);
+  lv_obj_set_flex_flow(color_panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(color_panel, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(color_panel, 8, LV_PART_MAIN);
+
+  lv_obj_t* color_row = lv_obj_create(color_panel);
+  lv_obj_remove_style_all(color_row);
+  lv_obj_set_size(color_row, LV_PCT(100), 26);
+  lv_obj_set_flex_flow(color_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(color_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  addLabel(color_row, "Color");
+  color_chip = lv_obj_create(color_row);
+  lv_obj_remove_style_all(color_chip);
+  lv_obj_set_size(color_chip, 38, 20);
+  lv_obj_set_style_radius(color_chip, 5, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(color_chip, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(color_chip, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(color_chip, lv_color_hex(0xECE3C5), LV_PART_MAIN);
+
+  lv_obj_t* swatches = lv_obj_create(color_panel);
+  lv_obj_remove_style_all(swatches);
+  lv_obj_set_size(swatches, LV_PCT(100), 34);
+  lv_obj_set_flex_flow(swatches, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(swatches, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  static ColorAction colors[] = {
+      {{255, 190, 82}, kCustomButtonColorBase + 0},
+      {{255, 76, 64}, kCustomButtonColorBase + 1},
+      {{68, 214, 150}, kCustomButtonColorBase + 2},
+      {{67, 157, 255}, kCustomButtonColorBase + 3},
+      {{182, 112, 255}, kCustomButtonColorBase + 4},
+      {{255, 255, 255}, kCustomButtonColorBase + 5},
+      {{255, 133, 24}, kCustomButtonColorBase + 6},
+      {{20, 225, 235}, kCustomButtonColorBase + 7}};
+
+  for (auto& action : colors) {
+    lv_obj_t* btn = lv_btn_create(swatches);
+    lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
+    lv_obj_set_size(btn, 28, 28);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(rgbToHex(action.color)), LV_PART_MAIN);
+    lv_obj_add_event_cb(btn, onColor, LV_EVENT_CLICKED, &action);
+  }
+}
+
+void createLooksTab(lv_obj_t* tab) {
+  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
+  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* panel = createPanel(tab);
+  lv_obj_set_size(panel, LV_PCT(100), 156);
+  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
+
+  addLabel(panel, "Presets");
+
+  lv_obj_t* grid = lv_obj_create(panel);
+  lv_obj_remove_style_all(grid);
+  lv_obj_set_size(grid, LV_PCT(100), 96);
+  lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(grid, 8, LV_PART_MAIN);
+
+  for (uintptr_t i = 1; i <= 8; ++i) {
+    lv_obj_t* btn = lv_btn_create(grid);
+    lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
+    lv_obj_set_size(btn, 64, 38);
+    lv_obj_add_event_cb(btn, onPreset, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
+
+    lv_obj_t* label = lv_label_create(btn);
+    lv_label_set_text_fmt(label, "%u", static_cast<unsigned>(i));
+    lv_obj_center(label);
+  }
+}
+
+void createFxTab(lv_obj_t* tab) {
+  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(tab, 7, LV_PART_MAIN);
+  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* panel = createPanel(tab);
+  lv_obj_set_size(panel, LV_PCT(100), 164);
+  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(panel, 6, LV_PART_MAIN);
+
+  addLabel(panel, "Effect");
+  createSlider(panel, 0, 187, state.effect, onEffect, &effect_label);
+  addLabel(panel, "Palette");
+  createSlider(panel, 0, 71, state.palette, onPalette, &palette_label);
+  addLabel(panel, "Speed");
+  createSlider(panel, 0, 255, state.speed, onSpeed, &speed_label);
+  addLabel(panel, "Intensity");
+  createSlider(panel, 0, 255, state.intensity, onIntensity, &intensity_label);
+}
+
+void createInfoTab(lv_obj_t* tab) {
+  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
+  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* panel = createPanel(tab);
+  lv_obj_set_size(panel, LV_PCT(100), 156);
+  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
+
+  addLabel(panel, "WLED ESP-NOW MAC");
+
+  mac_label = lv_label_create(panel);
+  lv_label_set_text(mac_label, WiFi.macAddress().c_str());
+  lv_obj_set_width(mac_label, LV_PCT(100));
+  lv_obj_set_style_text_align(mac_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_style_text_font(mac_label, &lv_font_montserrat_18, LV_PART_MAIN);
+  lv_obj_set_style_text_color(mac_label, lv_color_hex(0xF6C85F), LV_PART_MAIN);
+
+  lv_obj_t* hint = lv_label_create(panel);
+  lv_label_set_text(hint, "Enter this in WLED Hardware MAC");
+  lv_obj_set_width(hint, LV_PCT(100));
+  lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_add_style(hint, &style_label_muted, LV_PART_MAIN);
+
+  lv_obj_t* ping = lv_btn_create(panel);
+  lv_obj_add_style(ping, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(ping, 118, 34);
+  lv_obj_add_event_cb(ping, onPing, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* label = lv_label_create(ping);
+  lv_label_set_text(label, "Ping WLED");
+  lv_obj_center(label);
+}
+
+void initStyles() {
+  lv_style_init(&style_screen);
+  lv_style_set_bg_color(&style_screen, lv_color_hex(0x101114));
+  lv_style_set_text_color(&style_screen, lv_color_hex(0xF4F0E7));
+
+  lv_style_init(&style_topbar);
+  lv_style_set_bg_color(&style_topbar, lv_color_hex(0x17191E));
+  lv_style_set_bg_opa(&style_topbar, LV_OPA_COVER);
+  lv_style_set_border_width(&style_topbar, 0);
+  lv_style_set_radius(&style_topbar, 0);
+  lv_style_set_pad_left(&style_topbar, 10);
+  lv_style_set_pad_right(&style_topbar, 10);
+
+  lv_style_init(&style_panel);
+  lv_style_set_bg_color(&style_panel, lv_color_hex(0x1D2026));
+  lv_style_set_bg_opa(&style_panel, LV_OPA_COVER);
+  lv_style_set_border_width(&style_panel, 1);
+  lv_style_set_border_color(&style_panel, lv_color_hex(0x30343B));
+  lv_style_set_radius(&style_panel, 8);
+
+  lv_style_init(&style_label_muted);
+  lv_style_set_text_color(&style_label_muted, lv_color_hex(0xAAA79F));
+  lv_style_set_text_font(&style_label_muted, &lv_font_montserrat_12);
+
+  lv_style_init(&style_button);
+  lv_style_set_bg_color(&style_button, lv_color_hex(0x2B3037));
+  lv_style_set_bg_opa(&style_button, LV_OPA_COVER);
+  lv_style_set_border_width(&style_button, 1);
+  lv_style_set_border_color(&style_button, lv_color_hex(0x3B424B));
+  lv_style_set_radius(&style_button, 7);
+  lv_style_set_shadow_width(&style_button, 0);
+  lv_style_set_text_color(&style_button, lv_color_hex(0xF4F0E7));
+
+  lv_style_init(&style_button_checked);
+  lv_style_set_bg_color(&style_button_checked, lv_color_hex(0xF6C85F));
+  lv_style_set_text_color(&style_button_checked, lv_color_hex(0x101114));
+
+  lv_style_init(&style_slider);
+  lv_style_set_bg_color(&style_slider, lv_color_hex(0x343A43));
+  lv_style_set_bg_opa(&style_slider, LV_OPA_COVER);
+  lv_style_set_radius(&style_slider, 4);
+
+  lv_style_init(&style_slider_indicator);
+  lv_style_set_bg_color(&style_slider_indicator, lv_color_hex(0xF6C85F));
+  lv_style_set_radius(&style_slider_indicator, 4);
+
+  lv_style_init(&style_knob);
+  lv_style_set_bg_color(&style_knob, lv_color_hex(0xF4F0E7));
+  lv_style_set_border_color(&style_knob, lv_color_hex(0xF6C85F));
+  lv_style_set_border_width(&style_knob, 2);
+  lv_style_set_pad_all(&style_knob, 4);
+}
+
+void createUi() {
+  initStyles();
+
+  lv_obj_t* screen = lv_scr_act();
+  lv_obj_add_style(screen, &style_screen, LV_PART_MAIN);
+  lv_obj_set_scrollbar_mode(screen, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* root = lv_obj_create(screen);
+  lv_obj_remove_style_all(root);
+  lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_flex_flow(root, LV_FLEX_FLOW_COLUMN);
+
+  lv_obj_t* topbar = lv_obj_create(root);
+  lv_obj_add_style(topbar, &style_topbar, LV_PART_MAIN);
+  lv_obj_set_size(topbar, LV_PCT(100), 34);
+  lv_obj_set_flex_flow(topbar, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(topbar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_scrollbar_mode(topbar, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* title = lv_label_create(topbar);
+  lv_label_set_text(title, "WLED NOW");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(0xF6C85F), LV_PART_MAIN);
+
+  lv_obj_t* status = lv_obj_create(topbar);
+  lv_obj_remove_style_all(status);
+  lv_obj_set_size(status, 92, 22);
+  lv_obj_set_flex_flow(status, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(status, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(status, 6, LV_PART_MAIN);
+
+  status_dot = lv_obj_create(status);
+  lv_obj_remove_style_all(status_dot);
+  lv_obj_set_size(status_dot, 9, 9);
+  lv_obj_set_style_radius(status_dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(status_dot, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(status_dot, lv_color_hex(0xD8A84F), LV_PART_MAIN);
+
+  status_label = lv_label_create(status);
+  lv_label_set_text(status_label, "boot");
+  lv_obj_set_style_text_font(status_label, &lv_font_montserrat_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(status_label, lv_color_hex(0xD9D4C9), LV_PART_MAIN);
+
+  lv_obj_t* tabs = lv_tabview_create(root, LV_DIR_TOP, 30);
+  lv_obj_set_size(tabs, LV_PCT(100), kScreenHeight - 34);
+  lv_obj_set_style_bg_color(tabs, lv_color_hex(0x101114), LV_PART_MAIN);
+  lv_obj_set_style_border_width(tabs, 0, LV_PART_MAIN);
+
+  lv_obj_t* tab_btns = lv_tabview_get_tab_btns(tabs);
+  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x17191E), LV_PART_MAIN);
+  lv_obj_set_style_text_color(tab_btns, lv_color_hex(0xCFC8BA), LV_PART_MAIN);
+  lv_obj_set_style_text_color(tab_btns, lv_color_hex(0x101114), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0xF6C85F), LV_PART_ITEMS | LV_STATE_CHECKED);
+
+  lv_obj_t* live = lv_tabview_add_tab(tabs, "Live");
+  lv_obj_t* looks = lv_tabview_add_tab(tabs, "Looks");
+  lv_obj_t* fx = lv_tabview_add_tab(tabs, "FX");
+  lv_obj_t* info = lv_tabview_add_tab(tabs, "Info");
+
+  createLiveTab(live);
+  createLooksTab(looks);
+  createFxTab(fx);
+  createInfoTab(info);
+  updateValueLabels();
+}
+
+void onEspNowSent(const uint8_t*, esp_now_send_status_t status) {
+  if (status == ESP_NOW_SEND_SUCCESS) {
+    requestStatus(StatusCode::kOk);
+  } else {
+    requestStatus(StatusCode::kNoAck);
+  }
+}
+
+void initEspNow() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  if (mac_label) {
+    lv_label_set_text(mac_label, WiFi.macAddress().c_str());
+  }
+
+  esp_wifi_set_promiscuous(true);
+  esp_wifi_set_channel(WLED_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_promiscuous(false);
+
+  if (esp_now_init() != ESP_OK) {
+    espnow_ready = false;
+    requestStatus(StatusCode::kEspFail);
+    Serial.println("ESP-NOW init failed");
+    return;
+  }
+
+  esp_now_register_send_cb(onEspNowSent);
+
+  esp_now_peer_info_t peer = {};
+#if WLED_ESPNOW_PROTOCOL == WLED_PROTOCOL_WIZMOTE
+  memcpy(peer.peer_addr, kBroadcastMac, sizeof(kBroadcastMac));
+  peer.channel = 0;
+#else
+  memcpy(peer.peer_addr, peer_mac, sizeof(peer_mac));
+  peer.channel = WLED_ESPNOW_CHANNEL;
+#endif
+  peer.encrypt = false;
+  peer.ifidx = WIFI_IF_STA;
+
+  if (!esp_now_is_peer_exist(peer.peer_addr)) {
+    esp_err_t add_result = esp_now_add_peer(&peer);
+    if (add_result != ESP_OK) {
+      espnow_ready = false;
+      requestStatus(StatusCode::kPeerError);
+      Serial.printf("ESP-NOW peer add failed: %d\n", add_result);
+      return;
+    }
+  }
+
+  espnow_ready = true;
+  requestStatus(
+#if WLED_ESPNOW_PROTOCOL == WLED_PROTOCOL_WIZMOTE
+      StatusCode::kBroadcast
+#else
+      isBroadcastPeer() ? StatusCode::kBroadcast : StatusCode::kReady
+#endif
+  );
+  Serial.printf("CYD station MAC: %s\n", WiFi.macAddress().c_str());
+  Serial.printf("ESP-NOW channel: %u\n", WLED_ESPNOW_CHANNEL);
+#if WLED_ESPNOW_PROTOCOL == WLED_PROTOCOL_WIZMOTE
+  Serial.println("ESP-NOW protocol: WLED native WizMote");
+  Serial.println("Pair this MAC in WLED Config -> WiFi Setup -> ESP-NOW remote.");
+#else
+  Serial.println("ESP-NOW protocol: JSON bridge");
+#endif
+}
+
+void initDisplay() {
+  Serial.println("Display init: starting LovyanGFX");
+  Serial.printf("Display profile: panel=%s touch=%s\n",
+#if CYD_PANEL_TYPE == CYD_PANEL_ST7789
+                "ST7789",
+#else
+                "ILI9341",
+#endif
+#if CYD_TOUCH_TYPE == CYD_TOUCH_CST816S
+                "CST816S"
+#else
+                "FT5x06"
+#endif
+  );
+  Serial.printf("TFT pins: sclk=%d mosi=%d miso=%d cs=%d dc=%d rst=%d bl=%d blInvert=%d\n",
+                CYD_TFT_SCLK,
+                CYD_TFT_MOSI,
+                CYD_TFT_MISO,
+                CYD_TFT_CS,
+                CYD_TFT_DC,
+                CYD_TFT_RST,
+                CYD_TFT_BL,
+                CYD_BACKLIGHT_INVERT);
+  Serial.printf("Touch pins: sda=%d scl=%d rst=%d int=%d addr=0x%02X i2cPort=%d\n",
+                CYD_TOUCH_SDA,
+                CYD_TOUCH_SCL,
+                CYD_TOUCH_RST,
+                CYD_TOUCH_INT,
+                CYD_TOUCH_ADDR,
+                CYD_TOUCH_I2C_PORT);
+  const bool display_ok = gfx.init();
+  Serial.printf("Display init: %s\n", display_ok ? "ok" : "failed");
+  gfx.setRotation(1);
+  gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
+
+#if UI_DISPLAY_SELF_TEST_MS > 0
+  Serial.println("Display self-test: color bars");
+  gfx.fillScreen(TFT_RED);
+  delay(UI_DISPLAY_SELF_TEST_MS / 3);
+  gfx.fillScreen(TFT_GREEN);
+  delay(UI_DISPLAY_SELF_TEST_MS / 3);
+  gfx.fillScreen(TFT_BLUE);
+  delay(UI_DISPLAY_SELF_TEST_MS / 3);
+  gfx.fillScreen(TFT_BLACK);
+#endif
+
+  lv_init();
+  lv_disp_draw_buf_init(&draw_buf, draw_buf_1, draw_buf_2, kScreenWidth * kLvglBufferLines);
+
+  static lv_disp_drv_t disp_drv;
+  lv_disp_drv_init(&disp_drv);
+  disp_drv.hor_res = kScreenWidth;
+  disp_drv.ver_res = kScreenHeight;
+  disp_drv.flush_cb = flushDisplay;
+  disp_drv.draw_buf = &draw_buf;
+  lv_disp_drv_register(&disp_drv);
+
+  static lv_indev_drv_t indev_drv;
+  lv_indev_drv_init(&indev_drv);
+  indev_drv.type = LV_INDEV_TYPE_POINTER;
+  indev_drv.read_cb = readTouch;
+  lv_indev_drv_register(&indev_drv);
+}
+
+}  // namespace
+
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  initDisplay();
+  createUi();
+  initEspNow();
+  sendFullState();
+  last_touch_ms = millis();
+}
+
+void loop() {
+  static uint32_t last_tick_ms = millis();
+  const uint32_t now = millis();
+  const uint32_t elapsed = now - last_tick_ms;
+  last_tick_ms = now;
+  lv_tick_inc(elapsed);
+
+  if (state_dirty && static_cast<int32_t>(now - state_due_ms) >= 0) {
+    state_dirty = false;
+    sendFullState();
+  }
+
+  if (now - last_touch_ms > UI_DIM_AFTER_MS) {
+    gfx.setBrightness(UI_IDLE_BRIGHTNESS);
+  }
+
+  applyPendingStatus();
+  lv_timer_handler();
+  delay(5);
+}
