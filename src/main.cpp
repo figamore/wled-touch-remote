@@ -7,6 +7,7 @@
 #include <Preferences.h>
 
 #include "app_config.h"
+#include "BatteryMonitor.h"
 #include "generated/wled_logo_png.h"
 
 namespace {
@@ -169,6 +170,12 @@ lv_obj_t* mac_label = nullptr;
 lv_obj_t* settings_dialog = nullptr;
 lv_obj_t* orientation_label = nullptr;
 lv_obj_t* idle_label = nullptr;
+
+#if WLED_CYD_ENABLE_BATTERY
+lv_obj_t* battery_indicator = nullptr;
+lv_obj_t* battery_fill = nullptr;
+lv_obj_t* battery_charge = nullptr;
+#endif
 
 lv_style_t style_screen;
 lv_style_t style_topbar;
@@ -439,6 +446,100 @@ void closeSettingsDialog(lv_event_t*) {
     idle_label = nullptr;
   }
 }
+
+#if WLED_CYD_ENABLE_BATTERY
+lv_color_t batteryColor(int level) {
+  if (level >= 50) {
+    return lv_color_hex(0x22C55E);
+  }
+  if (level >= 25) {
+    return lv_color_hex(0xFACC15);
+  }
+  return lv_color_hex(0xEF4444);
+}
+
+void updateBatteryIndicator() {
+  if (!battery_indicator || !battery_fill || !battery_charge) {
+    return;
+  }
+
+  int level = batteryLevel();
+  if (level < 0) {
+    lv_obj_add_flag(battery_indicator, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+
+  lv_obj_clear_flag(battery_indicator, LV_OBJ_FLAG_HIDDEN);
+
+  int fill_w = 2;
+  if (level >= 75) {
+    fill_w = 18;
+  } else if (level >= 50) {
+    fill_w = 9;
+  } else if (level >= 25) {
+    fill_w = 4;
+  }
+
+  bool charging = batteryCharging();
+  lv_obj_set_width(battery_fill, fill_w);
+  lv_obj_set_style_bg_color(battery_fill, charging ? lv_color_hex(0x0B1014) : batteryColor(level), LV_PART_MAIN);
+
+  if (charging) {
+    lv_obj_clear_flag(battery_charge, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(battery_charge, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+void updateBatteryTimer(lv_timer_t*) {
+  updateBatteryIndicator();
+}
+
+void createBatteryIndicator(lv_obj_t* parent) {
+  if (!batteryAvailable()) {
+    return;
+  }
+
+  battery_indicator = lv_obj_create(parent);
+  lv_obj_remove_style_all(battery_indicator);
+  lv_obj_set_size(battery_indicator, 28, 18);
+  lv_obj_clear_flag(battery_indicator, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* body = lv_obj_create(battery_indicator);
+  lv_obj_remove_style_all(body);
+  lv_obj_set_size(body, 20, 13);
+  lv_obj_align(body, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_set_style_border_width(body, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(body, lv_color_hex(0xEAF2F8), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+
+  battery_fill = lv_obj_create(body);
+  lv_obj_remove_style_all(battery_fill);
+  lv_obj_set_size(battery_fill, 2, 11);
+  lv_obj_align(battery_fill, LV_ALIGN_TOP_LEFT, 1, 1);
+  lv_obj_set_style_bg_opa(battery_fill, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(battery_fill, lv_color_hex(0xEF4444), LV_PART_MAIN);
+  lv_obj_clear_flag(battery_fill, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* nub = lv_obj_create(battery_indicator);
+  lv_obj_remove_style_all(nub);
+  lv_obj_set_size(nub, 4, 7);
+  lv_obj_align(nub, LV_ALIGN_LEFT_MID, 20, 0);
+  lv_obj_set_style_bg_opa(nub, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(nub, lv_color_hex(0xEAF2F8), LV_PART_MAIN);
+  lv_obj_clear_flag(nub, LV_OBJ_FLAG_SCROLLABLE);
+
+  battery_charge = lv_label_create(battery_indicator);
+  lv_label_set_text(battery_charge, LV_SYMBOL_CHARGE);
+  lv_obj_set_style_text_font(battery_charge, &lv_font_montserrat_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(battery_charge, lv_color_hex(0x22C55E), LV_PART_MAIN);
+  lv_obj_align(battery_charge, LV_ALIGN_CENTER, -2, 0);
+
+  updateBatteryIndicator();
+  lv_timer_create(updateBatteryTimer, 1000, nullptr);
+}
+#endif
 
 void updateOrientationLabel() {
   if (orientation_label) {
@@ -788,7 +889,11 @@ void createUi() {
 
   lv_obj_t* status = lv_obj_create(topbar);
   lv_obj_remove_style_all(status);
+#if WLED_CYD_ENABLE_BATTERY
+  lv_obj_set_size(status, batteryAvailable() ? 130 : 92, 22);
+#else
   lv_obj_set_size(status, 92, 22);
+#endif
   lv_obj_set_flex_flow(status, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(status, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(status, 6, LV_PART_MAIN);
@@ -804,6 +909,10 @@ void createUi() {
   lv_label_set_text(status_label, "boot");
   lv_obj_set_style_text_font(status_label, &lv_font_montserrat_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(status_label, lv_color_hex(0xCBD5E1), LV_PART_MAIN);
+
+#if WLED_CYD_ENABLE_BATTERY
+  createBatteryIndicator(status);
+#endif
 
   lv_obj_t* tabs = lv_tabview_create(root, LV_DIR_TOP, 30);
   lv_obj_set_size(tabs, LV_PCT(100), kScreenHeight - 34);
@@ -945,6 +1054,9 @@ void setup() {
   WiFi.setSleep(false);
   loadSettings();
   initDisplay();
+#if WLED_CYD_ENABLE_BATTERY
+  initBatteryMonitor();
+#endif
   createUi();
   initEspNow();
   last_touch_ms = millis();
