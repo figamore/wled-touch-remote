@@ -31,6 +31,24 @@ constexpr const char* kPrefsIdleOffKey = "idleOff";
 constexpr const char* kPrefsIdleModeKey = "idleMode";
 constexpr const char* kPrefsExtendedKey = "extended";
 
+constexpr uint32_t kColorBg = 0x0A0E13;
+constexpr uint32_t kColorHeaderBar = 0x10171F;
+constexpr uint32_t kColorSurface = 0x161F29;
+constexpr uint32_t kColorSurfaceRaised = 0x1F2A36;
+constexpr uint32_t kColorSurfacePressed = 0x2A3947;
+constexpr uint32_t kColorBorder = 0x29384A;
+constexpr uint32_t kColorBorderStrong = 0x3A4C5E;
+constexpr uint32_t kColorText = 0xEAF2F8;
+constexpr uint32_t kColorTextMuted = 0x7E93A6;
+constexpr uint32_t kColorAccent = 0x22D3EE;
+constexpr uint32_t kColorAccentBright = 0x67E8F9;
+constexpr uint32_t kColorAccentDeep = 0x0E7490;
+constexpr uint32_t kColorSelected = 0x0F766E;
+constexpr uint32_t kColorSelectedBorder = 0x2DD4BF;
+constexpr uint32_t kColorOk = 0x34D399;
+constexpr uint32_t kColorWarn = 0xFACC15;
+constexpr uint32_t kColorDanger = 0xF87171;
+
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Bus_SPI bus_;
   lgfx::Light_PWM light_;
@@ -230,8 +248,10 @@ lv_obj_t* battery_charge = nullptr;
 lv_style_t style_screen;
 lv_style_t style_topbar;
 lv_style_t style_panel;
+lv_style_t style_section_header;
 lv_style_t style_label_muted;
 lv_style_t style_button;
+lv_style_t style_button_pressed;
 lv_style_t style_button_checked;
 lv_style_t style_slider;
 lv_style_t style_slider_indicator;
@@ -279,34 +299,34 @@ void applyPendingStatus() {
 
   switch (code) {
     case StatusCode::kBoot:
-      setStatusColor(lv_color_hex(0x38BDF8));
+      setStatusColor(lv_color_hex(kColorAccent));
       break;
     case StatusCode::kOffline:
-      setStatusColor(lv_color_hex(0xF87171));
+      setStatusColor(lv_color_hex(kColorDanger));
       break;
     case StatusCode::kSent:
-      setStatusColor(lv_color_hex(0x34D399));
+      setStatusColor(lv_color_hex(kColorOk));
       break;
     case StatusCode::kOk:
-      setStatusColor(lv_color_hex(0x34D399));
+      setStatusColor(lv_color_hex(kColorOk));
       break;
     case StatusCode::kNoAck:
       setStatusColor(lv_color_hex(0xA78BFA));
       break;
     case StatusCode::kSendError:
-      setStatusColor(lv_color_hex(0xF87171));
+      setStatusColor(lv_color_hex(kColorDanger));
       break;
     case StatusCode::kEspFail:
-      setStatusColor(lv_color_hex(0xF87171));
+      setStatusColor(lv_color_hex(kColorDanger));
       break;
     case StatusCode::kPeerError:
-      setStatusColor(lv_color_hex(0xF87171));
+      setStatusColor(lv_color_hex(kColorDanger));
       break;
     case StatusCode::kBroadcast:
-      setStatusColor(lv_color_hex(0x34D399));
+      setStatusColor(lv_color_hex(kColorOk));
       break;
     case StatusCode::kReady:
-      setStatusColor(lv_color_hex(0x34D399));
+      setStatusColor(lv_color_hex(kColorOk));
       break;
   }
 }
@@ -490,7 +510,8 @@ void setPowerUi(bool power) {
     }
   }
   if (power_button_label) {
-    lv_label_set_text(power_button_label, state.power ? "Power On" : "Power Off");
+    lv_label_set_text(power_button_label,
+                      state.power ? LV_SYMBOL_POWER "  Power On" : LV_SYMBOL_POWER "  Power Off");
   }
 }
 
@@ -567,12 +588,12 @@ void goToSettings(lv_event_t*) {
 #if WLED_CYD_ENABLE_BATTERY
 lv_color_t batteryColor(int level) {
   if (level >= 50) {
-    return lv_color_hex(0x22C55E);
+    return lv_color_hex(kColorOk);
   }
   if (level >= 25) {
-    return lv_color_hex(0xFACC15);
+    return lv_color_hex(kColorWarn);
   }
-  return lv_color_hex(0xEF4444);
+  return lv_color_hex(kColorDanger);
 }
 
 void updateBatteryIndicator() {
@@ -599,7 +620,7 @@ void updateBatteryIndicator() {
 
   bool charging = batteryCharging();
   lv_obj_set_width(battery_fill, fill_w);
-  lv_obj_set_style_bg_color(battery_fill, charging ? lv_color_hex(0x0B1014) : batteryColor(level), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(battery_fill, charging ? lv_color_hex(kColorBg) : batteryColor(level), LV_PART_MAIN);
 
   if (charging) {
     lv_obj_clear_flag(battery_charge, LV_OBJ_FLAG_HIDDEN);
@@ -627,7 +648,7 @@ void createBatteryIndicator(lv_obj_t* parent) {
   lv_obj_set_size(body, 20, 13);
   lv_obj_align(body, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_set_style_border_width(body, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_color(body, lv_color_hex(0xEAF2F8), LV_PART_MAIN);
+  lv_obj_set_style_border_color(body, lv_color_hex(kColorText), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -636,7 +657,7 @@ void createBatteryIndicator(lv_obj_t* parent) {
   lv_obj_set_size(battery_fill, 2, 11);
   lv_obj_align(battery_fill, LV_ALIGN_TOP_LEFT, 1, 1);
   lv_obj_set_style_bg_opa(battery_fill, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(battery_fill, lv_color_hex(0xEF4444), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(battery_fill, lv_color_hex(kColorDanger), LV_PART_MAIN);
   lv_obj_clear_flag(battery_fill, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t* nub = lv_obj_create(battery_indicator);
@@ -644,13 +665,13 @@ void createBatteryIndicator(lv_obj_t* parent) {
   lv_obj_set_size(nub, 4, 7);
   lv_obj_align(nub, LV_ALIGN_LEFT_MID, 20, 0);
   lv_obj_set_style_bg_opa(nub, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(nub, lv_color_hex(0xEAF2F8), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(nub, lv_color_hex(kColorText), LV_PART_MAIN);
   lv_obj_clear_flag(nub, LV_OBJ_FLAG_SCROLLABLE);
 
   battery_charge = lv_label_create(battery_indicator);
   lv_label_set_text(battery_charge, LV_SYMBOL_CHARGE);
   lv_obj_set_style_text_font(battery_charge, &lv_font_montserrat_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(battery_charge, lv_color_hex(0x22C55E), LV_PART_MAIN);
+  lv_obj_set_style_text_color(battery_charge, lv_color_hex(kColorOk), LV_PART_MAIN);
   lv_obj_align(battery_charge, LV_ALIGN_CENTER, -2, 0);
 
   updateBatteryIndicator();
@@ -660,19 +681,19 @@ void createBatteryIndicator(lv_obj_t* parent) {
 
 void updateOrientationLabel() {
   if (orientation_label) {
-    lv_label_set_text(orientation_label, display_flipped ? "Orientation: Flipped" : "Orientation: Normal");
+    lv_label_set_text(orientation_label, display_flipped ? "Flipped" : "Normal");
   }
 }
 
 void updateIdleLabel() {
   if (idle_label) {
-    lv_label_set_text_fmt(idle_label, "Inactivity: %s", idleModeName(idle_mode));
+    lv_label_set_text(idle_label, idleModeName(idle_mode));
   }
 }
 
 void updateModeLabel() {
   if (mode_label) {
-    lv_label_set_text(mode_label, extended_mode ? "Remote Mode: Extended" : "Remote Mode: Basic");
+    lv_label_set_text(mode_label, extended_mode ? "Extended" : "Basic");
   }
 }
 
@@ -712,8 +733,16 @@ void onToggleControlMode(lv_event_t* event) {
 void addLabel(lv_obj_t* parent, const char* text, lv_coord_t width = LV_SIZE_CONTENT) {
   lv_obj_t* label = lv_label_create(parent);
   lv_label_set_text(label, text);
-  lv_obj_add_style(label, &style_label_muted, LV_PART_MAIN);
+  lv_obj_add_style(label, &style_section_header, LV_PART_MAIN);
   lv_obj_set_width(label, width);
+}
+
+void styleButton(lv_obj_t* btn, bool checkable = false) {
+  lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
+  lv_obj_add_style(btn, &style_button_pressed, LV_PART_MAIN | LV_STATE_PRESSED);
+  if (checkable) {
+    lv_obj_add_style(btn, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
+  }
 }
 
 lv_obj_t* createPanel(lv_obj_t* parent) {
@@ -729,6 +758,12 @@ void configurePageScroll(lv_obj_t* page, bool enabled) {
   lv_obj_set_scrollbar_mode(page, enabled ? LV_SCROLLBAR_MODE_AUTO : LV_SCROLLBAR_MODE_OFF);
   lv_obj_add_flag(page, LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
 
+  lv_obj_set_style_bg_color(page, lv_color_hex(kColorAccent), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(page, LV_OPA_50, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(page, 4, LV_PART_SCROLLBAR);
+  lv_obj_set_style_pad_right(page, 2, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(page, 2, LV_PART_SCROLLBAR);
+
   if (enabled) {
     lv_obj_add_flag(page, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC);
   } else {
@@ -743,44 +778,72 @@ void closeHelpDialog(lv_event_t*) {
   }
 }
 
+lv_obj_t* beginInfoModal(const char* title_text) {
+  help_dialog = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(help_dialog);
+  lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(help_dialog, lv_color_hex(kColorBg), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(help_dialog, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
+
+  lv_obj_t* header = lv_obj_create(help_dialog);
+  lv_obj_remove_style_all(header);
+  lv_obj_set_size(header, LV_PCT(100), 40);
+  lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_style_pad_left(header, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(header, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_color(header, lv_color_hex(kColorBorder), LV_PART_MAIN);
+  lv_obj_set_style_border_width(header, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+  lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* title = lv_label_create(header);
+  lv_label_set_text(title, title_text);
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(kColorAccent), LV_PART_MAIN);
+
+  lv_obj_t* close = lv_btn_create(header);
+  styleButton(close);
+  lv_obj_set_size(close, 40, 30);
+  lv_obj_add_event_cb(close, closeHelpDialog, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* close_label = lv_label_create(close);
+  lv_label_set_text(close_label, LV_SYMBOL_CLOSE);
+  lv_obj_center(close_label);
+
+  lv_obj_t* content = lv_obj_create(help_dialog);
+  lv_obj_remove_style_all(content);
+  lv_obj_set_size(content, 296, 184);
+  lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, -8);
+  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(content, 8, LV_PART_MAIN);
+  lv_obj_add_flag(content, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+  return content;
+}
+
+void addQrCode(lv_obj_t* parent, const lv_img_dsc_t* src, lv_coord_t w, lv_coord_t h) {
+  lv_obj_t* qr = lv_img_create(parent);
+  lv_img_set_src(qr, src);
+  lv_obj_set_size(qr, w, h);
+  lv_obj_set_style_outline_color(qr, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+  lv_obj_set_style_outline_width(qr, 3, LV_PART_MAIN);
+  lv_obj_set_style_outline_opa(qr, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_outline_pad(qr, 0, LV_PART_MAIN);
+}
+
 void openHelpDialog(lv_event_t*) {
   if (help_dialog) {
     return;
   }
 
-  help_dialog = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(help_dialog);
-  lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(help_dialog, lv_color_hex(0x0B1014), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(help_dialog, LV_OPA_90, LV_PART_MAIN);
-  lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
-
-  lv_obj_t* title = lv_label_create(help_dialog);
-  lv_label_set_text(title, "Help");
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
-  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 10);
-
-  lv_obj_t* close = lv_btn_create(help_dialog);
-  lv_obj_add_style(close, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(close, 58, 34);
-  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -10, 6);
-  lv_obj_add_event_cb(close, closeHelpDialog, LV_EVENT_CLICKED, nullptr);
-
-  lv_obj_t* close_label = lv_label_create(close);
-  lv_label_set_text(close_label, "Close");
-  lv_obj_center(close_label);
-
-  lv_obj_t* content = lv_obj_create(help_dialog);
-  lv_obj_remove_style_all(content);
-  lv_obj_set_size(content, 296, 180);
-  lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, -10);
-  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(content, 8, LV_PART_MAIN);
+  lv_obj_t* content = beginInfoModal("Help");
 
   lv_obj_t* instructions = lv_label_create(content);
-  lv_obj_set_width(instructions, 108);
+  lv_obj_set_width(instructions, 100);
   lv_label_set_long_mode(instructions, LV_LABEL_LONG_WRAP);
   lv_label_set_text(instructions,
                     "Scan for\n"
@@ -790,9 +853,7 @@ void openHelpDialog(lv_event_t*) {
                     "instructions.");
   lv_obj_add_style(instructions, &style_label_muted, LV_PART_MAIN);
 
-  lv_obj_t* qr = lv_img_create(content);
-  lv_img_set_src(qr, &kHelpQrImage);
-  lv_obj_set_size(qr, kHelpQrWidth, kHelpQrHeight);
+  addQrCode(content, &kHelpQrImage, kHelpQrWidth, kHelpQrHeight);
 }
 
 void openRemoteJsonHelpDialog(lv_event_t*) {
@@ -800,54 +861,23 @@ void openRemoteJsonHelpDialog(lv_event_t*) {
     return;
   }
 
-  help_dialog = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(help_dialog);
-  lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(help_dialog, lv_color_hex(0x0B1014), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(help_dialog, LV_OPA_90, LV_PART_MAIN);
-  lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
-
-  lv_obj_t* title = lv_label_create(help_dialog);
-  lv_label_set_text(title, "Extended FX");
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
-  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 10);
-
-  lv_obj_t* close = lv_btn_create(help_dialog);
-  lv_obj_add_style(close, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(close, 58, 34);
-  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -10, 6);
-  lv_obj_add_event_cb(close, closeHelpDialog, LV_EVENT_CLICKED, nullptr);
-
-  lv_obj_t* close_label = lv_label_create(close);
-  lv_label_set_text(close_label, "Close");
-  lv_obj_center(close_label);
-
-  lv_obj_t* content = lv_obj_create(help_dialog);
-  lv_obj_remove_style_all(content);
-  lv_obj_set_size(content, 296, 180);
-  lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, -10);
-  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(content, 8, LV_PART_MAIN);
+  lv_obj_t* content = beginInfoModal("Extended FX");
 
   lv_obj_t* instructions = lv_label_create(content);
-  lv_obj_set_width(instructions, 120);
+  lv_obj_set_width(instructions, 100);
   lv_label_set_long_mode(instructions, LV_LABEL_LONG_WRAP);
   lv_label_set_text(instructions,
                     "Upload\n"
                     "remote.json\n"
                     "to WLED:\n\n"
-                    "1. Open:\n" 
-                    "<wled.local>/edit\n"
+                    "1. Open\n"
+                    "wled.local/edit\n"
                     "2. Upload file\n"
                     "3. Enable\n"
-                    "   Extended");
+                    "Extended");
   lv_obj_add_style(instructions, &style_label_muted, LV_PART_MAIN);
 
-  lv_obj_t* qr = lv_img_create(content);
-  lv_img_set_src(qr, &kRemoteJsonQrImage);
-  lv_obj_set_size(qr, kRemoteJsonQrWidth, kRemoteJsonQrHeight);
+  addQrCode(content, &kRemoteJsonQrImage, kRemoteJsonQrWidth, kRemoteJsonQrHeight);
 }
 
 lv_obj_t* createSlider(lv_obj_t* parent,
@@ -894,21 +924,27 @@ void createLiveTab(lv_obj_t* tab) {
   configurePageScroll(tab, false);
 
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), 156);
+  lv_obj_set_size(panel, LV_PCT(100), 158);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(panel, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
 
   power_button = lv_btn_create(panel);
-  lv_obj_add_style(power_button, &style_button, LV_PART_MAIN);
-  lv_obj_add_style(power_button, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
-  lv_obj_set_size(power_button, LV_PCT(100), 50);
+  styleButton(power_button, true);
+  lv_obj_set_size(power_button, LV_PCT(100), 54);
   lv_obj_add_flag(power_button, LV_OBJ_FLAG_CHECKABLE);
   lv_obj_add_event_cb(power_button, onPower, LV_EVENT_CLICKED, nullptr);
 
+  lv_obj_set_style_bg_grad_color(power_button, lv_color_hex(kColorAccentBright),
+                                 LV_PART_MAIN | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_grad_dir(power_button, LV_GRAD_DIR_VER,
+                               LV_PART_MAIN | LV_STATE_CHECKED);
+  lv_obj_set_style_text_color(power_button, lv_color_hex(0x062029),
+                              LV_PART_MAIN | LV_STATE_CHECKED);
+
   power_button_label = lv_label_create(power_button);
-  lv_label_set_text(power_button_label, "Power Off");
-  lv_obj_set_style_text_font(power_button_label, &lv_font_montserrat_18, LV_PART_MAIN);
+  lv_label_set_text(power_button_label, LV_SYMBOL_POWER "  Power Off");
+  lv_obj_set_style_text_font(power_button_label, &lv_font_montserrat_20, LV_PART_MAIN);
   lv_obj_center(power_button_label);
 
   addLabel(panel, "Brightness");
@@ -922,7 +958,7 @@ lv_obj_t* createRemoteButton(lv_obj_t* parent,
                              lv_coord_t height,
                              uint8_t button) {
   lv_obj_t* btn = lv_btn_create(parent);
-  lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
+  styleButton(btn);
   lv_obj_set_size(btn, width, height);
   lv_obj_add_event_cb(btn,
                       onRemoteAction,
@@ -967,9 +1003,14 @@ void createColorSwatches(lv_obj_t* parent) {
 
   for (const ColorSwatch& swatch : kColorSwatches) {
     lv_obj_t* btn = createRemoteButton(swatches, swatch.label, 132, 48, swatch.button);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(swatch.color), LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(0xEAF2F8), LV_PART_MAIN);
-    lv_obj_set_style_text_color(btn, lv_color_hex(swatch.dark_text ? 0x0B1014 : 0xFFFFFF), LV_PART_MAIN);
+    const lv_color_t color = lv_color_hex(swatch.color);
+    lv_obj_set_style_bg_color(btn, color, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(btn, lv_color_darken(color, LV_OPA_30),
+                              LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_radius(btn, 10, LV_PART_MAIN);
+    lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_border_opa(btn, LV_OPA_20, LV_PART_MAIN);
+    lv_obj_set_style_text_color(btn, lv_color_hex(swatch.dark_text ? kColorBg : 0xFFFFFF), LV_PART_MAIN);
   }
 }
 
@@ -1001,8 +1042,7 @@ void createLooksTab(lv_obj_t* tab) {
 
     for (uintptr_t i = 1; i <= kExtendedPresetCount; ++i) {
       lv_obj_t* btn = lv_btn_create(preset_list);
-      lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
-      lv_obj_add_style(btn, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
+      styleButton(btn, true);
       lv_obj_set_size(btn, 48, 34);
       lv_obj_add_event_cb(btn, onPreset, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
       preset_buttons[i - 1] = btn;
@@ -1040,8 +1080,7 @@ void createLooksTab(lv_obj_t* tab) {
   for (uintptr_t i = 1; i <= kBasicPresetCount; ++i) {
     lv_obj_t* parent = i <= 4 ? row_one : row_two;
     lv_obj_t* btn = lv_btn_create(parent);
-    lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
-    lv_obj_add_style(btn, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
+    styleButton(btn, true);
     lv_obj_set_size(btn, 64, 38);
     lv_obj_add_event_cb(btn, onPreset, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
     preset_buttons[i - 1] = btn;
@@ -1088,25 +1127,25 @@ void createFxTab(lv_obj_t* tab) {
     lv_obj_add_style(hint, &style_label_muted, LV_PART_MAIN);
 
     lv_obj_t* settings = lv_btn_create(panel);
-    lv_obj_add_style(settings, &style_button, LV_PART_MAIN);
+    styleButton(settings);
     lv_obj_set_size(settings, LV_PCT(100), 34);
     lv_obj_add_event_cb(settings, goToSettings, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* settings_label = lv_label_create(settings);
-    lv_label_set_text(settings_label, "Settings");
+    lv_label_set_text(settings_label, LV_SYMBOL_SETTINGS "  Settings");
     lv_obj_center(settings_label);
 
     lv_obj_t* learn_more = lv_btn_create(panel);
-    lv_obj_add_style(learn_more, &style_button, LV_PART_MAIN);
+    styleButton(learn_more);
     lv_obj_set_size(learn_more, LV_PCT(100), 34);
     lv_obj_add_event_cb(learn_more, openRemoteJsonHelpDialog, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* learn_more_label = lv_label_create(learn_more);
-    lv_label_set_text(learn_more_label, "Learn More");
+    lv_label_set_text(learn_more_label, LV_SYMBOL_LIST "  Learn More");
     lv_obj_center(learn_more_label);
     return;
   }
 
   lv_obj_t* fx_panel = createPanel(tab);
-  lv_obj_set_size(fx_panel, LV_PCT(100), 560);
+  lv_obj_set_size(fx_panel, LV_PCT(100), 584);
   lv_obj_set_flex_flow(fx_panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(fx_panel, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_row(fx_panel, 8, LV_PART_MAIN);
@@ -1117,8 +1156,8 @@ void createFxTab(lv_obj_t* tab) {
                          control.label,
                          control.down_button,
                          control.up_button,
-                         "-",
-                         "+");
+                         LV_SYMBOL_MINUS,
+                         LV_SYMBOL_PLUS);
   }
 
   addLabel(fx_panel, "Colors");
@@ -1153,7 +1192,7 @@ void createInfoTab(lv_obj_t* tab) {
   lv_obj_set_width(mac_label, LV_PCT(100));
   lv_obj_set_style_text_align(mac_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_font(mac_label, &lv_font_montserrat_18, LV_PART_MAIN);
-  lv_obj_set_style_text_color(mac_label, lv_color_hex(0x38BDF8), LV_PART_MAIN);
+  lv_obj_set_style_text_color(mac_label, lv_color_hex(kColorAccent), LV_PART_MAIN);
 
   lv_obj_t* hint = lv_label_create(panel);
   lv_label_set_text(hint, "Enter this in WLED Hardware MAC");
@@ -1168,22 +1207,48 @@ void createInfoTab(lv_obj_t* tab) {
   lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   lv_obj_t* ping = lv_btn_create(actions);
-  lv_obj_add_style(ping, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(ping, 118, 34);
+  styleButton(ping);
+  lv_obj_set_size(ping, 118, 36);
   lv_obj_add_event_cb(ping, onPing, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t* label = lv_label_create(ping);
-  lv_label_set_text(label, "Ping WLED");
+  lv_label_set_text(label, LV_SYMBOL_WIFI "  Ping");
   lv_obj_center(label);
 
   lv_obj_t* help = lv_btn_create(actions);
-  lv_obj_add_style(help, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(help, 118, 34);
+  styleButton(help);
+  lv_obj_set_size(help, 118, 36);
   lv_obj_add_event_cb(help, openHelpDialog, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t* help_label = lv_label_create(help);
-  lv_label_set_text(help_label, "Help");
+  lv_label_set_text(help_label, LV_SYMBOL_LIST "  Help");
   lv_obj_center(help_label);
+}
+
+lv_obj_t* createSettingsRow(lv_obj_t* parent,
+                            const char* name,
+                            lv_event_cb_t cb,
+                            bool checkable,
+                            lv_obj_t** value_out) {
+  lv_obj_t* row = lv_obj_create(parent);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, LV_PCT(100), 38);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t* name_label = lv_label_create(row);
+  lv_obj_set_width(name_label, 148);
+  lv_obj_add_style(name_label, &style_label_muted, LV_PART_MAIN);
+  lv_label_set_text(name_label, name);
+
+  lv_obj_t* pill = lv_btn_create(row);
+  styleButton(pill, checkable);
+  lv_obj_set_size(pill, 118, 34);
+  lv_obj_add_event_cb(pill, cb, LV_EVENT_CLICKED, nullptr);
+
+  *value_out = lv_label_create(pill);
+  lv_obj_center(*value_out);
+  return pill;
 }
 
 void createSettingsTab(lv_obj_t* tab) {
@@ -1198,75 +1263,34 @@ void createSettingsTab(lv_obj_t* tab) {
   lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 8, LV_PART_MAIN);
 
-  lv_obj_t* row_orientation = lv_obj_create(panel);
-  lv_obj_remove_style_all(row_orientation);
-  lv_obj_set_size(row_orientation, LV_PCT(100), 34);
-  lv_obj_set_flex_flow(row_orientation, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row_orientation, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-  orientation_label = lv_label_create(row_orientation);
-  lv_obj_set_width(orientation_label, 170);
-  lv_obj_add_style(orientation_label, &style_label_muted, LV_PART_MAIN);
+  createSettingsRow(panel, "Orientation", onFlipDisplay, false, &orientation_label);
   updateOrientationLabel();
 
-  lv_obj_t* flip = lv_btn_create(row_orientation);
-  lv_obj_add_style(flip, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(flip, 86, 32);
-  lv_obj_add_event_cb(flip, onFlipDisplay, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* flip_label = lv_label_create(flip);
-  lv_label_set_text(flip_label, "Flip");
-  lv_obj_center(flip_label);
-
-  lv_obj_t* row_idle = lv_obj_create(panel);
-  lv_obj_remove_style_all(row_idle);
-  lv_obj_set_size(row_idle, LV_PCT(100), 34);
-  lv_obj_set_flex_flow(row_idle, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row_idle, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-  idle_label = lv_label_create(row_idle);
-  lv_obj_set_width(idle_label, 170);
-  lv_obj_add_style(idle_label, &style_label_muted, LV_PART_MAIN);
+  createSettingsRow(panel, "Inactivity", onToggleIdleAction, false, &idle_label);
   updateIdleLabel();
 
-  lv_obj_t* idle = lv_btn_create(row_idle);
-  lv_obj_add_style(idle, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(idle, 86, 32);
-  lv_obj_add_event_cb(idle, onToggleIdleAction, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* idle_button_label = lv_label_create(idle);
-  lv_label_set_text(idle_button_label, "Idle");
-  lv_obj_center(idle_button_label);
-
-  lv_obj_t* row_mode = lv_obj_create(panel);
-  lv_obj_remove_style_all(row_mode);
-  lv_obj_set_size(row_mode, LV_PCT(100), 34);
-  lv_obj_set_flex_flow(row_mode, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row_mode, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-  mode_label = lv_label_create(row_mode);
-  lv_obj_set_width(mode_label, 170);
-  lv_obj_add_style(mode_label, &style_label_muted, LV_PART_MAIN);
-  updateModeLabel();
-
-  lv_obj_t* mode = lv_btn_create(row_mode);
-  lv_obj_add_style(mode, &style_button, LV_PART_MAIN);
-  lv_obj_add_style(mode, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
-  lv_obj_set_size(mode, 86, 32);
-  lv_obj_add_event_cb(mode, onToggleControlMode, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* mode_pill = createSettingsRow(panel, "Remote Mode", onToggleControlMode, true, &mode_label);
   if (extended_mode) {
-    lv_obj_add_state(mode, LV_STATE_CHECKED);
+    lv_obj_add_state(mode_pill, LV_STATE_CHECKED);
   }
-  lv_obj_t* mode_button_label = lv_label_create(mode);
-  lv_label_set_text(mode_button_label, "Mode");
-  lv_obj_center(mode_button_label);
+  updateModeLabel();
 }
 
 void initStyles() {
+  static const lv_style_prop_t kButtonTransProps[] = {
+      LV_STYLE_BG_COLOR, LV_STYLE_BG_OPA, LV_STYLE_BORDER_COLOR,
+      LV_STYLE_TEXT_COLOR,
+      static_cast<lv_style_prop_t>(0)};
+  static lv_style_transition_dsc_t button_trans;
+  lv_style_transition_dsc_init(&button_trans, kButtonTransProps,
+                               lv_anim_path_ease_out, 150, 0, nullptr);
+
   lv_style_init(&style_screen);
-  lv_style_set_bg_color(&style_screen, lv_color_hex(0x0B1014));
-  lv_style_set_text_color(&style_screen, lv_color_hex(0xEAF2F8));
+  lv_style_set_bg_color(&style_screen, lv_color_hex(kColorBg));
+  lv_style_set_text_color(&style_screen, lv_color_hex(kColorText));
 
   lv_style_init(&style_topbar);
-  lv_style_set_bg_color(&style_topbar, lv_color_hex(0x111821));
+  lv_style_set_bg_color(&style_topbar, lv_color_hex(kColorHeaderBar));
   lv_style_set_bg_opa(&style_topbar, LV_OPA_COVER);
   lv_style_set_border_width(&style_topbar, 0);
   lv_style_set_radius(&style_topbar, 0);
@@ -1274,44 +1298,55 @@ void initStyles() {
   lv_style_set_pad_right(&style_topbar, 10);
 
   lv_style_init(&style_panel);
-  lv_style_set_bg_color(&style_panel, lv_color_hex(0x18212B));
+  lv_style_set_bg_color(&style_panel, lv_color_hex(kColorSurface));
   lv_style_set_bg_opa(&style_panel, LV_OPA_COVER);
   lv_style_set_border_width(&style_panel, 1);
-  lv_style_set_border_color(&style_panel, lv_color_hex(0x263342));
-  lv_style_set_radius(&style_panel, 8);
+  lv_style_set_border_color(&style_panel, lv_color_hex(kColorBorder));
+  lv_style_set_radius(&style_panel, 12);
+
+  lv_style_init(&style_section_header);
+  lv_style_set_text_color(&style_section_header, lv_color_hex(kColorText));
+  lv_style_set_text_font(&style_section_header, &lv_font_montserrat_16);
+  lv_style_set_text_letter_space(&style_section_header, 1);
 
   lv_style_init(&style_label_muted);
-  lv_style_set_text_color(&style_label_muted, lv_color_hex(0xFFFFFF));
+  lv_style_set_text_color(&style_label_muted, lv_color_hex(kColorText));
   lv_style_set_text_font(&style_label_muted, &lv_font_montserrat_14);
 
   lv_style_init(&style_button);
-  lv_style_set_bg_color(&style_button, lv_color_hex(0x22303C));
+  lv_style_set_bg_color(&style_button, lv_color_hex(kColorSurfaceRaised));
   lv_style_set_bg_opa(&style_button, LV_OPA_COVER);
   lv_style_set_border_width(&style_button, 1);
-  lv_style_set_border_color(&style_button, lv_color_hex(0x344556));
-  lv_style_set_radius(&style_button, 7);
-  lv_style_set_shadow_width(&style_button, 0);
-  lv_style_set_text_color(&style_button, lv_color_hex(0xEAF2F8));
+  lv_style_set_border_color(&style_button, lv_color_hex(kColorBorderStrong));
+  lv_style_set_radius(&style_button, 9);
+  lv_style_set_text_color(&style_button, lv_color_hex(kColorText));
+  lv_style_set_transition(&style_button, &button_trans);
+
+  lv_style_init(&style_button_pressed);
+  lv_style_set_bg_color(&style_button_pressed, lv_color_hex(kColorSurfacePressed));
+  lv_style_set_border_color(&style_button_pressed, lv_color_hex(kColorAccent));
 
   lv_style_init(&style_button_checked);
-  lv_style_set_bg_color(&style_button_checked, lv_color_hex(0x0F766E));
-  lv_style_set_border_color(&style_button_checked, lv_color_hex(0x2DD4BF));
+  lv_style_set_bg_color(&style_button_checked, lv_color_hex(kColorSelected));
+  lv_style_set_border_color(&style_button_checked, lv_color_hex(kColorSelectedBorder));
   lv_style_set_text_color(&style_button_checked, lv_color_hex(0xFFFFFF));
 
   lv_style_init(&style_slider);
-  lv_style_set_bg_color(&style_slider, lv_color_hex(0x2A3846));
+  lv_style_set_bg_color(&style_slider, lv_color_hex(0x223040));
   lv_style_set_bg_opa(&style_slider, LV_OPA_COVER);
-  lv_style_set_radius(&style_slider, 4);
+  lv_style_set_radius(&style_slider, LV_RADIUS_CIRCLE);
 
   lv_style_init(&style_slider_indicator);
-  lv_style_set_bg_color(&style_slider_indicator, lv_color_hex(0x38BDF8));
-  lv_style_set_radius(&style_slider_indicator, 4);
+  lv_style_set_bg_color(&style_slider_indicator, lv_color_hex(kColorAccentDeep));
+  lv_style_set_bg_grad_color(&style_slider_indicator, lv_color_hex(kColorAccent));
+  lv_style_set_bg_grad_dir(&style_slider_indicator, LV_GRAD_DIR_HOR);
+  lv_style_set_radius(&style_slider_indicator, LV_RADIUS_CIRCLE);
 
   lv_style_init(&style_knob);
-  lv_style_set_bg_color(&style_knob, lv_color_hex(0xEAF2F8));
-  lv_style_set_border_color(&style_knob, lv_color_hex(0x38BDF8));
+  lv_style_set_bg_color(&style_knob, lv_color_hex(0xFFFFFF));
+  lv_style_set_border_color(&style_knob, lv_color_hex(kColorAccent));
   lv_style_set_border_width(&style_knob, 2);
-  lv_style_set_pad_all(&style_knob, 4);
+  lv_style_set_pad_all(&style_knob, 5);
 }
 
 void createUi() {
@@ -1351,10 +1386,10 @@ void createUi() {
 
   status_dot = lv_obj_create(status);
   lv_obj_remove_style_all(status_dot);
-  lv_obj_set_size(status_dot, 9, 9);
+  lv_obj_set_size(status_dot, 10, 10);
   lv_obj_set_style_radius(status_dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(status_dot, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(status_dot, lv_color_hex(0x38BDF8), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(status_dot, lv_color_hex(kColorAccent), LV_PART_MAIN);
 
 #if WLED_CYD_ENABLE_BATTERY
   createBatteryIndicator(status);
@@ -1362,14 +1397,20 @@ void createUi() {
 
   main_tabs = lv_tabview_create(root, LV_DIR_TOP, 30);
   lv_obj_set_size(main_tabs, LV_PCT(100), kScreenHeight - 34);
-  lv_obj_set_style_bg_color(main_tabs, lv_color_hex(0x0B1014), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(main_tabs, lv_color_hex(kColorBg), LV_PART_MAIN);
   lv_obj_set_style_border_width(main_tabs, 0, LV_PART_MAIN);
 
   lv_obj_t* tab_btns = lv_tabview_get_tab_btns(main_tabs);
-  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x111821), LV_PART_MAIN);
-  lv_obj_set_style_text_color(tab_btns, lv_color_hex(0x9DB3C7), LV_PART_MAIN);
-  lv_obj_set_style_text_color(tab_btns, lv_color_hex(0xFFFFFF), LV_PART_ITEMS | LV_STATE_CHECKED);
-  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x2563EB), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(kColorHeaderBar), LV_PART_MAIN);
+  lv_obj_set_style_border_width(tab_btns, 0, LV_PART_MAIN);
+  lv_obj_set_style_text_color(tab_btns, lv_color_hex(kColorTextMuted), LV_PART_MAIN);
+  lv_obj_set_style_text_color(tab_btns, lv_color_hex(kColorAccent), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_opa(tab_btns, LV_OPA_TRANSP, LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_border_color(tab_btns, lv_color_hex(kColorAccent), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_border_width(tab_btns, 3, LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_border_side(tab_btns, LV_BORDER_SIDE_BOTTOM, LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(kColorSurfaceRaised), LV_PART_ITEMS | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(tab_btns, LV_OPA_50, LV_PART_ITEMS | LV_STATE_PRESSED);
 
   lv_obj_t* live = lv_tabview_add_tab(main_tabs, "Power");
   presets_tab = lv_tabview_add_tab(main_tabs, "Presets");
@@ -1497,7 +1538,7 @@ void initDisplay() {
   lv_indev_drv_register(&indev_drv);
 }
 
-}  // namespace
+}
 
 void setup() {
   Serial.begin(115200);
