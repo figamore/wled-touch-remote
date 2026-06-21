@@ -984,12 +984,10 @@ void createLooksTab(lv_obj_t* tab) {
   configurePageScroll(tab, extended_mode);
 
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), extended_mode ? 300 : 156);
+  lv_obj_set_size(panel, LV_PCT(100), extended_mode ? 282 : 138);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
-
-  addLabel(panel, extended_mode ? "Presets 1-30" : "Presets");
 
   if (extended_mode) {
     lv_obj_t* preset_list = lv_obj_create(panel);
