@@ -700,7 +700,20 @@ lv_obj_t* createPanel(lv_obj_t* parent) {
   lv_obj_t* panel = lv_obj_create(parent);
   lv_obj_add_style(panel, &style_panel, LV_PART_MAIN);
   lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
   return panel;
+}
+
+void configurePageScroll(lv_obj_t* page, bool enabled) {
+  lv_obj_set_scroll_dir(page, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(page, enabled ? LV_SCROLLBAR_MODE_AUTO : LV_SCROLLBAR_MODE_OFF);
+  lv_obj_add_flag(page, LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  if (enabled) {
+    lv_obj_add_flag(page, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC);
+  } else {
+    lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC);
+  }
 }
 
 void closeHelpDialog(lv_event_t*) {
@@ -858,7 +871,7 @@ void createLiveTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+  configurePageScroll(tab, false);
 
   lv_obj_t* panel = createPanel(tab);
   lv_obj_set_size(panel, LV_PCT(100), 156);
@@ -944,10 +957,10 @@ void createLooksTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  lv_obj_set_scrollbar_mode(tab, extended_mode ? LV_SCROLLBAR_MODE_AUTO : LV_SCROLLBAR_MODE_OFF);
+  configurePageScroll(tab, extended_mode);
 
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), 156);
+  lv_obj_set_size(panel, LV_PCT(100), extended_mode ? 300 : 156);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
@@ -957,13 +970,12 @@ void createLooksTab(lv_obj_t* tab) {
   if (extended_mode) {
     lv_obj_t* preset_list = lv_obj_create(panel);
     lv_obj_remove_style_all(preset_list);
-    lv_obj_set_size(preset_list, LV_PCT(100), 112);
+    lv_obj_set_size(preset_list, LV_PCT(100), 252);
     lv_obj_set_flex_flow(preset_list, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(preset_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(preset_list, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_column(preset_list, 6, LV_PART_MAIN);
-    lv_obj_set_scroll_dir(preset_list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(preset_list, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_clear_flag(preset_list, LV_OBJ_FLAG_SCROLLABLE);
 
     for (uintptr_t i = 1; i <= kExtendedPresetCount; ++i) {
       lv_obj_t* btn = lv_btn_create(preset_list);
@@ -1023,7 +1035,7 @@ void createFxTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  lv_obj_set_scrollbar_mode(tab, extended_mode ? LV_SCROLLBAR_MODE_AUTO : LV_SCROLLBAR_MODE_OFF);
+  configurePageScroll(tab, extended_mode);
 
   if (!extended_mode) {
     lv_obj_t* panel = createPanel(tab);
@@ -1093,7 +1105,7 @@ void createInfoTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+  configurePageScroll(tab, false);
 
   lv_obj_t* panel = createPanel(tab);
   lv_obj_set_size(panel, LV_PCT(100), 156);
@@ -1146,7 +1158,7 @@ void createSettingsTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+  configurePageScroll(tab, false);
 
   lv_obj_t* panel = createPanel(tab);
   lv_obj_set_size(panel, LV_PCT(100), 156);
@@ -1448,6 +1460,8 @@ void initDisplay() {
   lv_indev_drv_init(&indev_drv);
   indev_drv.type = LV_INDEV_TYPE_POINTER;
   indev_drv.read_cb = readTouch;
+  indev_drv.scroll_limit = 6;
+  indev_drv.scroll_throw = 8;
   lv_indev_drv_register(&indev_drv);
 }
 
