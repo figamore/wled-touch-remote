@@ -247,6 +247,12 @@ const lv_img_dsc_t kHelpQrImage = {
     reinterpret_cast<const uint8_t*>(kHelpQrPixels),
 };
 
+const lv_img_dsc_t kRemoteJsonQrImage = {
+    {LV_IMG_CF_TRUE_COLOR, 0, 0, kRemoteJsonQrWidth, kRemoteJsonQrHeight},
+    kRemoteJsonQrPixelCount * sizeof(kRemoteJsonQrPixels[0]),
+    reinterpret_cast<const uint8_t*>(kRemoteJsonQrPixels),
+};
+
 void rebuildPresetTab();
 void rebuildFxTab();
 
@@ -738,6 +744,61 @@ void openHelpDialog(lv_event_t*) {
   lv_obj_align(qr, LV_ALIGN_CENTER, 0, 8);
 }
 
+void openRemoteJsonHelpDialog(lv_event_t*) {
+  if (help_dialog) {
+    return;
+  }
+
+  help_dialog = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(help_dialog);
+  lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(help_dialog, lv_color_hex(0x0B1014), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(help_dialog, LV_OPA_90, LV_PART_MAIN);
+  lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
+
+  lv_obj_t* title = lv_label_create(help_dialog);
+  lv_label_set_text(title, "Extended FX");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 10);
+
+  lv_obj_t* close = lv_btn_create(help_dialog);
+  lv_obj_add_style(close, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(close, 58, 34);
+  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -10, 6);
+  lv_obj_add_event_cb(close, closeHelpDialog, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* close_label = lv_label_create(close);
+  lv_label_set_text(close_label, "Close");
+  lv_obj_center(close_label);
+
+  lv_obj_t* content = lv_obj_create(help_dialog);
+  lv_obj_remove_style_all(content);
+  lv_obj_set_size(content, 296, 180);
+  lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, -10);
+  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(content, 8, LV_PART_MAIN);
+
+  lv_obj_t* instructions = lv_label_create(content);
+  lv_obj_set_width(instructions, 120);
+  lv_label_set_long_mode(instructions, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(instructions,
+                    "Upload\n"
+                    "remote.json\n"
+                    "to WLED:\n\n"
+                    "1. Open:\n" 
+                    "<wled.local>/edit\n"
+                    "2. Upload file\n"
+                    "3. Enable\n"
+                    "   Extended");
+  lv_obj_add_style(instructions, &style_label_muted, LV_PART_MAIN);
+
+  lv_obj_t* qr = lv_img_create(content);
+  lv_img_set_src(qr, &kRemoteJsonQrImage);
+  lv_obj_set_size(qr, kRemoteJsonQrWidth, kRemoteJsonQrHeight);
+}
+
 lv_obj_t* createSlider(lv_obj_t* parent,
                        int min,
                        int max,
@@ -948,11 +1009,11 @@ void createFxTab(lv_obj_t* tab) {
 
   if (!extended_mode) {
     lv_obj_t* panel = createPanel(tab);
-    lv_obj_set_size(panel, LV_PCT(100), 156);
+    lv_obj_set_size(panel, LV_PCT(100), 180);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(panel, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(panel, 8, LV_PART_MAIN);
 
     lv_obj_t* title = lv_label_create(panel);
     lv_label_set_text(title, "Extended Mode Off");
@@ -971,6 +1032,14 @@ void createFxTab(lv_obj_t* tab) {
     lv_obj_t* settings_label = lv_label_create(settings);
     lv_label_set_text(settings_label, "Settings");
     lv_obj_center(settings_label);
+
+    lv_obj_t* learn_more = lv_btn_create(panel);
+    lv_obj_add_style(learn_more, &style_button, LV_PART_MAIN);
+    lv_obj_set_size(learn_more, LV_PCT(100), 34);
+    lv_obj_add_event_cb(learn_more, openRemoteJsonHelpDialog, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* learn_more_label = lv_label_create(learn_more);
+    lv_label_set_text(learn_more_label, "Learn More");
+    lv_obj_center(learn_more_label);
     return;
   }
 

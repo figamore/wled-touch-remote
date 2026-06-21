@@ -7,6 +7,7 @@ Import("env")
 project_dir = Path(env.subst("$PROJECT_DIR"))
 logo_source = project_dir / "wled.png"
 qr_source = project_dir / "qr.png"
+remote_qr_source = project_dir / "remote-qr.png"
 target = project_dir / "include" / "generated" / "wled_logo_png.h"
 
 
@@ -158,6 +159,8 @@ header_pixels = flatten_to_rgb565(header_rgba_pixels, (0x11, 0x18, 0x21))
 
 qr_width, qr_height, qr_rgba_pixels = read_png_rgba(qr_source, "Help QR")
 qr_pixels = flatten_to_rgb565(qr_rgba_pixels, (0xFF, 0xFF, 0xFF))
+remote_qr_width, remote_qr_height, remote_qr_rgba_pixels = read_png_rgba(remote_qr_source, "Remote JSON QR")
+remote_qr_pixels = flatten_to_rgb565(remote_qr_rgba_pixels, (0xFF, 0xFF, 0xFF))
 
 target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -183,6 +186,9 @@ constexpr size_t kWledLogoHeaderPixelCount = {len(header_pixels)};
 constexpr uint32_t kHelpQrWidth = {qr_width};
 constexpr uint32_t kHelpQrHeight = {qr_height};
 constexpr size_t kHelpQrPixelCount = {len(qr_pixels)};
+constexpr uint32_t kRemoteJsonQrWidth = {remote_qr_width};
+constexpr uint32_t kRemoteJsonQrHeight = {remote_qr_height};
+constexpr size_t kRemoteJsonQrPixelCount = {len(remote_qr_pixels)};
 
 const uint16_t kWledLogoPixels[] PROGMEM = {{
 {format_pixels(logo_pixels)}
@@ -194,6 +200,10 @@ const uint16_t kWledLogoHeaderPixels[] PROGMEM = {{
 
 const uint16_t kHelpQrPixels[] PROGMEM = {{
 {format_pixels(qr_pixels)}
+}};
+
+const uint16_t kRemoteJsonQrPixels[] PROGMEM = {{
+{format_pixels(remote_qr_pixels)}
 }};
 """
 
