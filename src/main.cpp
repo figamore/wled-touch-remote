@@ -161,7 +161,6 @@ uint32_t last_touch_ms = 0;
 volatile bool pending_status = false;
 volatile uint8_t pending_status_code = static_cast<uint8_t>(StatusCode::kBoot);
 
-lv_obj_t* status_label = nullptr;
 lv_obj_t* status_dot = nullptr;
 lv_obj_t* power_button = nullptr;
 lv_obj_t* power_button_label = nullptr;
@@ -193,10 +192,7 @@ const lv_img_dsc_t kHeaderLogoImage = {
     reinterpret_cast<const uint8_t*>(kWledLogoHeaderPixels),
 };
 
-void setStatusDirect(const char* text, lv_color_t color) {
-  if (status_label) {
-    lv_label_set_text(status_label, text);
-  }
+void setStatusColor(lv_color_t color) {
   if (status_dot) {
     lv_obj_set_style_bg_color(status_dot, color, LV_PART_MAIN);
   }
@@ -217,34 +213,34 @@ void applyPendingStatus() {
 
   switch (code) {
     case StatusCode::kBoot:
-      setStatusDirect("boot", lv_color_hex(0x38BDF8));
+      setStatusColor(lv_color_hex(0x38BDF8));
       break;
     case StatusCode::kOffline:
-      setStatusDirect("offline", lv_color_hex(0xF87171));
+      setStatusColor(lv_color_hex(0xF87171));
       break;
     case StatusCode::kSent:
-      setStatusDirect("sent", lv_color_hex(0x34D399));
+      setStatusColor(lv_color_hex(0x34D399));
       break;
     case StatusCode::kOk:
-      setStatusDirect("ok", lv_color_hex(0x34D399));
+      setStatusColor(lv_color_hex(0x34D399));
       break;
     case StatusCode::kNoAck:
-      setStatusDirect("no ack", lv_color_hex(0xA78BFA));
+      setStatusColor(lv_color_hex(0xA78BFA));
       break;
     case StatusCode::kSendError:
-      setStatusDirect("send err", lv_color_hex(0xF87171));
+      setStatusColor(lv_color_hex(0xF87171));
       break;
     case StatusCode::kEspFail:
-      setStatusDirect("esp fail", lv_color_hex(0xF87171));
+      setStatusColor(lv_color_hex(0xF87171));
       break;
     case StatusCode::kPeerError:
-      setStatusDirect("peer err", lv_color_hex(0xF87171));
+      setStatusColor(lv_color_hex(0xF87171));
       break;
     case StatusCode::kBroadcast:
-      setStatusDirect("broadcast", lv_color_hex(0x34D399));
+      setStatusColor(lv_color_hex(0x34D399));
       break;
     case StatusCode::kReady:
-      setStatusDirect("ready", lv_color_hex(0x34D399));
+      setStatusColor(lv_color_hex(0x34D399));
       break;
   }
 }
@@ -322,7 +318,7 @@ void readTouch(lv_indev_drv_t*, lv_indev_data_t* data) {
   uint16_t x = 0;
   uint16_t y = 0;
   if (gfx.getTouch(&x, &y)) {
-    if (display_idle_applied || suppress_touch_until_release) {
+    if ((display_idle_applied && idle_display_off) || suppress_touch_until_release) {
       suppress_touch_until_release = true;
       data->state = LV_INDEV_STATE_REL;
       touchActivity();
@@ -890,9 +886,9 @@ void createUi() {
   lv_obj_t* status = lv_obj_create(topbar);
   lv_obj_remove_style_all(status);
 #if WLED_CYD_ENABLE_BATTERY
-  lv_obj_set_size(status, batteryAvailable() ? 130 : 92, 22);
+  lv_obj_set_size(status, batteryAvailable() ? 44 : 16, 22);
 #else
-  lv_obj_set_size(status, 92, 22);
+  lv_obj_set_size(status, 16, 22);
 #endif
   lv_obj_set_flex_flow(status, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(status, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -904,11 +900,6 @@ void createUi() {
   lv_obj_set_style_radius(status_dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(status_dot, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_bg_color(status_dot, lv_color_hex(0x38BDF8), LV_PART_MAIN);
-
-  status_label = lv_label_create(status);
-  lv_label_set_text(status_label, "boot");
-  lv_obj_set_style_text_font(status_label, &lv_font_montserrat_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(status_label, lv_color_hex(0xCBD5E1), LV_PART_MAIN);
 
 #if WLED_CYD_ENABLE_BATTERY
   createBatteryIndicator(status);
