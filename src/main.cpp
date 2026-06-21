@@ -14,6 +14,7 @@ namespace {
 
 constexpr int kScreenWidth = 320;
 constexpr int kScreenHeight = 240;
+constexpr int kTopBarHeight = 30;
 constexpr size_t kLvglBufferLines = 40;
 constexpr uint8_t kWizMoteButtonOn = 1;
 constexpr uint8_t kWizMoteButtonOff = 2;
@@ -225,7 +226,6 @@ uint32_t last_touch_ms = 0;
 volatile bool pending_status = false;
 volatile uint8_t pending_status_code = static_cast<uint8_t>(StatusCode::kBoot);
 
-lv_obj_t* status_dot = nullptr;
 lv_obj_t* main_tabs = nullptr;
 lv_obj_t* presets_tab = nullptr;
 lv_obj_t* fx_tab = nullptr;
@@ -279,11 +279,7 @@ const lv_img_dsc_t kRemoteJsonQrImage = {
 void rebuildPresetTab();
 void rebuildFxTab();
 
-void setStatusColor(lv_color_t color) {
-  if (status_dot) {
-    lv_obj_set_style_bg_color(status_dot, color, LV_PART_MAIN);
-  }
-}
+void setStatusColor(lv_color_t) {}
 
 void requestStatus(StatusCode code) {
   pending_status_code = static_cast<uint8_t>(code);
@@ -1365,7 +1361,7 @@ void createUi() {
 
   lv_obj_t* topbar = lv_obj_create(root);
   lv_obj_add_style(topbar, &style_topbar, LV_PART_MAIN);
-  lv_obj_set_size(topbar, LV_PCT(100), 34);
+  lv_obj_set_size(topbar, LV_PCT(100), kTopBarHeight);
   lv_obj_set_flex_flow(topbar, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(topbar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_scrollbar_mode(topbar, LV_SCROLLBAR_MODE_OFF);
@@ -1377,27 +1373,19 @@ void createUi() {
   lv_obj_t* status = lv_obj_create(topbar);
   lv_obj_remove_style_all(status);
 #if WLED_CYD_ENABLE_BATTERY
-  lv_obj_set_size(status, batteryAvailable() ? 46 : 16, 22);
+  lv_obj_set_size(status, batteryAvailable() ? 30 : 0, 22);
 #else
-  lv_obj_set_size(status, 16, 22);
+  lv_obj_set_size(status, 0, 22);
 #endif
   lv_obj_set_flex_flow(status, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(status, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(status, 6, LV_PART_MAIN);
-
-  status_dot = lv_obj_create(status);
-  lv_obj_remove_style_all(status_dot);
-  lv_obj_set_size(status_dot, 10, 10);
-  lv_obj_set_style_radius(status_dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(status_dot, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(status_dot, lv_color_hex(kColorAccent), LV_PART_MAIN);
 
 #if WLED_CYD_ENABLE_BATTERY
   createBatteryIndicator(status);
 #endif
 
   main_tabs = lv_tabview_create(root, LV_DIR_TOP, 30);
-  lv_obj_set_size(main_tabs, LV_PCT(100), kScreenHeight - 34);
+  lv_obj_set_size(main_tabs, LV_PCT(100), kScreenHeight - kTopBarHeight);
   lv_obj_set_style_bg_color(main_tabs, lv_color_hex(kColorBg), LV_PART_MAIN);
   lv_obj_set_style_border_width(main_tabs, 0, LV_PART_MAIN);
 
