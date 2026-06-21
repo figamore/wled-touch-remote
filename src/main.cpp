@@ -15,6 +15,9 @@ namespace {
 constexpr int kScreenWidth = 320;
 constexpr int kScreenHeight = 240;
 constexpr int kTopBarHeight = 30;
+constexpr int kTabButtonHeight = 30;
+constexpr int kPagePadding = 8;
+constexpr int kTabCardHeight = kScreenHeight - kTopBarHeight - kTabButtonHeight - (2 * kPagePadding);
 constexpr size_t kLvglBufferLines = 40;
 constexpr uint8_t kWizMoteButtonOn = 1;
 constexpr uint8_t kWizMoteButtonOff = 2;
@@ -1022,8 +1025,12 @@ void createLooksTab(lv_obj_t* tab) {
   configurePageScroll(tab, extended_mode);
 
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), extended_mode ? 282 : 138);
+  lv_obj_set_size(panel, LV_PCT(100), extended_mode ? 282 : kTabCardHeight);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(panel,
+                        extended_mode ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
 
@@ -1059,13 +1066,15 @@ void createLooksTab(lv_obj_t* tab) {
   lv_obj_remove_style_all(rows);
   lv_obj_set_size(rows, LV_PCT(100), 88);
   lv_obj_set_flex_flow(rows, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(rows, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_row(rows, 10, LV_PART_MAIN);
 
   lv_obj_t* row_one = lv_obj_create(rows);
   lv_obj_remove_style_all(row_one);
   lv_obj_set_size(row_one, LV_PCT(100), 38);
   lv_obj_set_flex_flow(row_one, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row_one, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_flex_align(row_one, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(row_one, 8, LV_PART_MAIN);
 
   lv_obj_t* row_two = lv_obj_create(rows);
   lv_obj_remove_style_all(row_two);
@@ -1107,11 +1116,11 @@ void createFxTab(lv_obj_t* tab) {
 
   if (!extended_mode) {
     lv_obj_t* panel = createPanel(tab);
-    lv_obj_set_size(panel, LV_PCT(100), 180);
+    lv_obj_set_size(panel, LV_PCT(100), kTabCardHeight);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(panel, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(panel, 6, LV_PART_MAIN);
 
     lv_obj_t* title = lv_label_create(panel);
     lv_label_set_text(title, "Extended Mode Off");
@@ -1125,7 +1134,7 @@ void createFxTab(lv_obj_t* tab) {
 
     lv_obj_t* settings = lv_btn_create(panel);
     styleButton(settings);
-    lv_obj_set_size(settings, LV_PCT(100), 34);
+    lv_obj_set_size(settings, LV_PCT(100), 32);
     lv_obj_add_event_cb(settings, goToSettings, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* settings_label = lv_label_create(settings);
     lv_label_set_text(settings_label, LV_SYMBOL_SETTINGS "  Settings");
@@ -1133,7 +1142,7 @@ void createFxTab(lv_obj_t* tab) {
 
     lv_obj_t* learn_more = lv_btn_create(panel);
     styleButton(learn_more);
-    lv_obj_set_size(learn_more, LV_PCT(100), 34);
+    lv_obj_set_size(learn_more, LV_PCT(100), 32);
     lv_obj_add_event_cb(learn_more, openRemoteJsonHelpDialog, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* learn_more_label = lv_label_create(learn_more);
     lv_label_set_text(learn_more_label, LV_SYMBOL_LIST "  Learn More");
@@ -1384,7 +1393,7 @@ void createUi() {
   createBatteryIndicator(status);
 #endif
 
-  main_tabs = lv_tabview_create(root, LV_DIR_TOP, 30);
+  main_tabs = lv_tabview_create(root, LV_DIR_TOP, kTabButtonHeight);
   lv_obj_set_size(main_tabs, LV_PCT(100), kScreenHeight - kTopBarHeight);
   lv_obj_set_style_bg_color(main_tabs, lv_color_hex(kColorBg), LV_PART_MAIN);
   lv_obj_set_style_border_width(main_tabs, 0, LV_PART_MAIN);
