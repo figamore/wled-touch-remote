@@ -915,7 +915,7 @@ void createControlPairRow(lv_obj_t* parent,
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   lv_obj_t* label = lv_label_create(row);
-  lv_obj_set_width(label, 110);
+  lv_obj_set_width(label, 118);
   lv_label_set_text(label, label_text);
   lv_obj_add_style(label, &style_label_muted, LV_PART_MAIN);
 
@@ -1237,8 +1237,8 @@ void initStyles() {
   lv_style_set_radius(&style_panel, 8);
 
   lv_style_init(&style_label_muted);
-  lv_style_set_text_color(&style_label_muted, lv_color_hex(0x8FA3B8));
-  lv_style_set_text_font(&style_label_muted, &lv_font_montserrat_12);
+  lv_style_set_text_color(&style_label_muted, lv_color_hex(0xFFFFFF));
+  lv_style_set_text_font(&style_label_muted, &lv_font_montserrat_14);
 
   lv_style_init(&style_button);
   lv_style_set_bg_color(&style_button, lv_color_hex(0x22303C));
