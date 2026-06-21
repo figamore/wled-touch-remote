@@ -14,7 +14,7 @@ namespace {
 
 constexpr int kScreenWidth = 320;
 constexpr int kScreenHeight = 240;
-constexpr size_t kLvglBufferLines = 20;
+constexpr size_t kLvglBufferLines = 40;
 constexpr uint8_t kWizMoteButtonOn = 1;
 constexpr uint8_t kWizMoteButtonOff = 2;
 constexpr uint8_t kWizMoteButtonBrightDown = 8;
@@ -1483,5 +1483,5 @@ void loop() {
 
   applyPendingStatus();
   lv_timer_handler();
-  delay(5);
+  delay(1);
 }
