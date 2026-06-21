@@ -23,7 +23,7 @@ WLED's built-in ESP-NOW support is WizMote-style button-code based. In WLED:
 
 Default WLED behavior supports power, brightness up/down, and presets 1-7. The brightness slider translates movement into native WLED brightness step packets.
 
-The Info tab shows the ESP-NOW MAC address and includes Settings, where the display orientation can be flipped, the inactivity action can be set to dim or turn the display off, and Basic/Extended remote mode can be selected. In Extended mode, the Presets tab expands to presets 1-30 and the FX tab exposes palette, speed, intensity, custom slider 1, and large color-swatch controls. Settings are saved in ESP32 NVS and restored after reboot.
+The Info tab shows the ESP-NOW MAC address and includes Help with a QR code for the project repository. The Settings tab lets the display orientation be flipped, the inactivity action be set to dim, turn the display off, or stay always on, and Basic/Extended remote mode be selected. In Extended mode, the Presets tab expands to presets 1-30 and the FX tab exposes palette, speed, intensity, custom slider 1, and large color-swatch controls. Settings are saved in ESP32 NVS and restored after reboot.
 
 For Extended mode, upload the included `remote.json` to the root of the WLED controller filesystem as `/remote.json` using WLED's file editor:
 

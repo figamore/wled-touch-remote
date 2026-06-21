@@ -28,6 +28,7 @@ constexpr uint8_t kBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 constexpr const char* kPrefsNamespace = "wled-cyd";
 constexpr const char* kPrefsFlipKey = "flip";
 constexpr const char* kPrefsIdleOffKey = "idleOff";
+constexpr const char* kPrefsIdleModeKey = "idleMode";
 constexpr const char* kPrefsExtendedKey = "extended";
 
 class LGFX : public lgfx::LGFX_Device {
@@ -149,6 +150,12 @@ struct RemoteControlPair {
   uint8_t up_button;
 };
 
+enum class IdleMode : uint8_t {
+  kDim,
+  kOff,
+  kAlwaysOn,
+};
+
 constexpr RemoteControlPair kFxControls[] = {
     {"Palette", kRemoteActionFirst, static_cast<uint8_t>(kRemoteActionFirst + 1)},
     {"Speed", static_cast<uint8_t>(kRemoteActionFirst + 2), static_cast<uint8_t>(kRemoteActionFirst + 3)},
@@ -191,7 +198,7 @@ RemoteState state;
 uint32_t sequence_id = 0;
 bool espnow_ready = false;
 bool display_flipped = false;
-bool idle_display_off = false;
+IdleMode idle_mode = IdleMode::kDim;
 bool extended_mode = false;
 bool display_idle_applied = false;
 bool suppress_touch_until_release = false;
@@ -302,6 +309,30 @@ void touchActivity() {
   gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
 }
 
+const char* idleModeName(IdleMode mode) {
+  switch (mode) {
+    case IdleMode::kDim:
+      return "Dim";
+    case IdleMode::kOff:
+      return "Display Off";
+    case IdleMode::kAlwaysOn:
+      return "Always On";
+  }
+  return "Dim";
+}
+
+IdleMode nextIdleMode(IdleMode mode) {
+  switch (mode) {
+    case IdleMode::kDim:
+      return IdleMode::kOff;
+    case IdleMode::kOff:
+      return IdleMode::kAlwaysOn;
+    case IdleMode::kAlwaysOn:
+      return IdleMode::kDim;
+  }
+  return IdleMode::kDim;
+}
+
 void applyDisplayRotation() {
   gfx.setRotation(display_flipped ? 3 : 1);
 }
@@ -337,12 +368,19 @@ void loadSettings() {
   Preferences prefs;
   if (prefs.begin(kPrefsNamespace, true)) {
     display_flipped = prefs.getBool(kPrefsFlipKey, false);
-    idle_display_off = prefs.getBool(kPrefsIdleOffKey, false);
+    if (prefs.isKey(kPrefsIdleModeKey)) {
+      const uint8_t saved_idle_mode = prefs.getUChar(kPrefsIdleModeKey, static_cast<uint8_t>(IdleMode::kDim));
+      idle_mode = saved_idle_mode <= static_cast<uint8_t>(IdleMode::kAlwaysOn)
+                      ? static_cast<IdleMode>(saved_idle_mode)
+                      : IdleMode::kDim;
+    } else {
+      idle_mode = prefs.getBool(kPrefsIdleOffKey, false) ? IdleMode::kOff : IdleMode::kDim;
+    }
     extended_mode = prefs.getBool(kPrefsExtendedKey, false);
     prefs.end();
   }
   Serial.printf("Display orientation: %s\n", display_flipped ? "flipped" : "normal");
-  Serial.printf("Display idle action: %s\n", idle_display_off ? "off" : "dim");
+  Serial.printf("Display idle action: %s\n", idleModeName(idle_mode));
   Serial.printf("Control mode: %s\n", extended_mode ? "extended" : "basic");
 }
 
@@ -350,7 +388,7 @@ void saveSettings() {
   Preferences prefs;
   if (prefs.begin(kPrefsNamespace, false)) {
     prefs.putBool(kPrefsFlipKey, display_flipped);
-    prefs.putBool(kPrefsIdleOffKey, idle_display_off);
+    prefs.putUChar(kPrefsIdleModeKey, static_cast<uint8_t>(idle_mode));
     prefs.putBool(kPrefsExtendedKey, extended_mode);
     prefs.end();
   }
@@ -372,7 +410,7 @@ void readTouch(lv_indev_drv_t*, lv_indev_data_t* data) {
   uint16_t x = 0;
   uint16_t y = 0;
   if (gfx.getTouch(&x, &y)) {
-    if ((display_idle_applied && idle_display_off) || suppress_touch_until_release) {
+    if ((display_idle_applied && idle_mode == IdleMode::kOff) || suppress_touch_until_release) {
       suppress_touch_until_release = true;
       data->state = LV_INDEV_STATE_REL;
       touchActivity();
@@ -602,7 +640,7 @@ void updateOrientationLabel() {
 
 void updateIdleLabel() {
   if (idle_label) {
-    lv_label_set_text(idle_label, idle_display_off ? "Inactivity: Display Off" : "Inactivity: Dim");
+    lv_label_set_text_fmt(idle_label, "Inactivity: %s", idleModeName(idle_mode));
   }
 }
 
@@ -622,7 +660,7 @@ void onFlipDisplay(lv_event_t*) {
 }
 
 void onToggleIdleAction(lv_event_t*) {
-  idle_display_off = !idle_display_off;
+  idle_mode = nextIdleMode(idle_mode);
   saveSettings();
   updateIdleLabel();
   touchActivity();
@@ -1351,9 +1389,9 @@ void loop() {
   last_tick_ms = now;
   lv_tick_inc(elapsed);
 
-  if (!display_idle_applied && now - last_touch_ms > UI_DIM_AFTER_MS) {
+  if (idle_mode != IdleMode::kAlwaysOn && !display_idle_applied && now - last_touch_ms > UI_DIM_AFTER_MS) {
     display_idle_applied = true;
-    gfx.setBrightness(idle_display_off ? 0 : UI_IDLE_BRIGHTNESS);
+    gfx.setBrightness(idle_mode == IdleMode::kOff ? 0 : UI_IDLE_BRIGHTNESS);
   }
 
   applyPendingStatus();
