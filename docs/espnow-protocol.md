@@ -29,7 +29,20 @@ These work with WLED's built-in WizMote behavior:
 - `16` through `22`: presets 1 through 7
 - `100` through `103`: WIZ Smart Button duplicates for on, off, brightness up, and brightness down
 
-The stock UI sends the non-duplicate native button codes WLED handles without a `/remote.json` file.
+Basic mode sends the non-duplicate native button codes WLED handles without a `/remote.json` file.
+
+## Extended Remote Buttons
+
+Extended mode still uses WizMote-shaped ESP-NOW packets, but it sends additional button IDs that WLED maps through `/remote.json`. Upload the repository `remote.json` file to the WLED controller filesystem root as `/remote.json`.
+
+The extended button ranges are:
+
+- `23` through `45`: presets 8 through 30
+- `50`/`51`: palette down/up
+- `52`/`53`: speed down/up
+- `54`/`55`: intensity down/up
+- `56`/`57`: custom effect slider 1 down/up
+- `70` through `79`: color swatches, which turn WLED on, switch the selected segment to Solid, and apply the color
 
 ## Packet Shape
 
