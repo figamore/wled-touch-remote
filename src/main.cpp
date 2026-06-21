@@ -738,10 +738,28 @@ void openHelpDialog(lv_event_t*) {
   lv_label_set_text(close_label, "Close");
   lv_obj_center(close_label);
 
-  lv_obj_t* qr = lv_img_create(help_dialog);
+  lv_obj_t* content = lv_obj_create(help_dialog);
+  lv_obj_remove_style_all(content);
+  lv_obj_set_size(content, 296, 180);
+  lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, -10);
+  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(content, 8, LV_PART_MAIN);
+
+  lv_obj_t* instructions = lv_label_create(content);
+  lv_obj_set_width(instructions, 108);
+  lv_label_set_long_mode(instructions, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(instructions,
+                    "Scan for\n"
+                    "setup help,\n"
+                    "usage tips,\n"
+                    "and project\n"
+                    "instructions.");
+  lv_obj_add_style(instructions, &style_label_muted, LV_PART_MAIN);
+
+  lv_obj_t* qr = lv_img_create(content);
   lv_img_set_src(qr, &kHelpQrImage);
   lv_obj_set_size(qr, kHelpQrWidth, kHelpQrHeight);
-  lv_obj_align(qr, LV_ALIGN_CENTER, 0, 8);
 }
 
 void openRemoteJsonHelpDialog(lv_event_t*) {
