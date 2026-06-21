@@ -210,6 +210,7 @@ lv_obj_t* status_dot = nullptr;
 lv_obj_t* main_tabs = nullptr;
 lv_obj_t* presets_tab = nullptr;
 lv_obj_t* fx_tab = nullptr;
+lv_obj_t* preset_buttons[kExtendedPresetCount] = {};
 lv_obj_t* power_button = nullptr;
 lv_obj_t* power_button_label = nullptr;
 lv_obj_t* brightness_label = nullptr;
@@ -218,6 +219,7 @@ lv_obj_t* orientation_label = nullptr;
 lv_obj_t* idle_label = nullptr;
 lv_obj_t* mode_label = nullptr;
 lv_obj_t* help_dialog = nullptr;
+uint8_t selected_preset = 0;
 
 #if WLED_CYD_ENABLE_BATTERY
 lv_obj_t* battery_indicator = nullptr;
@@ -523,9 +525,27 @@ void onBrightness(lv_event_t* event) {
   sendBrightnessDelta(static_cast<int>(state.brightness) - previous);
 }
 
+void setSelectedPreset(uint8_t preset) {
+  selected_preset = preset;
+
+  for (uint8_t i = 0; i < kExtendedPresetCount; ++i) {
+    if (!preset_buttons[i]) {
+      continue;
+    }
+
+    if (i + 1 == selected_preset) {
+      lv_obj_add_state(preset_buttons[i], LV_STATE_CHECKED);
+    } else {
+      lv_obj_clear_state(preset_buttons[i], LV_STATE_CHECKED);
+    }
+  }
+}
+
 void onPreset(lv_event_t* event) {
   const uintptr_t preset = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
-  sendPreset(static_cast<uint8_t>(preset));
+  const uint8_t preset_number = static_cast<uint8_t>(preset);
+  setSelectedPreset(preset_number);
+  sendPreset(preset_number);
   setPowerUi(true);
 }
 
@@ -954,6 +974,10 @@ void createColorSwatches(lv_obj_t* parent) {
 }
 
 void createLooksTab(lv_obj_t* tab) {
+  for (lv_obj_t*& preset_button : preset_buttons) {
+    preset_button = nullptr;
+  }
+
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
@@ -980,8 +1004,13 @@ void createLooksTab(lv_obj_t* tab) {
     for (uintptr_t i = 1; i <= kExtendedPresetCount; ++i) {
       lv_obj_t* btn = lv_btn_create(preset_list);
       lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
+      lv_obj_add_style(btn, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
       lv_obj_set_size(btn, 48, 34);
       lv_obj_add_event_cb(btn, onPreset, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
+      preset_buttons[i - 1] = btn;
+      if (i == selected_preset) {
+        lv_obj_add_state(btn, LV_STATE_CHECKED);
+      }
 
       lv_obj_t* label = lv_label_create(btn);
       lv_label_set_text_fmt(label, "%u", static_cast<unsigned>(i));
@@ -1014,8 +1043,13 @@ void createLooksTab(lv_obj_t* tab) {
     lv_obj_t* parent = i <= 4 ? row_one : row_two;
     lv_obj_t* btn = lv_btn_create(parent);
     lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
+    lv_obj_add_style(btn, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
     lv_obj_set_size(btn, 64, 38);
     lv_obj_add_event_cb(btn, onPreset, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
+    preset_buttons[i - 1] = btn;
+    if (i == selected_preset) {
+      lv_obj_add_state(btn, LV_STATE_CHECKED);
+    }
 
     lv_obj_t* label = lv_label_create(btn);
     lv_label_set_text_fmt(label, "%u", static_cast<unsigned>(i));
