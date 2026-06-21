@@ -20,11 +20,15 @@ constexpr uint8_t kWizMoteButtonOff = 2;
 constexpr uint8_t kWizMoteButtonBrightDown = 8;
 constexpr uint8_t kWizMoteButtonBrightUp = 9;
 constexpr uint8_t kWizMoteButtonOne = 16;
-constexpr uint8_t kWizMotePresetCount = 7;
+constexpr uint8_t kBasicPresetCount = 7;
+constexpr uint8_t kExtendedPresetCount = 30;
+constexpr uint8_t kRemoteActionFirst = 50;
+constexpr uint8_t kRemoteColorFirst = 70;
 constexpr uint8_t kBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 constexpr const char* kPrefsNamespace = "wled-cyd";
 constexpr const char* kPrefsFlipKey = "flip";
 constexpr const char* kPrefsIdleOffKey = "idleOff";
+constexpr const char* kPrefsExtendedKey = "extended";
 
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Bus_SPI bus_;
@@ -132,6 +136,39 @@ struct RemoteState {
   uint8_t brightness = 255;
 };
 
+struct ColorSwatch {
+  const char* label;
+  uint8_t button;
+  uint32_t color;
+  bool dark_text;
+};
+
+struct RemoteControlPair {
+  const char* label;
+  uint8_t down_button;
+  uint8_t up_button;
+};
+
+constexpr RemoteControlPair kFxControls[] = {
+    {"Palette", kRemoteActionFirst, static_cast<uint8_t>(kRemoteActionFirst + 1)},
+    {"Speed", static_cast<uint8_t>(kRemoteActionFirst + 2), static_cast<uint8_t>(kRemoteActionFirst + 3)},
+    {"Intensity", static_cast<uint8_t>(kRemoteActionFirst + 4), static_cast<uint8_t>(kRemoteActionFirst + 5)},
+    {"Custom Slider 1", static_cast<uint8_t>(kRemoteActionFirst + 6), static_cast<uint8_t>(kRemoteActionFirst + 7)},
+};
+
+constexpr ColorSwatch kColorSwatches[] = {
+    {"Warm", kRemoteColorFirst, 0xFFC078, false},
+    {"White", static_cast<uint8_t>(kRemoteColorFirst + 1), 0xFFFFFF, true},
+    {"Red", static_cast<uint8_t>(kRemoteColorFirst + 2), 0xEF4444, false},
+    {"Orange", static_cast<uint8_t>(kRemoteColorFirst + 3), 0xF97316, false},
+    {"Yellow", static_cast<uint8_t>(kRemoteColorFirst + 4), 0xFACC15, true},
+    {"Green", static_cast<uint8_t>(kRemoteColorFirst + 5), 0x22C55E, true},
+    {"Cyan", static_cast<uint8_t>(kRemoteColorFirst + 6), 0x06B6D4, true},
+    {"Blue", static_cast<uint8_t>(kRemoteColorFirst + 7), 0x2563EB, false},
+    {"Purple", static_cast<uint8_t>(kRemoteColorFirst + 8), 0xA855F7, false},
+    {"Pink", static_cast<uint8_t>(kRemoteColorFirst + 9), 0xEC4899, false},
+};
+
 enum class StatusCode : uint8_t {
   kBoot,
   kOffline,
@@ -155,6 +192,7 @@ uint32_t sequence_id = 0;
 bool espnow_ready = false;
 bool display_flipped = false;
 bool idle_display_off = false;
+bool extended_mode = false;
 bool display_idle_applied = false;
 bool suppress_touch_until_release = false;
 uint32_t last_touch_ms = 0;
@@ -162,13 +200,16 @@ volatile bool pending_status = false;
 volatile uint8_t pending_status_code = static_cast<uint8_t>(StatusCode::kBoot);
 
 lv_obj_t* status_dot = nullptr;
+lv_obj_t* main_tabs = nullptr;
+lv_obj_t* presets_tab = nullptr;
+lv_obj_t* fx_tab = nullptr;
 lv_obj_t* power_button = nullptr;
 lv_obj_t* power_button_label = nullptr;
 lv_obj_t* brightness_label = nullptr;
 lv_obj_t* mac_label = nullptr;
-lv_obj_t* settings_dialog = nullptr;
 lv_obj_t* orientation_label = nullptr;
 lv_obj_t* idle_label = nullptr;
+lv_obj_t* mode_label = nullptr;
 
 #if WLED_CYD_ENABLE_BATTERY
 lv_obj_t* battery_indicator = nullptr;
@@ -191,6 +232,9 @@ const lv_img_dsc_t kHeaderLogoImage = {
     kWledLogoHeaderPixelCount * sizeof(kWledLogoHeaderPixels[0]),
     reinterpret_cast<const uint8_t*>(kWledLogoHeaderPixels),
 };
+
+void rebuildPresetTab();
+void rebuildFxTab();
 
 void setStatusColor(lv_color_t color) {
   if (status_dot) {
@@ -287,10 +331,12 @@ void loadSettings() {
   if (prefs.begin(kPrefsNamespace, true)) {
     display_flipped = prefs.getBool(kPrefsFlipKey, false);
     idle_display_off = prefs.getBool(kPrefsIdleOffKey, false);
+    extended_mode = prefs.getBool(kPrefsExtendedKey, false);
     prefs.end();
   }
   Serial.printf("Display orientation: %s\n", display_flipped ? "flipped" : "normal");
   Serial.printf("Display idle action: %s\n", idle_display_off ? "off" : "dim");
+  Serial.printf("Control mode: %s\n", extended_mode ? "extended" : "basic");
 }
 
 void saveSettings() {
@@ -298,6 +344,7 @@ void saveSettings() {
   if (prefs.begin(kPrefsNamespace, false)) {
     prefs.putBool(kPrefsFlipKey, display_flipped);
     prefs.putBool(kPrefsIdleOffKey, idle_display_off);
+    prefs.putBool(kPrefsExtendedKey, extended_mode);
     prefs.end();
   }
 }
@@ -404,7 +451,8 @@ void sendBrightnessDelta(int delta) {
 }
 
 void sendPreset(uint8_t preset) {
-  if (preset < 1 || preset > kWizMotePresetCount) {
+  const uint8_t max_preset = extended_mode ? kExtendedPresetCount : kBasicPresetCount;
+  if (preset < 1 || preset > max_preset) {
     return;
   }
   sendWizMoteButton(kWizMoteButtonOne + preset - 1);
@@ -434,12 +482,14 @@ void onPing(lv_event_t*) {
   sendWizMoteButton(kWizMoteButtonOn);
 }
 
-void closeSettingsDialog(lv_event_t*) {
-  if (settings_dialog) {
-    lv_obj_del(settings_dialog);
-    settings_dialog = nullptr;
-    orientation_label = nullptr;
-    idle_label = nullptr;
+void onRemoteAction(lv_event_t* event) {
+  const uintptr_t button = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+  sendWizMoteButton(static_cast<uint8_t>(button));
+}
+
+void goToSettings(lv_event_t*) {
+  if (main_tabs) {
+    lv_tabview_set_act(main_tabs, 4, LV_ANIM_ON);
   }
 }
 
@@ -549,6 +599,12 @@ void updateIdleLabel() {
   }
 }
 
+void updateModeLabel() {
+  if (mode_label) {
+    lv_label_set_text(mode_label, extended_mode ? "Remote Mode: Extended" : "Remote Mode: Basic");
+  }
+}
+
 void onFlipDisplay(lv_event_t*) {
   display_flipped = !display_flipped;
   saveSettings();
@@ -565,6 +621,23 @@ void onToggleIdleAction(lv_event_t*) {
   touchActivity();
 }
 
+void onToggleControlMode(lv_event_t* event) {
+  extended_mode = !extended_mode;
+  saveSettings();
+  updateModeLabel();
+  lv_obj_t* target = lv_event_get_target(event);
+  if (target) {
+    if (extended_mode) {
+      lv_obj_add_state(target, LV_STATE_CHECKED);
+    } else {
+      lv_obj_clear_state(target, LV_STATE_CHECKED);
+    }
+  }
+  rebuildPresetTab();
+  rebuildFxTab();
+  touchActivity();
+}
+
 void addLabel(lv_obj_t* parent, const char* text, lv_coord_t width = LV_SIZE_CONTENT) {
   lv_obj_t* label = lv_label_create(parent);
   lv_label_set_text(label, text);
@@ -577,68 +650,6 @@ lv_obj_t* createPanel(lv_obj_t* parent) {
   lv_obj_add_style(panel, &style_panel, LV_PART_MAIN);
   lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
   return panel;
-}
-
-void openSettingsDialog(lv_event_t*) {
-  if (settings_dialog) {
-    return;
-  }
-
-  settings_dialog = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(settings_dialog);
-  lv_obj_set_size(settings_dialog, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(settings_dialog, lv_color_hex(0x020617), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(settings_dialog, LV_OPA_70, LV_PART_MAIN);
-
-  lv_obj_t* panel = createPanel(settings_dialog);
-  lv_obj_set_size(panel, 280, 186);
-  lv_obj_center(panel);
-  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
-
-  lv_obj_t* title = lv_label_create(panel);
-  lv_label_set_text(title, "Settings");
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
-
-  orientation_label = lv_label_create(panel);
-  lv_obj_add_style(orientation_label, &style_label_muted, LV_PART_MAIN);
-  updateOrientationLabel();
-
-  idle_label = lv_label_create(panel);
-  lv_obj_add_style(idle_label, &style_label_muted, LV_PART_MAIN);
-  updateIdleLabel();
-
-  lv_obj_t* row_one = lv_obj_create(panel);
-  lv_obj_remove_style_all(row_one);
-  lv_obj_set_size(row_one, LV_PCT(100), 38);
-  lv_obj_set_flex_flow(row_one, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row_one, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-  lv_obj_t* flip = lv_btn_create(row_one);
-  lv_obj_add_style(flip, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(flip, 118, 34);
-  lv_obj_add_event_cb(flip, onFlipDisplay, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* flip_label = lv_label_create(flip);
-  lv_label_set_text(flip_label, "Flip");
-  lv_obj_center(flip_label);
-
-  lv_obj_t* idle = lv_btn_create(row_one);
-  lv_obj_add_style(idle, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(idle, 118, 34);
-  lv_obj_add_event_cb(idle, onToggleIdleAction, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* idle_button_label = lv_label_create(idle);
-  lv_label_set_text(idle_button_label, "Idle Mode");
-  lv_obj_center(idle_button_label);
-
-  lv_obj_t* close = lv_btn_create(panel);
-  lv_obj_add_style(close, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(close, LV_PCT(100), 34);
-  lv_obj_add_event_cb(close, closeSettingsDialog, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* close_label = lv_label_create(close);
-  lv_label_set_text(close_label, "Close");
-  lv_obj_center(close_label);
 }
 
 lv_obj_t* createSlider(lv_obj_t* parent,
@@ -707,11 +718,68 @@ void createLiveTab(lv_obj_t* tab) {
 
 }
 
+lv_obj_t* createRemoteButton(lv_obj_t* parent,
+                             const char* text,
+                             lv_coord_t width,
+                             lv_coord_t height,
+                             uint8_t button) {
+  lv_obj_t* btn = lv_btn_create(parent);
+  lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(btn, width, height);
+  lv_obj_add_event_cb(btn,
+                      onRemoteAction,
+                      LV_EVENT_CLICKED,
+                      reinterpret_cast<void*>(static_cast<uintptr_t>(button)));
+
+  lv_obj_t* label = lv_label_create(btn);
+  lv_label_set_text(label, text);
+  lv_obj_center(label);
+  return btn;
+}
+
+void createControlPairRow(lv_obj_t* parent,
+                          const char* label_text,
+                          uint8_t down_button,
+                          uint8_t up_button,
+                          const char* down_text,
+                          const char* up_text) {
+  lv_obj_t* row = lv_obj_create(parent);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, LV_PCT(100), 48);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t* label = lv_label_create(row);
+  lv_obj_set_width(label, 110);
+  lv_label_set_text(label, label_text);
+  lv_obj_add_style(label, &style_label_muted, LV_PART_MAIN);
+
+  createRemoteButton(row, down_text, 78, 44, down_button);
+  createRemoteButton(row, up_text, 78, 44, up_button);
+}
+
+void createColorSwatches(lv_obj_t* parent) {
+  lv_obj_t* swatches = lv_obj_create(parent);
+  lv_obj_remove_style_all(swatches);
+  lv_obj_set_size(swatches, LV_PCT(100), 272);
+  lv_obj_set_flex_flow(swatches, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(swatches, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(swatches, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(swatches, 8, LV_PART_MAIN);
+
+  for (const ColorSwatch& swatch : kColorSwatches) {
+    lv_obj_t* btn = createRemoteButton(swatches, swatch.label, 132, 48, swatch.button);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(swatch.color), LV_PART_MAIN);
+    lv_obj_set_style_border_color(btn, lv_color_hex(0xEAF2F8), LV_PART_MAIN);
+    lv_obj_set_style_text_color(btn, lv_color_hex(swatch.dark_text ? 0x0B1014 : 0xFFFFFF), LV_PART_MAIN);
+  }
+}
+
 void createLooksTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_scrollbar_mode(tab, extended_mode ? LV_SCROLLBAR_MODE_AUTO : LV_SCROLLBAR_MODE_OFF);
 
   lv_obj_t* panel = createPanel(tab);
   lv_obj_set_size(panel, LV_PCT(100), 156);
@@ -719,7 +787,32 @@ void createLooksTab(lv_obj_t* tab) {
   lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
 
-  addLabel(panel, "Presets");
+  addLabel(panel, extended_mode ? "Presets 1-30" : "Presets");
+
+  if (extended_mode) {
+    lv_obj_t* preset_list = lv_obj_create(panel);
+    lv_obj_remove_style_all(preset_list);
+    lv_obj_set_size(preset_list, LV_PCT(100), 112);
+    lv_obj_set_flex_flow(preset_list, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(preset_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(preset_list, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(preset_list, 6, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(preset_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(preset_list, LV_SCROLLBAR_MODE_AUTO);
+
+    for (uintptr_t i = 1; i <= kExtendedPresetCount; ++i) {
+      lv_obj_t* btn = lv_btn_create(preset_list);
+      lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
+      lv_obj_set_size(btn, 48, 34);
+      lv_obj_add_event_cb(btn, onPreset, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
+
+      lv_obj_t* label = lv_label_create(btn);
+      lv_label_set_text_fmt(label, "%u", static_cast<unsigned>(i));
+      lv_obj_center(label);
+    }
+
+    return;
+  }
 
   lv_obj_t* rows = lv_obj_create(panel);
   lv_obj_remove_style_all(rows);
@@ -740,7 +833,7 @@ void createLooksTab(lv_obj_t* tab) {
   lv_obj_set_flex_align(row_two, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(row_two, 8, LV_PART_MAIN);
 
-  for (uintptr_t i = 1; i <= kWizMotePresetCount; ++i) {
+  for (uintptr_t i = 1; i <= kBasicPresetCount; ++i) {
     lv_obj_t* parent = i <= 4 ? row_one : row_two;
     lv_obj_t* btn = lv_btn_create(parent);
     lv_obj_add_style(btn, &style_button, LV_PART_MAIN);
@@ -751,6 +844,76 @@ void createLooksTab(lv_obj_t* tab) {
     lv_label_set_text_fmt(label, "%u", static_cast<unsigned>(i));
     lv_obj_center(label);
   }
+}
+
+void rebuildPresetTab() {
+  if (!presets_tab) {
+    return;
+  }
+  lv_obj_clean(presets_tab);
+  createLooksTab(presets_tab);
+}
+
+void createFxTab(lv_obj_t* tab) {
+  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
+  lv_obj_set_scrollbar_mode(tab, extended_mode ? LV_SCROLLBAR_MODE_AUTO : LV_SCROLLBAR_MODE_OFF);
+
+  if (!extended_mode) {
+    lv_obj_t* panel = createPanel(tab);
+    lv_obj_set_size(panel, LV_PCT(100), 156);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(panel, 12, LV_PART_MAIN);
+
+    lv_obj_t* title = lv_label_create(panel);
+    lv_label_set_text(title, "Extended Mode Off");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
+
+    lv_obj_t* hint = lv_label_create(panel);
+    lv_label_set_text(hint, "Enable it in Settings for FX controls");
+    lv_obj_set_width(hint, LV_PCT(100));
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_add_style(hint, &style_label_muted, LV_PART_MAIN);
+
+    lv_obj_t* settings = lv_btn_create(panel);
+    lv_obj_add_style(settings, &style_button, LV_PART_MAIN);
+    lv_obj_set_size(settings, LV_PCT(100), 34);
+    lv_obj_add_event_cb(settings, goToSettings, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* settings_label = lv_label_create(settings);
+    lv_label_set_text(settings_label, "Settings");
+    lv_obj_center(settings_label);
+    return;
+  }
+
+  lv_obj_t* fx_panel = createPanel(tab);
+  lv_obj_set_size(fx_panel, LV_PCT(100), 560);
+  lv_obj_set_flex_flow(fx_panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(fx_panel, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(fx_panel, 8, LV_PART_MAIN);
+
+  addLabel(fx_panel, "Look Controls");
+  for (const RemoteControlPair& control : kFxControls) {
+    createControlPairRow(fx_panel,
+                         control.label,
+                         control.down_button,
+                         control.up_button,
+                         "-",
+                         "+");
+  }
+
+  addLabel(fx_panel, "Colors");
+  createColorSwatches(fx_panel);
+}
+
+void rebuildFxTab() {
+  if (!fx_tab) {
+    return;
+  }
+  lv_obj_clean(fx_tab);
+  createFxTab(fx_tab);
 }
 
 void createInfoTab(lv_obj_t* tab) {
@@ -799,11 +962,85 @@ void createInfoTab(lv_obj_t* tab) {
   lv_obj_t* settings = lv_btn_create(actions);
   lv_obj_add_style(settings, &style_button, LV_PART_MAIN);
   lv_obj_set_size(settings, 118, 34);
-  lv_obj_add_event_cb(settings, openSettingsDialog, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(settings, goToSettings, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t* settings_label = lv_label_create(settings);
   lv_label_set_text(settings_label, "Settings");
   lv_obj_center(settings_label);
+}
+
+void createSettingsTab(lv_obj_t* tab) {
+  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
+  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* panel = createPanel(tab);
+  lv_obj_set_size(panel, LV_PCT(100), 156);
+  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(panel, 8, LV_PART_MAIN);
+
+  lv_obj_t* row_orientation = lv_obj_create(panel);
+  lv_obj_remove_style_all(row_orientation);
+  lv_obj_set_size(row_orientation, LV_PCT(100), 34);
+  lv_obj_set_flex_flow(row_orientation, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row_orientation, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  orientation_label = lv_label_create(row_orientation);
+  lv_obj_set_width(orientation_label, 170);
+  lv_obj_add_style(orientation_label, &style_label_muted, LV_PART_MAIN);
+  updateOrientationLabel();
+
+  lv_obj_t* flip = lv_btn_create(row_orientation);
+  lv_obj_add_style(flip, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(flip, 86, 32);
+  lv_obj_add_event_cb(flip, onFlipDisplay, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* flip_label = lv_label_create(flip);
+  lv_label_set_text(flip_label, "Flip");
+  lv_obj_center(flip_label);
+
+  lv_obj_t* row_idle = lv_obj_create(panel);
+  lv_obj_remove_style_all(row_idle);
+  lv_obj_set_size(row_idle, LV_PCT(100), 34);
+  lv_obj_set_flex_flow(row_idle, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row_idle, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  idle_label = lv_label_create(row_idle);
+  lv_obj_set_width(idle_label, 170);
+  lv_obj_add_style(idle_label, &style_label_muted, LV_PART_MAIN);
+  updateIdleLabel();
+
+  lv_obj_t* idle = lv_btn_create(row_idle);
+  lv_obj_add_style(idle, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(idle, 86, 32);
+  lv_obj_add_event_cb(idle, onToggleIdleAction, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* idle_button_label = lv_label_create(idle);
+  lv_label_set_text(idle_button_label, "Idle");
+  lv_obj_center(idle_button_label);
+
+  lv_obj_t* row_mode = lv_obj_create(panel);
+  lv_obj_remove_style_all(row_mode);
+  lv_obj_set_size(row_mode, LV_PCT(100), 34);
+  lv_obj_set_flex_flow(row_mode, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row_mode, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  mode_label = lv_label_create(row_mode);
+  lv_obj_set_width(mode_label, 170);
+  lv_obj_add_style(mode_label, &style_label_muted, LV_PART_MAIN);
+  updateModeLabel();
+
+  lv_obj_t* mode = lv_btn_create(row_mode);
+  lv_obj_add_style(mode, &style_button, LV_PART_MAIN);
+  lv_obj_add_style(mode, &style_button_checked, LV_PART_MAIN | LV_STATE_CHECKED);
+  lv_obj_set_size(mode, 86, 32);
+  lv_obj_add_event_cb(mode, onToggleControlMode, LV_EVENT_CLICKED, nullptr);
+  if (extended_mode) {
+    lv_obj_add_state(mode, LV_STATE_CHECKED);
+  }
+  lv_obj_t* mode_button_label = lv_label_create(mode);
+  lv_label_set_text(mode_button_label, "Mode");
+  lv_obj_center(mode_button_label);
 }
 
 void initStyles() {
@@ -861,6 +1098,7 @@ void initStyles() {
 }
 
 void createUi() {
+  Serial.println("UI init: building screen");
   initStyles();
 
   lv_obj_t* screen = lv_scr_act();
@@ -905,24 +1143,29 @@ void createUi() {
   createBatteryIndicator(status);
 #endif
 
-  lv_obj_t* tabs = lv_tabview_create(root, LV_DIR_TOP, 30);
-  lv_obj_set_size(tabs, LV_PCT(100), kScreenHeight - 34);
-  lv_obj_set_style_bg_color(tabs, lv_color_hex(0x0B1014), LV_PART_MAIN);
-  lv_obj_set_style_border_width(tabs, 0, LV_PART_MAIN);
+  main_tabs = lv_tabview_create(root, LV_DIR_TOP, 30);
+  lv_obj_set_size(main_tabs, LV_PCT(100), kScreenHeight - 34);
+  lv_obj_set_style_bg_color(main_tabs, lv_color_hex(0x0B1014), LV_PART_MAIN);
+  lv_obj_set_style_border_width(main_tabs, 0, LV_PART_MAIN);
 
-  lv_obj_t* tab_btns = lv_tabview_get_tab_btns(tabs);
+  lv_obj_t* tab_btns = lv_tabview_get_tab_btns(main_tabs);
   lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x111821), LV_PART_MAIN);
   lv_obj_set_style_text_color(tab_btns, lv_color_hex(0x9DB3C7), LV_PART_MAIN);
   lv_obj_set_style_text_color(tab_btns, lv_color_hex(0xFFFFFF), LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x2563EB), LV_PART_ITEMS | LV_STATE_CHECKED);
 
-  lv_obj_t* live = lv_tabview_add_tab(tabs, "Power");
-  lv_obj_t* looks = lv_tabview_add_tab(tabs, "Presets");
-  lv_obj_t* info = lv_tabview_add_tab(tabs, "Info");
+  lv_obj_t* live = lv_tabview_add_tab(main_tabs, "Power");
+  presets_tab = lv_tabview_add_tab(main_tabs, "Presets");
+  fx_tab = lv_tabview_add_tab(main_tabs, "FX");
+  lv_obj_t* info = lv_tabview_add_tab(main_tabs, "Info");
+  lv_obj_t* settings = lv_tabview_add_tab(main_tabs, "Settings");
 
   createLiveTab(live);
-  createLooksTab(looks);
+  createLooksTab(presets_tab);
+  createFxTab(fx_tab);
   createInfoTab(info);
+  createSettingsTab(settings);
+  Serial.println("UI init: ready");
 }
 
 void onEspNowSent(const uint8_t*, esp_now_send_status_t status) {
