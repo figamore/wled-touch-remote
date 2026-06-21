@@ -210,6 +210,7 @@ lv_obj_t* mac_label = nullptr;
 lv_obj_t* orientation_label = nullptr;
 lv_obj_t* idle_label = nullptr;
 lv_obj_t* mode_label = nullptr;
+lv_obj_t* help_dialog = nullptr;
 
 #if WLED_CYD_ENABLE_BATTERY
 lv_obj_t* battery_indicator = nullptr;
@@ -231,6 +232,12 @@ const lv_img_dsc_t kHeaderLogoImage = {
     {LV_IMG_CF_TRUE_COLOR, 0, 0, kWledLogoHeaderWidth, kWledLogoHeaderHeight},
     kWledLogoHeaderPixelCount * sizeof(kWledLogoHeaderPixels[0]),
     reinterpret_cast<const uint8_t*>(kWledLogoHeaderPixels),
+};
+
+const lv_img_dsc_t kHelpQrImage = {
+    {LV_IMG_CF_TRUE_COLOR, 0, 0, kHelpQrWidth, kHelpQrHeight},
+    kHelpQrPixelCount * sizeof(kHelpQrPixels[0]),
+    reinterpret_cast<const uint8_t*>(kHelpQrPixels),
 };
 
 void rebuildPresetTab();
@@ -652,6 +659,47 @@ lv_obj_t* createPanel(lv_obj_t* parent) {
   return panel;
 }
 
+void closeHelpDialog(lv_event_t*) {
+  if (help_dialog) {
+    lv_obj_del(help_dialog);
+    help_dialog = nullptr;
+  }
+}
+
+void openHelpDialog(lv_event_t*) {
+  if (help_dialog) {
+    return;
+  }
+
+  help_dialog = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(help_dialog);
+  lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(help_dialog, lv_color_hex(0x0B1014), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(help_dialog, LV_OPA_90, LV_PART_MAIN);
+  lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
+
+  lv_obj_t* title = lv_label_create(help_dialog);
+  lv_label_set_text(title, "Help");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 10);
+
+  lv_obj_t* close = lv_btn_create(help_dialog);
+  lv_obj_add_style(close, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(close, 58, 34);
+  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -10, 6);
+  lv_obj_add_event_cb(close, closeHelpDialog, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* close_label = lv_label_create(close);
+  lv_label_set_text(close_label, "Close");
+  lv_obj_center(close_label);
+
+  lv_obj_t* qr = lv_img_create(help_dialog);
+  lv_img_set_src(qr, &kHelpQrImage);
+  lv_obj_set_size(qr, kHelpQrWidth, kHelpQrHeight);
+  lv_obj_align(qr, LV_ALIGN_CENTER, 0, 8);
+}
+
 lv_obj_t* createSlider(lv_obj_t* parent,
                        int min,
                        int max,
@@ -959,14 +1007,14 @@ void createInfoTab(lv_obj_t* tab) {
   lv_label_set_text(label, "Ping WLED");
   lv_obj_center(label);
 
-  lv_obj_t* settings = lv_btn_create(actions);
-  lv_obj_add_style(settings, &style_button, LV_PART_MAIN);
-  lv_obj_set_size(settings, 118, 34);
-  lv_obj_add_event_cb(settings, goToSettings, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* help = lv_btn_create(actions);
+  lv_obj_add_style(help, &style_button, LV_PART_MAIN);
+  lv_obj_set_size(help, 118, 34);
+  lv_obj_add_event_cb(help, openHelpDialog, LV_EVENT_CLICKED, nullptr);
 
-  lv_obj_t* settings_label = lv_label_create(settings);
-  lv_label_set_text(settings_label, "Settings");
-  lv_obj_center(settings_label);
+  lv_obj_t* help_label = lv_label_create(help);
+  lv_label_set_text(help_label, "Help");
+  lv_obj_center(help_label);
 }
 
 void createSettingsTab(lv_obj_t* tab) {
