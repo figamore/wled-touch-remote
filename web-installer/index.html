@@ -259,6 +259,12 @@
         color: var(--text);
         font-weight: 600;
       }
+      .install-note {
+        margin: 0.65rem 0 0;
+        color: var(--faint);
+        font-size: 0.82rem;
+        line-height: 1.4;
+      }
 
       /* ---------- Steps ---------- */
       .steps-section {
@@ -462,6 +468,9 @@
             <span id="release-status" data-state="loading">Checking latest release…</span>
             <span class="sep">·</span>
             <span>Ensure a capacitive CYD is connected via USB</span>
+          </p>
+          <p class="install-note">
+            The installer performs a clean flash for reliable setup. Saved settings on the remote may be reset.
           </p>
         </div>
       </section>

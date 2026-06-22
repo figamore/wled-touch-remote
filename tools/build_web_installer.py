@@ -140,7 +140,7 @@ def write_manifest(site_dir: Path,
     manifest = {
         "name": "WLED Touch Remote",
         "version": release.get("tag_name", "release"),
-        "new_install_prompt_erase": True,
+        "new_install_prompt_erase": False,
         "new_install_improv_wait_time": 0,
         "builds": [
             {
