@@ -62,6 +62,11 @@ Extended mode adds more preset buttons, WLED effects, effect settings, palette c
 ![FX tab](screenshots/wled-touch-remote-fx.png)
 ![FX parameters](screenshots/wled-touch-remote-fx-params.png)
 
+## Communication Notes
+
+WLED's ESP-NOW remote protocol is one-way unless WLED itself is modified. The remote sends commands to WLED, but WLED does not send status, delivery confirmation, or live LED data back to the remote.
+
+Because of that, on-screen state is based on the last action sent from the remote. Effect peek/preview animations are local estimates intended to help identify effects; they are not live previews from the WLED controller.
 
 ## Settings
 
