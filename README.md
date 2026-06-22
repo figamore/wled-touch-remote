@@ -4,7 +4,9 @@ A wireless-capable, touchscreen remote controller for WLED running on the capaci
 
 It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over ESP-NOW. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell.
 
-![Power tab](screenshots/wled-touch-remote-power.png)
+> **Hardware note:** this project officially supports capacitive-touch CYD boards only. For best compatibility, look for the **Guition JC2432W328C** when buying online.
+
+![Display](screenshots/case/FigCyd-Standard-2.jpg)
 
 ## Features
 
@@ -58,13 +60,15 @@ In WLED:
 Extended mode adds more preset buttons, WLED effects, effect settings, palette controls, and large color swatches.
 
 ![FX tab](screenshots/wled-touch-remote-fx.png)
+![FX parameters](screenshots/wled-touch-remote-fx-params.png)
+
 
 ## Settings
 
 The Settings tab lets you change:
 
 - Display orientation
-- Idle behavior: dim, turn off, or always on
+- Idle display behavior: dim, turn off, or always on
 - Basic or Extended mode
 
 Settings are saved on the ESP32 and restored after reboot.
@@ -73,7 +77,7 @@ Settings are saved on the ESP32 and restored after reboot.
 
 ## Supported Hardware
 
-This project targets capacitive ESP32 Cheap Yellow Display boards, especially ESP32-2432S028C-style CYDs.
+This project targets capacitive ESP32 Cheap Yellow Display boards, especially the Guition JC2432W328C / ESP32-2432S028C-style CYD.
 
 The firmware can auto-detect the common capacitive touch controllers used by these boards:
 
@@ -81,6 +85,48 @@ The firmware can auto-detect the common capacitive touch controllers used by the
 - ILI9341 display + FT5x06 touch
 
 Resistive-touch CYDs are not currently supported.
+
+## 3D Printed Case
+
+Optional snap-fit cases are available on MakerWorld:
+
+[FigCYD CYD case with optional battery](https://makerworld.com/en/models/2964422-figcyd-cyd-case-with-optional-battery#profileId-3323586)
+
+Choose one of the two case styles from MakerWorld:
+
+- **Slim case**: for a clean remote without an internal battery.
+- **Battery case**: for a portable, fully-wireless build with an 18650 Li-Ion cell and holder.
+
+![Slim case](screenshots/case/FigCyd-Standard.jpg)
+![Battery case](screenshots/case/FigCyd-Battery-1.jpg)
+
+Assembly notes:
+
+1. Print the case parts from MakerWorld (choose either slim or battery variant).
+2. Press the CYD into the front shell, checking that the USB-C port, reset button, and side button line up.
+3. Snap the back shell into place. Bolts are optional because the case is snap-fit, but they are recommended for a more secure build.
+   - **Slim**: 4 M3x10 bolts
+   - **Battery**: 4 M3x20 bolts
+
+If you are building the slim case, you can stop here. Continue only for the battery case:
+
+1. Remove the printed supports from the button opening, bolt holes, and battery holder area.
+2. Free the side power-button piece and make sure it moves smoothly before installing the CYD.
+3. Install the 18650 holder and route the wires carefully so they do not pinch when the case closes.
+
+![Case supports](screenshots/case/Remove-button-support.jpg)
+![Battery case inside](screenshots/case/FigCyd-Battery-Internal.jpg)
+
+The slim case can be powered through USB-C, or through the board's `GND` and `5V` connector as shown below.
+
+![Slim case power wiring](screenshots/case/FigCyd-Internal.jpg)
+
+**Battery operation instructions**
+
+- Double tap the power button to turn on.
+- Hold the power button for 10 seconds to turn off.
+- If a USB cable is connected while running on battery, the device may restart. This is normal behavior for the CYD battery circuitry.
+- Double-check polarity before powering the board. The case photos show the intended wiring path and board orientation.
 
 # Development
 
