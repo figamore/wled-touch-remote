@@ -28,12 +28,15 @@ constexpr uint8_t kBasicPresetCount = 7;
 constexpr uint8_t kExtendedPresetCount = 30;
 constexpr uint8_t kRemoteActionFirst = 50;
 constexpr uint8_t kRemoteColorFirst = 70;
+constexpr uint8_t kInfoTabIndex = 3;
+constexpr uint8_t kSettingsTabIndex = 4;
 constexpr uint8_t kBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 constexpr const char* kPrefsNamespace = "wled-cyd";
 constexpr const char* kPrefsFlipKey = "flip";
 constexpr const char* kPrefsIdleOffKey = "idleOff";
 constexpr const char* kPrefsIdleModeKey = "idleMode";
 constexpr const char* kPrefsExtendedKey = "extended";
+constexpr const char* kPrefsInfoSeenKey = "infoSeen";
 
 constexpr uint32_t kColorBg = 0x0A0E13;
 constexpr uint32_t kColorHeaderBar = 0x10171F;
@@ -223,6 +226,7 @@ bool espnow_ready = false;
 bool display_flipped = false;
 IdleMode idle_mode = IdleMode::kDim;
 bool extended_mode = false;
+bool show_info_on_first_boot = false;
 bool display_idle_applied = false;
 bool suppress_touch_until_release = false;
 uint32_t last_touch_ms = 0;
@@ -405,11 +409,25 @@ void loadSettings() {
       idle_mode = prefs.getBool(kPrefsIdleOffKey, false) ? IdleMode::kOff : IdleMode::kDim;
     }
     extended_mode = prefs.getBool(kPrefsExtendedKey, false);
+    show_info_on_first_boot = !prefs.getBool(kPrefsInfoSeenKey, false);
     prefs.end();
   }
   Serial.printf("Display orientation: %s\n", display_flipped ? "flipped" : "normal");
   Serial.printf("Display idle action: %s\n", idleModeName(idle_mode));
   Serial.printf("Control mode: %s\n", extended_mode ? "extended" : "basic");
+}
+
+void markInfoTabSeen() {
+  if (!show_info_on_first_boot) {
+    return;
+  }
+
+  Preferences prefs;
+  if (prefs.begin(kPrefsNamespace, false)) {
+    prefs.putBool(kPrefsInfoSeenKey, true);
+    prefs.end();
+  }
+  show_info_on_first_boot = false;
 }
 
 void saveSettings() {
@@ -581,7 +599,7 @@ void onRemoteAction(lv_event_t* event) {
 
 void goToSettings(lv_event_t*) {
   if (main_tabs) {
-    lv_tabview_set_act(main_tabs, 4, LV_ANIM_ON);
+    lv_tabview_set_act(main_tabs, kSettingsTabIndex, LV_ANIM_ON);
   }
 }
 
@@ -1421,6 +1439,12 @@ void createUi() {
   createFxTab(fx_tab);
   createInfoTab(info);
   createSettingsTab(settings);
+
+  if (show_info_on_first_boot) {
+    lv_tabview_set_act(main_tabs, kInfoTabIndex, LV_ANIM_OFF);
+    markInfoTabSeen();
+  }
+
   Serial.println("UI init: ready");
 }
 
