@@ -100,9 +100,11 @@ Optional snap-fit cases are available on MakerWorld:
 Choose one of the two case styles from MakerWorld:
 
 - **Slim case**: for a clean remote without an internal battery.
-- **Battery case**: for a portable, fully-wireless build with an 18650 Li-Ion cell and holder.
 
 ![Slim case](screenshots/case/FigCyd-Standard.jpg)
+
+- **Battery case**: for a portable, fully-wireless build with an 18650 Li-Ion cell and holder.
+
 ![Battery case](screenshots/case/FigCyd-Battery-1.jpg)
 
 Assembly notes:
