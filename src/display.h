@@ -1,0 +1,305 @@
+#pragma once
+
+#include <LovyanGFX.hpp>
+#include "app_state.h"
+
+#if WLED_TOUCH_SIMULATOR
+#include <SDL.h>
+#include <lgfx/v1/platforms/sdl/Panel_sdl.hpp>
+#else
+#include <Wire.h>
+#endif
+
+// ── LGFX driver class ────────────────────────────────────────────────────────
+
+#if WLED_TOUCH_SIMULATOR
+class LGFX : public lgfx::LGFX_Device {
+  lgfx::Panel_sdl panel_;
+
+ public:
+  LGFX() {
+    auto cfg = panel_.config();
+    cfg.panel_width = kScreenWidth;
+    cfg.panel_height = kScreenHeight;
+    cfg.memory_width = kScreenWidth;
+    cfg.memory_height = kScreenHeight;
+    cfg.offset_x = 0;
+    cfg.offset_y = 0;
+    cfg.offset_rotation = 0;
+    panel_.config(cfg);
+    panel_.setWindowTitle("WLED Touch Remote");
+    panel_.setScaling(2, 2);
+    setPanel(&panel_);
+  }
+};
+#else
+class LGFX : public lgfx::LGFX_Device {
+ public:
+  enum class HardwareProfile : uint8_t {
+    kSt7789Cst816s,
+    kIli9341Ft5x06,
+  };
+
+ private:
+  lgfx::Bus_SPI bus_;
+  lgfx::Light_PWM light_;
+  lgfx::Panel_ST7789 panel_st7789_;
+  lgfx::Panel_ILI9341 panel_ili9341_;
+  lgfx::Touch_CST816S touch_cst816s_;
+  lgfx::Touch_FT5x06 touch_ft5x06_;
+  HardwareProfile profile_ = HardwareProfile::kSt7789Cst816s;
+  bool profile_detected_ = false;
+
+  struct TouchProfile {
+    int16_t pin_int;
+    int16_t pin_rst;
+    uint8_t i2c_port;
+    uint8_t i2c_addr;
+  };
+
+  static TouchProfile cst816sTouchProfile() {
+    return {
+        CYD_TOUCH_INT,
+        CYD_TOUCH_RST,
+        CYD_TOUCH_I2C_PORT,
+        CYD_TOUCH_ADDR,
+    };
+  }
+
+  static TouchProfile ft5x06TouchProfile() {
+    return {
+        CYD_ALT_TOUCH_INT,
+        CYD_TOUCH_RST,
+        CYD_ALT_TOUCH_I2C_PORT,
+        CYD_ALT_TOUCH_ADDR,
+    };
+  }
+
+  static TwoWire& i2cBus(uint8_t port) {
+    return port == 1 ? Wire1 : Wire;
+  }
+
+  static void resetTouchPin(int16_t pin_rst, uint16_t settle_ms) {
+    if (pin_rst < 0) {
+      return;
+    }
+    pinMode(pin_rst, OUTPUT);
+    digitalWrite(pin_rst, LOW);
+    delay(10);
+    digitalWrite(pin_rst, HIGH);
+    delay(settle_ms);
+  }
+
+  static bool readI2cRegister(const TouchProfile& profile,
+                              uint8_t reg,
+                              uint8_t* data,
+                              size_t length,
+                              bool stop_after_write = false) {
+    TwoWire& bus = i2cBus(profile.i2c_port);
+    bus.end();
+    delay(1);
+    bus.begin(CYD_TOUCH_SDA, CYD_TOUCH_SCL, 400000);
+    bus.beginTransmission(profile.i2c_addr);
+    bus.write(reg);
+    if (bus.endTransmission(stop_after_write) != 0) {
+      bus.end();
+      return false;
+    }
+
+    const uint8_t read = bus.requestFrom(static_cast<int>(profile.i2c_addr),
+                                         static_cast<int>(length));
+    if (read != length) {
+      bus.end();
+      return false;
+    }
+
+    for (size_t i = 0; i < length; ++i) {
+      data[i] = bus.read();
+    }
+    bus.end();
+    return true;
+  }
+
+  static bool hasNonZeroByte(const uint8_t* data, size_t length) {
+    for (size_t i = 0; i < length; ++i) {
+      if (data[i] != 0x00 && data[i] != 0xFF) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static bool probeFt5x06() {
+    const TouchProfile profile = ft5x06TouchProfile();
+    resetTouchPin(profile.pin_rst, 50);
+    uint8_t data[6] = {};
+    return readI2cRegister(profile, 0xA3, data, sizeof(data), true) && data[5] != 0x00 && data[5] != 0xFF;
+  }
+
+  static bool probeCst816s() {
+    const TouchProfile profile = cst816sTouchProfile();
+    resetTouchPin(profile.pin_rst, 50);
+    uint8_t data[3] = {};
+    return readI2cRegister(profile, 0xA7, data, sizeof(data), true) && hasNonZeroByte(data, sizeof(data));
+  }
+
+  void configureBus() {
+    auto cfg = bus_.config();
+    cfg.spi_host = HSPI_HOST;
+    cfg.spi_mode = 0;
+    cfg.freq_write = 55000000;
+    cfg.freq_read = 16000000;
+    cfg.spi_3wire = false;
+    cfg.use_lock = true;
+    cfg.dma_channel = SPI_DMA_CH_AUTO;
+    cfg.pin_sclk = CYD_TFT_SCLK;
+    cfg.pin_mosi = CYD_TFT_MOSI;
+    cfg.pin_miso = CYD_TFT_MISO;
+    cfg.pin_dc = CYD_TFT_DC;
+    bus_.config(cfg);
+  }
+
+  template <typename Panel>
+  void configurePanel(Panel& panel) {
+    auto cfg = panel.config();
+    cfg.pin_cs = CYD_TFT_CS;
+    cfg.pin_rst = CYD_TFT_RST;
+    cfg.pin_busy = -1;
+    cfg.panel_width = 240;
+    cfg.panel_height = 320;
+    cfg.memory_width = 240;
+    cfg.memory_height = 320;
+    cfg.offset_x = 0;
+    cfg.offset_y = 0;
+    cfg.offset_rotation = CYD_PANEL_OFFSET_ROTATION;
+    cfg.dummy_read_pixel = 8;
+    cfg.dummy_read_bits = 1;
+    cfg.readable = true;
+    cfg.invert = CYD_PANEL_INVERT;
+    cfg.rgb_order = CYD_PANEL_RGB_ORDER;
+    cfg.dlen_16bit = false;
+    cfg.bus_shared = false;
+    panel.config(cfg);
+  }
+
+  void configureLight(uint8_t pin_bl) {
+    auto cfg = light_.config();
+    cfg.pin_bl = pin_bl;
+    cfg.invert = CYD_BACKLIGHT_INVERT;
+    cfg.freq = 44100;
+    cfg.pwm_channel = 7;
+    light_.config(cfg);
+  }
+
+  template <typename Touch>
+  void configureTouch(Touch& touch, const TouchProfile& profile) {
+    auto cfg = touch.config();
+    cfg.x_min = 0;
+    cfg.x_max = 240;
+    cfg.y_min = 0;
+    cfg.y_max = 320;
+    cfg.pin_int = profile.pin_int;
+    cfg.pin_rst = profile.pin_rst;
+    cfg.bus_shared = false;
+    cfg.offset_rotation = CYD_TOUCH_OFFSET_ROTATION;
+    cfg.i2c_port = profile.i2c_port;
+    cfg.i2c_addr = profile.i2c_addr;
+    cfg.pin_sda = CYD_TOUCH_SDA;
+    cfg.pin_scl = CYD_TOUCH_SCL;
+    cfg.freq = 400000;
+    touch.config(cfg);
+  }
+
+  bool detectFt5x06() {
+    configureTouch(touch_ft5x06_, ft5x06TouchProfile());
+    return probeFt5x06();
+  }
+
+  HardwareProfile detectProfile() {
+    profile_detected_ = true;
+#if CYD_HARDWARE_PROFILE == CYD_PROFILE_ST7789_CST816S
+    return HardwareProfile::kSt7789Cst816s;
+#elif CYD_HARDWARE_PROFILE == CYD_PROFILE_ILI9341_FT5X06
+    return HardwareProfile::kIli9341Ft5x06;
+#else
+    if (detectFt5x06()) {
+      return HardwareProfile::kIli9341Ft5x06;
+    }
+    if (probeCst816s()) {
+      return HardwareProfile::kSt7789Cst816s;
+    }
+    profile_detected_ = false;
+    return HardwareProfile::kSt7789Cst816s;
+#endif
+  }
+
+  void applyProfile(HardwareProfile profile) {
+    profile_ = profile;
+    configureBus();
+
+    if (profile_ == HardwareProfile::kIli9341Ft5x06) {
+      configurePanel(panel_ili9341_);
+      configureLight(CYD_ALT_TFT_BL);
+      configureTouch(touch_ft5x06_, ft5x06TouchProfile());
+      panel_ili9341_.setBus(&bus_);
+      panel_ili9341_.setLight(&light_);
+      panel_ili9341_.setTouch(&touch_ft5x06_);
+      setPanel(&panel_ili9341_);
+      return;
+    }
+
+    configurePanel(panel_st7789_);
+    configureLight(CYD_TFT_BL);
+    configureTouch(touch_cst816s_, cst816sTouchProfile());
+    panel_st7789_.setBus(&bus_);
+    panel_st7789_.setLight(&light_);
+    panel_st7789_.setTouch(&touch_cst816s_);
+    setPanel(&panel_st7789_);
+  }
+
+ public:
+  LGFX() {
+    applyProfile(profile_);
+  }
+
+  void autoConfigure() {
+    applyProfile(detectProfile());
+  }
+
+  HardwareProfile hardwareProfile() const {
+    return profile_;
+  }
+
+  bool profileDetected() const {
+    return profile_detected_;
+  }
+
+  const char* panelName() const {
+    return profile_ == HardwareProfile::kIli9341Ft5x06 ? "ILI9341" : "ST7789";
+  }
+
+  const char* touchName() const {
+    return profile_ == HardwareProfile::kIli9341Ft5x06 ? "FT5x06" : "CST816S";
+  }
+
+  const char* profileName() const {
+    return profile_ == HardwareProfile::kIli9341Ft5x06 ? "ILI9341 + FT5x06" : "ST7789 + CST816S";
+  }
+};
+#endif
+
+// ── Display instance ─────────────────────────────────────────────────────────
+
+extern LGFX gfx;
+
+#if WLED_TOUCH_SIMULATOR
+extern uint16_t sim_framebuffer[kScreenWidth * kScreenHeight];
+#endif
+
+// ── Display functions ─────────────────────────────────────────────────────────
+
+void initDisplay();
+void drawSplash();
+void applyDisplayRotation();
+void touchActivity();
+void displayUpdateIdle(uint32_t now);
