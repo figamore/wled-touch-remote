@@ -122,6 +122,10 @@ void setEffectPreview(const WledEffectInfo* effect) {
   drawEffectPreviewFrame();
 }
 
+void clearEffectPreview() {
+  setEffectPreview(nullptr);
+}
+
 void setPowerUi(bool power) {
   state.power = power;
   if (power_button) {
@@ -256,11 +260,13 @@ void updateModeLabel() {
 // ── Event handlers ────────────────────────────────────────────────────────────
 
 void onPower(lv_event_t*) {
+  clearEffectPreview();
   setPowerUi(!state.power);
   sendPower(state.power);
 }
 
 void onBrightness(lv_event_t* event) {
+  clearEffectPreview();
   const uint8_t previous = state.brightness;
   state.brightness = lv_slider_get_value(lv_event_get_target(event));
   if (brightness_label) {
@@ -270,6 +276,7 @@ void onBrightness(lv_event_t* event) {
 }
 
 void onPreset(lv_event_t* event) {
+  clearEffectPreview();
   const uintptr_t preset = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
   const uint8_t preset_number = static_cast<uint8_t>(preset);
   setSelectedPreset(preset_number);
@@ -288,6 +295,7 @@ void activateEffect(const WledEffectInfo* effect) {
 }
 
 void onPing(lv_event_t*) {
+  clearEffectPreview();
   sendWledTouchButton(kWledTouchButtonOn);
 }
 
@@ -298,6 +306,9 @@ void onRestart(lv_event_t*) {
 
 void onRemoteAction(lv_event_t* event) {
   const uintptr_t button = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+  if (button >= kRemoteColorFirst && button < kWledEffectFirstButton) {
+    clearEffectPreview();
+  }
   sendWledTouchButton(static_cast<uint8_t>(button));
 }
 
@@ -325,6 +336,9 @@ void onToggleIdleAction(lv_event_t*) {
 
 void onToggleControlMode(lv_event_t* event) {
   extended_mode = !extended_mode;
+  if (!extended_mode) {
+    clearEffectPreview();
+  }
   saveSettings();
   updateModeLabel();
   lv_obj_t* target = lv_event_get_target(event);
