@@ -615,6 +615,9 @@ void loadSettings() {
     show_info_on_first_boot = !prefs.getBool(kPrefsInfoSeenKey, false);
     prefs.end();
   }
+#if WLED_TOUCH_SIMULATOR
+  extended_mode = true;
+#endif
   Serial.printf("Display orientation: %s\n", display_flipped ? "flipped" : "normal");
   Serial.printf("Display idle action: %s\n", idleModeName(idle_mode));
   Serial.printf("Control mode: %s\n", extended_mode ? "extended" : "basic");
@@ -1870,10 +1873,10 @@ void simulatorSetExtendedMode(bool enabled) {
   rebuildFxTab();
 }
 
-void simulatorUseBasicViewState() {
+void simulatorUseDefaultViewState() {
   display_flipped = false;
   idle_mode = IdleMode::kDim;
-  extended_mode = false;
+  extended_mode = true;
   updateOrientationLabel();
   updateIdleLabel();
   updateModeLabel();

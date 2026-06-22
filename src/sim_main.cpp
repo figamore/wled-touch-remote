@@ -8,9 +8,31 @@
 extern void setup();
 extern void loop();
 extern void simulatorSetTab(uint8_t index);
-extern void simulatorUseBasicViewState();
+extern void simulatorUseDefaultViewState();
 extern void simulatorRunFrames(uint16_t frames);
 extern bool simulatorSaveBmp(const char* path);
+
+void initBatteryMonitor() {}
+
+bool batteryAvailable() {
+  return true;
+}
+
+int batteryAdcMillivolts() {
+  return 3900;
+}
+
+int batteryMillivolts() {
+  return 3900;
+}
+
+int batteryLevel() {
+  return 76;
+}
+
+bool batteryCharging() {
+  return false;
+}
 
 namespace {
 
@@ -40,7 +62,7 @@ bool hasArg(int argc, char** argv, const char* expected) {
 
 void saveScreenshots() {
   mkdir("screenshots", 0755);
-  simulatorUseBasicViewState();
+  simulatorUseDefaultViewState();
   simulatorRunFrames(20);
 
   for (const ScreenshotTab& tab : kScreenshotTabs) {
@@ -56,6 +78,7 @@ void saveScreenshots() {
 
 int main(int argc, char** argv) {
   setup();
+  simulatorUseDefaultViewState();
 
   if (hasArg(argc, argv, "--screenshots")) {
     saveScreenshots();
