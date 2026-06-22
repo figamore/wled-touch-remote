@@ -20,6 +20,7 @@ lv_obj_t* orientation_label = nullptr;
 lv_obj_t* idle_label = nullptr;
 lv_obj_t* mode_label = nullptr;
 lv_obj_t* help_dialog = nullptr;
+lv_obj_t* effect_preview = nullptr;
 
 #if WLED_CYD_ENABLE_BATTERY
 lv_obj_t* battery_indicator = nullptr;

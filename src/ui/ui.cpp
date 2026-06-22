@@ -15,6 +15,113 @@ const lv_img_dsc_t kHeaderLogoImage = {
     reinterpret_cast<const uint8_t*>(kWledLogoHeaderPixels),
 };
 
+constexpr size_t kEffectPreviewDisplayCells = kWledEffectPreviewColors < 32 ? 32 : kWledEffectPreviewColors;
+
+lv_obj_t* effect_preview_cells[kEffectPreviewDisplayCells] = {};
+const WledEffectInfo* active_preview_effect = nullptr;
+uint16_t effect_preview_frame = 0;
+lv_timer_t* effect_preview_timer = nullptr;
+
+const WledEffectInfo* findEffectById(uint8_t effect_id) {
+  for (const WledEffectInfo& effect : kWledEffects) {
+    if (effect.id == effect_id) {
+      return &effect;
+    }
+  }
+  return nullptr;
+}
+
+uint8_t colorChannel(uint32_t color, uint8_t shift) {
+  return static_cast<uint8_t>((color >> shift) & 0xFF);
+}
+
+uint32_t makeColor(uint8_t red, uint8_t green, uint8_t blue) {
+  return (static_cast<uint32_t>(red) << 16) | (static_cast<uint32_t>(green) << 8) | blue;
+}
+
+uint32_t rgb565ToRgb888(uint16_t color) {
+  const uint8_t red5 = (color >> 11) & 0x1F;
+  const uint8_t green6 = (color >> 5) & 0x3F;
+  const uint8_t blue5 = color & 0x1F;
+  const uint8_t red = (red5 << 3) | (red5 >> 2);
+  const uint8_t green = (green6 << 2) | (green6 >> 4);
+  const uint8_t blue = (blue5 << 3) | (blue5 >> 2);
+  return makeColor(red, green, blue);
+}
+
+uint8_t boostPreviewChannel(uint8_t value) {
+  if (value == 0) {
+    return 0;
+  }
+  const uint16_t boosted = (static_cast<uint16_t>(value) * 4 / 3) + 10;
+  return boosted > 255 ? 255 : boosted;
+}
+
+uint32_t boostPreviewColor(uint32_t color) {
+  return makeColor(boostPreviewChannel(colorChannel(color, 16)),
+                   boostPreviewChannel(colorChannel(color, 8)),
+                   boostPreviewChannel(colorChannel(color, 0)));
+}
+
+uint32_t blendColor(uint32_t left, uint32_t right, uint8_t amount) {
+  const uint8_t inverse = 255 - amount;
+  return makeColor(
+      (colorChannel(left, 16) * inverse + colorChannel(right, 16) * amount) / 255,
+      (colorChannel(left, 8) * inverse + colorChannel(right, 8) * amount) / 255,
+      (colorChannel(left, 0) * inverse + colorChannel(right, 0) * amount) / 255);
+}
+
+uint32_t previewColorAt(const WledEffectInfo& effect, uint16_t frame, size_t display_index) {
+  if constexpr (kEffectPreviewDisplayCells == kWledEffectPreviewColors) {
+    return boostPreviewColor(rgb565ToRgb888(effect.preview[frame][display_index]));
+  }
+
+  const uint16_t scaled = display_index * (kWledEffectPreviewColors - 1) * 256 /
+                          (kEffectPreviewDisplayCells - 1);
+  const size_t left_index = scaled / 256;
+  const size_t right_index = left_index + 1 < kWledEffectPreviewColors ? left_index + 1 : left_index;
+  const uint8_t amount = scaled & 0xFF;
+  const uint32_t left = rgb565ToRgb888(effect.preview[frame][left_index]);
+  const uint32_t right = rgb565ToRgb888(effect.preview[frame][right_index]);
+  return boostPreviewColor(blendColor(left, right, amount));
+}
+
+void drawEffectPreviewFrame() {
+  if (!effect_preview) {
+    return;
+  }
+
+  if (!active_preview_effect) {
+    lv_obj_add_flag(effect_preview, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+
+  lv_obj_clear_flag(effect_preview, LV_OBJ_FLAG_HIDDEN);
+  const uint16_t frame = effect_preview_frame % kWledEffectPreviewFrames;
+
+  for (size_t i = 0; i < kEffectPreviewDisplayCells; ++i) {
+    if (effect_preview_cells[i]) {
+      const uint32_t color = previewColorAt(*active_preview_effect, frame, i);
+      lv_obj_set_style_bg_color(effect_preview_cells[i], lv_color_hex(color), LV_PART_MAIN);
+    }
+  }
+}
+
+void updateEffectPreviewTimer(lv_timer_t*) {
+  if (!active_preview_effect) {
+    return;
+  }
+
+  ++effect_preview_frame;
+  drawEffectPreviewFrame();
+}
+
+void setEffectPreview(const WledEffectInfo* effect) {
+  active_preview_effect = effect;
+  effect_preview_frame = 0;
+  drawEffectPreviewFrame();
+}
+
 void setPowerUi(bool power) {
   state.power = power;
   if (power_button) {
@@ -48,6 +155,7 @@ void setSelectedPreset(uint8_t preset) {
 
 void setSelectedEffect(uint8_t effect_id) {
   selected_effect_id = effect_id;
+  setEffectPreview(findEffectById(effect_id));
 }
 
 void initStyles() {
@@ -257,6 +365,32 @@ void createUi() {
   lv_obj_t* title = lv_img_create(topbar);
   lv_img_set_src(title, &kHeaderLogoImage);
   lv_obj_set_size(title, kWledLogoHeaderWidth, kWledLogoHeaderHeight);
+
+  effect_preview = lv_obj_create(topbar);
+  lv_obj_remove_style_all(effect_preview);
+  lv_obj_set_size(effect_preview, 166, 12);
+  lv_obj_set_style_bg_color(effect_preview, lv_color_hex(kColorBg), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(effect_preview, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(effect_preview, lv_color_hex(kColorBorder), LV_PART_MAIN);
+  lv_obj_set_style_border_width(effect_preview, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(effect_preview, 5, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(effect_preview, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(effect_preview, 0, LV_PART_MAIN);
+  lv_obj_set_flex_flow(effect_preview, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(effect_preview, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(effect_preview, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(effect_preview, LV_OBJ_FLAG_HIDDEN);
+  for (size_t i = 0; i < kEffectPreviewDisplayCells; ++i) {
+    effect_preview_cells[i] = lv_obj_create(effect_preview);
+    lv_obj_remove_style_all(effect_preview_cells[i]);
+    lv_obj_set_width(effect_preview_cells[i], 0);
+    lv_obj_set_flex_grow(effect_preview_cells[i], 1);
+    lv_obj_set_height(effect_preview_cells[i], LV_PCT(100));
+    lv_obj_set_style_bg_opa(effect_preview_cells[i], LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(effect_preview_cells[i], lv_color_hex(kColorBg), LV_PART_MAIN);
+    lv_obj_clear_flag(effect_preview_cells[i], LV_OBJ_FLAG_SCROLLABLE);
+  }
+  effect_preview_timer = lv_timer_create(updateEffectPreviewTimer, 90, nullptr);
 
   lv_obj_t* status = lv_obj_create(topbar);
   lv_obj_remove_style_all(status);

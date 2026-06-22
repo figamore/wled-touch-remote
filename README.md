@@ -1,17 +1,17 @@
 # WLED Touch Remote
 
-A touchscreen remote for WLED running on the capacitive ESP32 Cheap Yellow Display.
+A wireless-capable, touchscreen remote controller for WLED running on the capacitive ESP32 Cheap Yellow Display (CYD).
 
-It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over ESP-NOW. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller.
+It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over ESP-NOW. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell.
 
 ![Power tab](screenshots/wled-touch-remote-power.png)
 
-## What It Does
+## Features
 
 - Power on/off and brightness control
-- Presets in a simple touch-friendly layout
-- Optional Extended mode for more presets, effects, palettes, speed, intensity, and color controls
-- On-device settings for screen orientation, idle behavior, and Basic/Extended mode
+- Preset selection
+- Optional, easy-to-configure **extended mode** for up to 20 presets, effects, palettes, speed, intensity, and color controls
+- On-device settings for screen orientation, idle behavior (dim, always off/on), and Basic/Extended mode
 - Help screens with QR codes for setup instructions
 - Web installer support for easy browser flashing
 
@@ -19,24 +19,17 @@ It gives you a small dedicated controller for power, brightness, presets, colors
 
 The easiest way is the [web installer](https://figamore.github.io/wled-touch-remote/):
 
-1. Open the GitHub Pages installer for this project.
+1. Open the [web installer](https://figamore.github.io/wled-touch-remote/)
 2. Connect the CYD with a data-capable USB cable.
 3. Click Install and choose the ESP32 serial port.
-
-Use Chrome or Edge on desktop. Web Serial requires HTTPS, so use the published GitHub Pages page rather than opening `index.html` directly.
-
-If the browser cannot connect, hold the CYD `BOOT` button while selecting the serial port, then release it once flashing starts.
 
 ## Pair With WLED
 
 1. Open your WLED controller in a browser.
-2. Go to `Config -> WiFi Setup`.
-3. Enable ESP-NOW remote control.
-4. Boot WLED Touch Remote and tap any control.
-5. In WLED, copy the remote's `Last Seen` MAC into the `Hardware MAC` field.
-6. Save and reboot WLED if prompted.
-
-The Info tab on the remote also shows the MAC address you need.
+1. Go to `Config -> WiFi & Network`.
+1. Enable ESP-NOW remote control.
+1. copy the MAC from the `Info` tab into WLED's `Linked MACs` field.
+1. Save and reboot WLED if prompted.
 
 ![Info tab](screenshots/wled-touch-remote-info.png)
 
@@ -51,16 +44,14 @@ Basic mode works with WLED's built-in ESP-NOW remote behavior. You get:
 
 This mode does not require uploading any extra files to WLED.
 
-![Presets tab](screenshots/wled-touch-remote-presets.png)
-
 ## Extended Mode
 
-Extended mode unlocks the richer controls. To use it, upload [`remote.json`](https://raw.githubusercontent.com/figamore/wled-touch-remote/main/remote.json) to your WLED controller as `/remote.json`.
+Extended mode unlocks the richer controls. To use it, upload [remote.json](https://raw.githubusercontent.com/figamore/wled-touch-remote/main/remote.json) to your WLED controller as `/remote.json`.
 
 In WLED:
 
 1. Open `http://<wled-ip>/edit`
-2. Upload `remote.json`
+2. Upload [remote.json](https://raw.githubusercontent.com/figamore/wled-touch-remote/main/remote.json)
 3. On the remote, open Settings
 4. Enable Extended mode
 

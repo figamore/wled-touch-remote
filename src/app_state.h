@@ -161,6 +161,7 @@ extern lv_obj_t* orientation_label;
 extern lv_obj_t* idle_label;
 extern lv_obj_t* mode_label;
 extern lv_obj_t* help_dialog;
+extern lv_obj_t* effect_preview;
 
 #if WLED_CYD_ENABLE_BATTERY
 extern lv_obj_t* battery_indicator;
