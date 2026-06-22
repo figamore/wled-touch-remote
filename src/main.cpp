@@ -592,6 +592,11 @@ void onPing(lv_event_t*) {
   sendWizMoteButton(kWizMoteButtonOn);
 }
 
+void onRestart(lv_event_t*) {
+  touchActivity();
+  ESP.restart();
+}
+
 void onRemoteAction(lv_event_t* event) {
   const uintptr_t button = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
   sendWizMoteButton(static_cast<uint8_t>(button));
@@ -1232,7 +1237,7 @@ void createInfoTab(lv_obj_t* tab) {
 
   lv_obj_t* ping = lv_btn_create(actions);
   styleButton(ping);
-  lv_obj_set_size(ping, 118, 36);
+  lv_obj_set_size(ping, 84, 36);
   lv_obj_add_event_cb(ping, onPing, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t* label = lv_label_create(ping);
@@ -1241,12 +1246,21 @@ void createInfoTab(lv_obj_t* tab) {
 
   lv_obj_t* help = lv_btn_create(actions);
   styleButton(help);
-  lv_obj_set_size(help, 118, 36);
+  lv_obj_set_size(help, 84, 36);
   lv_obj_add_event_cb(help, openHelpDialog, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t* help_label = lv_label_create(help);
   lv_label_set_text(help_label, LV_SYMBOL_LIST "  Help");
   lv_obj_center(help_label);
+
+  lv_obj_t* restart = lv_btn_create(actions);
+  styleButton(restart);
+  lv_obj_set_size(restart, 84, 36);
+  lv_obj_add_event_cb(restart, onRestart, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* restart_label = lv_label_create(restart);
+  lv_label_set_text(restart_label, LV_SYMBOL_POWER "  Restart");
+  lv_obj_center(restart_label);
 }
 
 lv_obj_t* createSettingsRow(lv_obj_t* parent,
