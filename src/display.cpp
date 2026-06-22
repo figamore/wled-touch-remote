@@ -1,5 +1,6 @@
 #include "display.h"
 #include <Arduino.h>
+#include "generated/version.h"
 #include "generated/wled_logo_png.h"
 
 namespace {
@@ -97,6 +98,13 @@ void drawSplash() {
                   kWledLogoWidth,
                   kWledLogoHeight,
                   reinterpret_cast<const lgfx::rgb565_t*>(kWledLogoPixels));
+
+    gfx.setTextColor(gfx.color565(150, 158, 170), TFT_BLACK);
+    gfx.setTextDatum(middle_center);
+    gfx.setTextSize(1);
+    gfx.drawString(String("Firmware v") + kAppVersion,
+                   kScreenWidth / 2,
+                   y + kWledLogoHeight + 18);
   }
 
   if (!can_draw_logo) {
@@ -104,6 +112,9 @@ void drawSplash() {
     gfx.setTextDatum(middle_center);
     gfx.setTextSize(3);
     gfx.drawString("WLED", kScreenWidth / 2, kScreenHeight / 2);
+    gfx.setTextColor(gfx.color565(150, 158, 170), TFT_BLACK);
+    gfx.setTextSize(1);
+    gfx.drawString(String("v") + kAppVersion, kScreenWidth / 2, kScreenHeight / 2 + 34);
   }
 
   delay(UI_SPLASH_MS);
