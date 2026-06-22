@@ -1,20 +1,19 @@
 #pragma once
 
-// Cheap Yellow Display capacitive profiles.
-// The default matches the tested CYD capacitive profile that works on
-// JC2432W328C-style boards: ST7789 + CST816S + backlight on GPIO27.
+// Cheap Yellow Display capacitive profiles. Auto mode detects the common
+// FT5x06 touch controller and otherwise falls back to ST7789 + CST816S.
 
 #ifndef WLED_CYD_ENABLE_BATTERY
 #define WLED_CYD_ENABLE_BATTERY 1
 #endif
 
-#define CYD_PANEL_ILI9341 1
-#define CYD_PANEL_ST7789 2
-#define CYD_TOUCH_FT5X06 1
-#define CYD_TOUCH_CST816S 2
+#define CYD_PROFILE_AUTO 0
+#define CYD_PROFILE_ST7789_CST816S 1
+#define CYD_PROFILE_ILI9341_FT5X06 2
 
-#define CYD_PANEL_TYPE CYD_PANEL_ST7789
-#define CYD_TOUCH_TYPE CYD_TOUCH_CST816S
+#ifndef CYD_HARDWARE_PROFILE
+#define CYD_HARDWARE_PROFILE CYD_PROFILE_AUTO
+#endif
 
 #define CYD_TFT_SCLK 14
 #define CYD_TFT_MOSI 13
@@ -36,8 +35,12 @@
 #define CYD_TOUCH_I2C_PORT 0
 #define CYD_TOUCH_OFFSET_ROTATION 0
 
-#define CYD_BOARD_CAPACITIVE \
-  ((CYD_TOUCH_TYPE == CYD_TOUCH_CST816S) || (CYD_TOUCH_TYPE == CYD_TOUCH_FT5X06))
+#define CYD_ALT_TFT_BL 21
+#define CYD_ALT_TOUCH_INT 36
+#define CYD_ALT_TOUCH_ADDR 0x38
+#define CYD_ALT_TOUCH_I2C_PORT 1
+
+#define CYD_BOARD_CAPACITIVE 1
 
 #define CYD_BATTERY_ADC (WLED_CYD_ENABLE_BATTERY && CYD_BOARD_CAPACITIVE)
 #define CYD_BATTERY_ADC_PIN 39
