@@ -2,6 +2,7 @@
 #include "ui.h"
 #include "../BatteryMonitor.h"
 #include <WiFi.h>
+#include <cstring>
 #include "generated/wled_logo_png.h"
 
 namespace {
@@ -133,11 +134,30 @@ void createControlPairRow(lv_obj_t* parent,
 
   lv_obj_t* label = lv_label_create(row);
   lv_obj_set_width(label, 118);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   lv_label_set_text(label, label_text);
   lv_obj_add_style(label, &style_label_muted, LV_PART_MAIN);
 
   createRemoteButton(row, down_text, 78, 44, down_button);
   createRemoteButton(row, up_text, 78, 44, up_button);
+}
+
+void createToggleRow(lv_obj_t* parent,
+                     const char* label_text,
+                     uint8_t button) {
+  lv_obj_t* row = lv_obj_create(parent);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, LV_PCT(100), 42);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t* label = lv_label_create(row);
+  lv_obj_set_width(label, 176);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+  lv_label_set_text(label, label_text);
+  lv_obj_add_style(label, &style_label_muted, LV_PART_MAIN);
+
+  createRemoteButton(row, "Toggle", 82, 38, button);
 }
 
 void createColorSwatches(lv_obj_t* parent) {
@@ -195,6 +215,8 @@ lv_obj_t* beginInfoModal(const char* title_text) {
 
   lv_obj_t* title = lv_label_create(header);
   lv_label_set_text(title, title_text);
+  lv_obj_set_width(title, 224);
+  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_hex(kColorAccent), LV_PART_MAIN);
 
@@ -271,6 +293,161 @@ void openRemoteJsonHelpDialog(lv_event_t*) {
   lv_obj_add_style(instructions, &style_label_muted, LV_PART_MAIN);
 
   addQrCode(content, &kRemoteJsonQrImage, kRemoteJsonQrWidth, kRemoteJsonQrHeight);
+}
+
+const char* nextEffectControlLabel(const char*& labels, char* buffer, size_t buffer_size) {
+  if (!labels || !*labels || buffer_size == 0) {
+    return "";
+  }
+
+  size_t len = 0;
+  while (labels[len] && labels[len] != '|') {
+    len++;
+  }
+
+  const size_t copy_len = len < buffer_size - 1 ? len : buffer_size - 1;
+  memcpy(buffer, labels, copy_len);
+  buffer[copy_len] = '\0';
+  labels += labels[len] == '|' ? len + 1 : len;
+  return buffer;
+}
+
+void addEffectPairIfEnabled(lv_obj_t* parent,
+                            const WledEffectInfo& effect,
+                            uint16_t mask,
+                            const char*& labels,
+                            const char* fallback,
+                            uint8_t down_button,
+                            uint8_t up_button) {
+  if (!(effect.controls & mask)) {
+    return;
+  }
+
+  char label[32];
+  const char* text = nextEffectControlLabel(labels, label, sizeof(label));
+  createControlPairRow(parent,
+                       *text ? text : fallback,
+                       down_button,
+                       up_button,
+                       LV_SYMBOL_MINUS,
+                       LV_SYMBOL_PLUS);
+}
+
+void addEffectToggleIfEnabled(lv_obj_t* parent,
+                              const WledEffectInfo& effect,
+                              uint16_t mask,
+                              const char*& labels,
+                              const char* fallback,
+                              uint8_t button) {
+  if (!(effect.controls & mask)) {
+    return;
+  }
+
+  char label[32];
+  const char* text = nextEffectControlLabel(labels, label, sizeof(label));
+  createToggleRow(parent, *text ? text : fallback, button);
+}
+
+void openEffectSettings(const WledEffectInfo* effect) {
+  if (help_dialog) {
+    return;
+  }
+
+  if (!effect) {
+    return;
+  }
+
+  lv_obj_t* content = beginInfoModal(effect->name);
+  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(content, 6, LV_PART_MAIN);
+  lv_obj_clear_flag(content, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  configurePageScroll(content, true);
+
+  if (!effect->controls) {
+    lv_obj_t* none = lv_label_create(content);
+    lv_obj_set_width(none, LV_PCT(100));
+    lv_label_set_long_mode(none, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(none, "This WLED effect does not expose extra controls.");
+    lv_obj_set_style_text_align(none, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_add_style(none, &style_label_muted, LV_PART_MAIN);
+    return;
+  }
+
+  const char* labels = effect->labels;
+  addEffectPairIfEnabled(content, *effect, kFxControlSpeed, labels,
+                         "Effect speed", kRemoteSpeedDown, kRemoteSpeedUp);
+  addEffectPairIfEnabled(content, *effect, kFxControlIntensity, labels,
+                         "Effect intensity", kRemoteIntensityDown, kRemoteIntensityUp);
+  addEffectPairIfEnabled(content, *effect, kFxControlCustom1, labels,
+                         "Custom 1", kRemoteCustom1Down, kRemoteCustom1Up);
+  addEffectPairIfEnabled(content, *effect, kFxControlCustom2, labels,
+                         "Custom 2", kRemoteCustom2Down, kRemoteCustom2Up);
+  addEffectPairIfEnabled(content, *effect, kFxControlCustom3, labels,
+                         "Custom 3", kRemoteCustom3Down, kRemoteCustom3Up);
+  addEffectToggleIfEnabled(content, *effect, kFxControlOption1, labels,
+                           "Option 1", kRemoteOption1Toggle);
+  addEffectToggleIfEnabled(content, *effect, kFxControlOption2, labels,
+                           "Option 2", kRemoteOption2Toggle);
+  addEffectToggleIfEnabled(content, *effect, kFxControlOption3, labels,
+                           "Option 3", kRemoteOption3Toggle);
+  addEffectPairIfEnabled(content, *effect, kFxControlPalette, labels,
+                         "Palette", kRemotePaletteDown, kRemotePaletteUp);
+}
+
+void onEffectTableClicked(lv_event_t* event) {
+  lv_obj_t* table = lv_event_get_target(event);
+  uint16_t row = LV_TABLE_CELL_NONE;
+  uint16_t col = LV_TABLE_CELL_NONE;
+  lv_table_get_selected_cell(table, &row, &col);
+  if (row == LV_TABLE_CELL_NONE || col == LV_TABLE_CELL_NONE || row >= kWledEffectCount) {
+    return;
+  }
+
+  const WledEffectInfo& effect = kWledEffects[row];
+  if (col == 1 && effect.id == selected_effect_id) {
+    openEffectSettings(&effect);
+  } else {
+    activateEffect(&effect);
+    lv_obj_invalidate(table);
+  }
+}
+
+void onEffectTableDrawPart(lv_event_t* event) {
+  lv_obj_draw_part_dsc_t* dsc = lv_event_get_draw_part_dsc(event);
+  if (!dsc || !lv_obj_draw_part_check_type(dsc, &lv_table_class, LV_TABLE_DRAW_PART_CELL)) {
+    return;
+  }
+
+  const uint16_t row = dsc->id / 2;
+  const uint16_t col = dsc->id % 2;
+  if (row >= kWledEffectCount) {
+    return;
+  }
+
+  const bool selected = kWledEffects[row].id == selected_effect_id;
+
+  if (dsc->rect_dsc) {
+    dsc->rect_dsc->radius = 6;
+    dsc->rect_dsc->border_width = 0;
+    dsc->rect_dsc->border_color = lv_color_hex(kColorBorder);
+    if (selected) {
+      dsc->rect_dsc->bg_color = lv_color_hex(kColorSelected);
+      dsc->rect_dsc->border_color = lv_color_hex(kColorSelectedBorder);
+    } else if (row % 2) {
+      dsc->rect_dsc->bg_color = lv_color_hex(kColorSurfaceRaised);
+    } else {
+      dsc->rect_dsc->bg_color = lv_color_hex(kColorSurface);
+    }
+  }
+
+  if (dsc->label_dsc) {
+    dsc->label_dsc->color = col == 1 ? lv_color_hex(kColorAccent) : lv_color_hex(kColorText);
+    dsc->label_dsc->align = col == 1 ? LV_TEXT_ALIGN_CENTER : LV_TEXT_ALIGN_LEFT;
+    if (col == 1 && !selected) {
+      dsc->label_dsc->opa = LV_OPA_TRANSP;
+    }
+  }
 }
 
 // ── Settings row helper ───────────────────────────────────────────────────────
@@ -401,7 +578,7 @@ void createLooksTab(lv_obj_t* tab) {
   configurePageScroll(tab, extended_mode);
 
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), extended_mode ? 282 : kTabCardHeight);
+  lv_obj_set_size(panel, LV_PCT(100), extended_mode ? 540 : kTabCardHeight);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(panel,
                         extended_mode ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER,
@@ -413,9 +590,9 @@ void createLooksTab(lv_obj_t* tab) {
   if (extended_mode) {
     lv_obj_t* preset_list = lv_obj_create(panel);
     lv_obj_remove_style_all(preset_list);
-    lv_obj_set_size(preset_list, LV_PCT(100), 252);
+    lv_obj_set_size(preset_list, LV_PCT(100), 214);
     lv_obj_set_flex_flow(preset_list, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(preset_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_flex_align(preset_list, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(preset_list, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_column(preset_list, 6, LV_PART_MAIN);
     lv_obj_clear_flag(preset_list, LV_OBJ_FLAG_SCROLLABLE);
@@ -423,7 +600,7 @@ void createLooksTab(lv_obj_t* tab) {
     for (uintptr_t i = 1; i <= kExtendedPresetCount; ++i) {
       lv_obj_t* btn = lv_btn_create(preset_list);
       styleButton(btn, true);
-      lv_obj_set_size(btn, 48, 34);
+      lv_obj_set_size(btn, 62, 38);
       lv_obj_add_event_cb(btn, onPreset, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
       preset_buttons[i - 1] = btn;
       if (i == selected_preset) {
@@ -435,6 +612,8 @@ void createLooksTab(lv_obj_t* tab) {
       lv_obj_center(label);
     }
 
+    addLabel(panel, "Colors");
+    createColorSwatches(panel);
     return;
   }
 
@@ -488,7 +667,7 @@ void createFxTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  configurePageScroll(tab, extended_mode);
+  configurePageScroll(tab, false);
 
   if (!extended_mode) {
     lv_obj_t* panel = createPanel(tab);
@@ -527,31 +706,45 @@ void createFxTab(lv_obj_t* tab) {
   }
 
   lv_obj_t* fx_panel = createPanel(tab);
-  lv_obj_set_size(fx_panel, LV_PCT(100), 626);
+  lv_obj_set_size(fx_panel, LV_PCT(100), kTabCardHeight);
   lv_obj_set_flex_flow(fx_panel, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_all(fx_panel, 10, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(fx_panel, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(fx_panel, 8, LV_PART_MAIN);
 
-  addLabel(fx_panel, "Look Controls");
-  for (const RemoteControlPair& control : kFxControls) {
-    createControlPairRow(fx_panel,
-                         control.label,
-                         control.down_button,
-                         control.up_button,
-                         LV_SYMBOL_MINUS,
-                         LV_SYMBOL_PLUS);
+  lv_obj_t* table = lv_table_create(fx_panel);
+  lv_obj_set_width(table, LV_PCT(100));
+  lv_obj_set_flex_grow(table, 1);
+  lv_table_set_col_cnt(table, 2);
+  lv_table_set_row_cnt(table, kWledEffectCount);
+  lv_table_set_col_width(table, 0, 232);
+  lv_table_set_col_width(table, 1, 38);
+  lv_obj_set_scroll_dir(table, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(table, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_add_flag(table, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM |
+                         LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_CHAIN_HOR |
+                         LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_set_style_bg_opa(table, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(table, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(table, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(table, lv_color_hex(kColorAccent), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(table, LV_OPA_50, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(table, 4, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(table, 2, LV_PART_SCROLLBAR);
+  lv_obj_set_style_pad_left(table, 10, LV_PART_ITEMS);
+  lv_obj_set_style_pad_right(table, 8, LV_PART_ITEMS);
+  lv_obj_set_style_pad_top(table, 8, LV_PART_ITEMS);
+  lv_obj_set_style_pad_bottom(table, 8, LV_PART_ITEMS);
+  lv_obj_set_style_bg_opa(table, LV_OPA_COVER, LV_PART_ITEMS);
+  lv_obj_set_style_text_color(table, lv_color_hex(kColorText), LV_PART_ITEMS);
+  lv_obj_set_style_border_width(table, 0, LV_PART_ITEMS);
+  lv_obj_set_style_border_color(table, lv_color_hex(kColorBorder), LV_PART_ITEMS);
+
+  for (size_t i = 0; i < kWledEffectCount; ++i) {
+    lv_table_set_cell_value(table, i, 0, kWledEffects[i].name);
+    lv_table_add_cell_ctrl(table, i, 0, LV_TABLE_CELL_CTRL_TEXT_CROP);
+    lv_table_set_cell_value(table, i, 1, LV_SYMBOL_SETTINGS);
   }
-
-  addLabel(fx_panel, "Colors");
-  createColorSwatches(fx_panel);
-
-  lv_obj_t* learn_more = lv_btn_create(fx_panel);
-  styleButton(learn_more);
-  lv_obj_set_size(learn_more, LV_PCT(100), 34);
-  lv_obj_add_event_cb(learn_more, openRemoteJsonHelpDialog, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* learn_more_label = lv_label_create(learn_more);
-  lv_label_set_text(learn_more_label, LV_SYMBOL_LIST "  Obtain remote.json file");
-  lv_obj_center(learn_more_label);
+  lv_obj_add_event_cb(table, onEffectTableClicked, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(table, onEffectTableDrawPart, LV_EVENT_DRAW_PART_BEGIN, nullptr);
 }
 
 void rebuildFxTab() {

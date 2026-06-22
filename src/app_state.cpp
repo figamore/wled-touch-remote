@@ -2,6 +2,7 @@
 
 RemoteState state;
 uint8_t selected_preset = 0;
+uint8_t selected_effect_id = 255;
 bool display_flipped = false;
 IdleMode idle_mode = IdleMode::kDim;
 bool extended_mode = false;
