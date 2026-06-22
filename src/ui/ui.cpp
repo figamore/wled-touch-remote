@@ -46,6 +46,10 @@ void setSelectedPreset(uint8_t preset) {
   }
 }
 
+void setSelectedEffect(uint8_t effect_id) {
+  selected_effect_id = effect_id;
+}
+
 void initStyles() {
   static const lv_style_prop_t kButtonTransProps[] = {
       LV_STYLE_BG_COLOR, LV_STYLE_BG_OPA, LV_STYLE_BORDER_COLOR,
@@ -162,6 +166,16 @@ void onPreset(lv_event_t* event) {
   const uint8_t preset_number = static_cast<uint8_t>(preset);
   setSelectedPreset(preset_number);
   sendPreset(preset_number);
+  setPowerUi(true);
+}
+
+void activateEffect(const WledEffectInfo* effect) {
+  if (!effect) {
+    return;
+  }
+
+  setSelectedEffect(effect->id);
+  sendWledTouchButton(effect->button);
   setPowerUi(true);
 }
 

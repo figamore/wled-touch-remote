@@ -17,6 +17,7 @@ void updateModeLabel();
 void onPower(lv_event_t* event);
 void onBrightness(lv_event_t* event);
 void onPreset(lv_event_t* event);
+void activateEffect(const WledEffectInfo* effect);
 void onPing(lv_event_t* event);
 void onRestart(lv_event_t* event);
 void onRemoteAction(lv_event_t* event);

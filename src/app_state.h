@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_config.h"
+#include "generated/wled_effects.h"
 #include <cstdint>
 #include <lvgl.h>
 
@@ -22,12 +23,28 @@ constexpr uint8_t kWledTouchButtonBrightDown = 8;
 constexpr uint8_t kWledTouchButtonBrightUp = 9;
 constexpr uint8_t kWledTouchButtonOne = 16;
 constexpr uint8_t kBasicPresetCount = 7;
-constexpr uint8_t kExtendedPresetCount = 30;
-constexpr uint8_t kRemoteActionFirst = 50;
-constexpr uint8_t kRemoteColorFirst = 70;
+constexpr uint8_t kExtendedPresetCount = 20;
+constexpr uint8_t kRemoteActionFirst = 36;
+constexpr uint8_t kRemoteColorFirst = 51;
 constexpr uint8_t kInfoTabIndex = 3;
 constexpr uint8_t kSettingsTabIndex = 4;
 constexpr uint8_t kBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+constexpr uint8_t kRemotePaletteDown = kRemoteActionFirst;
+constexpr uint8_t kRemotePaletteUp = static_cast<uint8_t>(kRemoteActionFirst + 1);
+constexpr uint8_t kRemoteSpeedDown = static_cast<uint8_t>(kRemoteActionFirst + 2);
+constexpr uint8_t kRemoteSpeedUp = static_cast<uint8_t>(kRemoteActionFirst + 3);
+constexpr uint8_t kRemoteIntensityDown = static_cast<uint8_t>(kRemoteActionFirst + 4);
+constexpr uint8_t kRemoteIntensityUp = static_cast<uint8_t>(kRemoteActionFirst + 5);
+constexpr uint8_t kRemoteCustom1Down = static_cast<uint8_t>(kRemoteActionFirst + 6);
+constexpr uint8_t kRemoteCustom1Up = static_cast<uint8_t>(kRemoteActionFirst + 7);
+constexpr uint8_t kRemoteCustom2Down = static_cast<uint8_t>(kRemoteActionFirst + 8);
+constexpr uint8_t kRemoteCustom2Up = static_cast<uint8_t>(kRemoteActionFirst + 9);
+constexpr uint8_t kRemoteCustom3Down = static_cast<uint8_t>(kRemoteActionFirst + 10);
+constexpr uint8_t kRemoteCustom3Up = static_cast<uint8_t>(kRemoteActionFirst + 11);
+constexpr uint8_t kRemoteOption1Toggle = static_cast<uint8_t>(kRemoteActionFirst + 12);
+constexpr uint8_t kRemoteOption2Toggle = static_cast<uint8_t>(kRemoteActionFirst + 13);
+constexpr uint8_t kRemoteOption3Toggle = static_cast<uint8_t>(kRemoteActionFirst + 14);
 
 // ── Preferences keys ────────────────────────────────────────────────────────
 
@@ -86,12 +103,6 @@ struct ColorSwatch {
   bool dark_text;
 };
 
-struct RemoteControlPair {
-  const char* label;
-  uint8_t down_button;
-  uint8_t up_button;
-};
-
 enum class IdleMode : uint8_t {
   kDim,
   kOff,
@@ -113,30 +124,24 @@ enum class StatusCode : uint8_t {
 
 // ── Data tables ─────────────────────────────────────────────────────────────
 
-constexpr RemoteControlPair kFxControls[] = {
-    {"Palette", kRemoteActionFirst, static_cast<uint8_t>(kRemoteActionFirst + 1)},
-    {"Speed", static_cast<uint8_t>(kRemoteActionFirst + 2), static_cast<uint8_t>(kRemoteActionFirst + 3)},
-    {"Intensity", static_cast<uint8_t>(kRemoteActionFirst + 4), static_cast<uint8_t>(kRemoteActionFirst + 5)},
-    {"Custom Slider 1", static_cast<uint8_t>(kRemoteActionFirst + 6), static_cast<uint8_t>(kRemoteActionFirst + 7)},
-};
-
 constexpr ColorSwatch kColorSwatches[] = {
-    {"Warm", kRemoteColorFirst, 0xFFC078, false},
+    {"Warm", kRemoteColorFirst, 0xFFB45A, false},
     {"White", static_cast<uint8_t>(kRemoteColorFirst + 1), 0xFFFFFF, true},
-    {"Red", static_cast<uint8_t>(kRemoteColorFirst + 2), 0xEF4444, false},
-    {"Orange", static_cast<uint8_t>(kRemoteColorFirst + 3), 0xF97316, false},
-    {"Yellow", static_cast<uint8_t>(kRemoteColorFirst + 4), 0xFACC15, true},
-    {"Green", static_cast<uint8_t>(kRemoteColorFirst + 5), 0x22C55E, true},
-    {"Cyan", static_cast<uint8_t>(kRemoteColorFirst + 6), 0x06B6D4, true},
-    {"Blue", static_cast<uint8_t>(kRemoteColorFirst + 7), 0x2563EB, false},
-    {"Purple", static_cast<uint8_t>(kRemoteColorFirst + 8), 0xA855F7, false},
-    {"Pink", static_cast<uint8_t>(kRemoteColorFirst + 9), 0xEC4899, false},
+    {"Red", static_cast<uint8_t>(kRemoteColorFirst + 2), 0xFF2020, false},
+    {"Orange", static_cast<uint8_t>(kRemoteColorFirst + 3), 0xFF6000, false},
+    {"Yellow", static_cast<uint8_t>(kRemoteColorFirst + 4), 0xFFD600, true},
+    {"Green", static_cast<uint8_t>(kRemoteColorFirst + 5), 0x00BE50, false},
+    {"Cyan", static_cast<uint8_t>(kRemoteColorFirst + 6), 0x00D2FF, true},
+    {"Blue", static_cast<uint8_t>(kRemoteColorFirst + 7), 0x0058FF, false},
+    {"Purple", static_cast<uint8_t>(kRemoteColorFirst + 8), 0x8040FF, false},
+    {"Pink", static_cast<uint8_t>(kRemoteColorFirst + 9), 0xFF30A0, false},
 };
 
 // ── Shared mutable state ─────────────────────────────────────────────────────
 
 extern RemoteState state;
 extern uint8_t selected_preset;
+extern uint8_t selected_effect_id;
 extern bool display_flipped;
 extern IdleMode idle_mode;
 extern bool extended_mode;
