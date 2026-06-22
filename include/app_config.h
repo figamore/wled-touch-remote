@@ -46,9 +46,9 @@
 
 #define UI_SPLASH_MS 1000
 
-// WizMote remotes broadcast across channels so WLED can receive them whether it
+// WledTouch remotes broadcast across channels so WLED can receive them whether it
 // is on Wi-Fi, AP mode, or a different channel. Set to 0 to use only the channel below.
-#define WLED_WIZMOTE_SCAN_CHANNELS 1
+#define WLED_TOUCH_SCAN_CHANNELS 1
 #define WLED_ESPNOW_CHANNEL 1
 
 #define UI_IDLE_BRIGHTNESS 72
