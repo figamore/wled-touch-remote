@@ -9,11 +9,11 @@ Edit `include/app_config.h` if needed:
 - `CYD_PANEL_TYPE` / `CYD_TOUCH_TYPE`: default to the tested capacitive CYD profile, `ST7789 + CST816S`.
 - `CYD_BACKLIGHT_INVERT`: flip this from `0` to `1` if serial boot works and the profile is right but the screen is black.
 - `CYD_TFT_*` and `CYD_TOUCH_*`: display and touch pins for clone boards.
-- `WLED_WIZMOTE_SCAN_CHANNELS`: broadcasts across channels 1 through 13 by default.
+- `WLED_TOUCH_SCAN_CHANNELS`: broadcasts across channels 1 through 13 by default.
 
 ## WLED Pairing
 
-WLED's built-in ESP-NOW support is WizMote-style button-code based. In WLED:
+WLED's built-in ESP-NOW support is WledTouch-style button-code based. In WLED:
 
 1. Open `Config -> WiFi Setup`.
 2. Enable ESP-NOW remote control.

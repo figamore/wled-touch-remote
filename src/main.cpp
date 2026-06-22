@@ -19,11 +19,11 @@ constexpr int kTabButtonHeight = 30;
 constexpr int kPagePadding = 8;
 constexpr int kTabCardHeight = kScreenHeight - kTopBarHeight - kTabButtonHeight - (2 * kPagePadding);
 constexpr size_t kLvglBufferLines = 40;
-constexpr uint8_t kWizMoteButtonOn = 1;
-constexpr uint8_t kWizMoteButtonOff = 2;
-constexpr uint8_t kWizMoteButtonBrightDown = 8;
-constexpr uint8_t kWizMoteButtonBrightUp = 9;
-constexpr uint8_t kWizMoteButtonOne = 16;
+constexpr uint8_t kWledTouchButtonOn = 1;
+constexpr uint8_t kWledTouchButtonOff = 2;
+constexpr uint8_t kWledTouchButtonBrightDown = 8;
+constexpr uint8_t kWledTouchButtonBrightUp = 9;
+constexpr uint8_t kWledTouchButtonOne = 16;
 constexpr uint8_t kBasicPresetCount = 7;
 constexpr uint8_t kExtendedPresetCount = 30;
 constexpr uint8_t kRemoteActionFirst = 50;
@@ -145,7 +145,7 @@ class LGFX : public lgfx::LGFX_Device {
   }
 };
 
-struct WizMotePacket {
+struct WledTouchPacket {
   uint8_t program;
   uint8_t seq[4];
   uint8_t dt1;
@@ -473,15 +473,15 @@ void readTouch(lv_indev_drv_t*, lv_indev_data_t* data) {
   }
 }
 
-esp_err_t sendWizMoteButton(uint8_t button_code) {
+esp_err_t sendWledTouchButton(uint8_t button_code) {
   if (!espnow_ready) {
     requestStatus(StatusCode::kOffline);
     return ESP_ERR_INVALID_STATE;
   }
 
   sequence_id++;
-  WizMotePacket packet = {
-      static_cast<uint8_t>(button_code == kWizMoteButtonOn ? 0x91 : 0x81),
+  WledTouchPacket packet = {
+      static_cast<uint8_t>(button_code == kWledTouchButtonOn ? 0x91 : 0x81),
       {static_cast<uint8_t>(sequence_id),
        static_cast<uint8_t>(sequence_id >> 8),
        static_cast<uint8_t>(sequence_id >> 16),
@@ -498,7 +498,7 @@ esp_err_t sendWizMoteButton(uint8_t button_code) {
 
   esp_err_t last_result = ESP_OK;
 
-#if WLED_WIZMOTE_SCAN_CHANNELS
+#if WLED_TOUCH_SCAN_CHANNELS
   for (uint8_t channel = 1; channel <= 13; channel++) {
     esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
     last_result = esp_now_send(kBroadcastMac, reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
@@ -510,12 +510,12 @@ esp_err_t sendWizMoteButton(uint8_t button_code) {
 #endif
 
   requestStatus(last_result == ESP_OK ? StatusCode::kSent : StatusCode::kSendError);
-  Serial.printf("WizMote button sent: %u result=%d\n", button_code, last_result);
+  Serial.printf("WledTouch button sent: %u result=%d\n", button_code, last_result);
   return last_result;
 }
 
 void sendPower(bool power) {
-  sendWizMoteButton(power ? kWizMoteButtonOn : kWizMoteButtonOff);
+  sendWledTouchButton(power ? kWledTouchButtonOn : kWledTouchButtonOff);
 }
 
 void setPowerUi(bool power) {
@@ -534,10 +534,10 @@ void setPowerUi(bool power) {
 }
 
 void sendBrightnessDelta(int delta) {
-  const uint8_t button = delta > 0 ? kWizMoteButtonBrightUp : kWizMoteButtonBrightDown;
+  const uint8_t button = delta > 0 ? kWledTouchButtonBrightUp : kWledTouchButtonBrightDown;
   const uint8_t repeats = min<uint8_t>(6, max<uint8_t>(1, abs(delta) / 25));
   for (uint8_t i = 0; i < repeats; i++) {
-    sendWizMoteButton(button);
+    sendWledTouchButton(button);
     delay(10);
   }
 }
@@ -547,7 +547,7 @@ void sendPreset(uint8_t preset) {
   if (preset < 1 || preset > max_preset) {
     return;
   }
-  sendWizMoteButton(kWizMoteButtonOne + preset - 1);
+  sendWledTouchButton(kWledTouchButtonOne + preset - 1);
 }
 
 void onPower(lv_event_t* event) {
@@ -589,7 +589,7 @@ void onPreset(lv_event_t* event) {
 }
 
 void onPing(lv_event_t*) {
-  sendWizMoteButton(kWizMoteButtonOn);
+  sendWledTouchButton(kWledTouchButtonOn);
 }
 
 void onRestart(lv_event_t*) {
@@ -599,7 +599,7 @@ void onRestart(lv_event_t*) {
 
 void onRemoteAction(lv_event_t* event) {
   const uintptr_t button = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
-  sendWizMoteButton(static_cast<uint8_t>(button));
+  sendWledTouchButton(static_cast<uint8_t>(button));
 }
 
 void goToSettings(lv_event_t*) {
@@ -1174,7 +1174,7 @@ void createFxTab(lv_obj_t* tab) {
   }
 
   lv_obj_t* fx_panel = createPanel(tab);
-  lv_obj_set_size(fx_panel, LV_PCT(100), 584);
+  lv_obj_set_size(fx_panel, LV_PCT(100), 626);
   lv_obj_set_flex_flow(fx_panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(fx_panel, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_row(fx_panel, 8, LV_PART_MAIN);
@@ -1191,6 +1191,14 @@ void createFxTab(lv_obj_t* tab) {
 
   addLabel(fx_panel, "Colors");
   createColorSwatches(fx_panel);
+
+  lv_obj_t* learn_more = lv_btn_create(fx_panel);
+  styleButton(learn_more);
+  lv_obj_set_size(learn_more, LV_PCT(100), 34);
+  lv_obj_add_event_cb(learn_more, openRemoteJsonHelpDialog, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* learn_more_label = lv_label_create(learn_more);
+  lv_label_set_text(learn_more_label, LV_SYMBOL_LIST "  Obtain remote.json file");
+  lv_obj_center(learn_more_label);
 }
 
 void rebuildFxTab() {
@@ -1510,7 +1518,6 @@ void initEspNow() {
   requestStatus(StatusCode::kBroadcast);
   Serial.printf("CYD station MAC: %s\n", WiFi.macAddress().c_str());
   Serial.printf("ESP-NOW channel: %u\n", WLED_ESPNOW_CHANNEL);
-  Serial.println("ESP-NOW protocol: WLED native WizMote");
   Serial.println("Pair this MAC in WLED Config -> WiFi Setup -> ESP-NOW remote.");
 }
 
