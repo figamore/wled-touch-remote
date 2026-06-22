@@ -43,6 +43,18 @@ pio device monitor -b 115200
 
 The startup logo is converted from `wled.png` into an RGB565 bitmap at build time. A display-sized PNG, around 320 pixels wide, avoids runtime scaling artifacts.
 
+## macOS Simulator
+
+A native SDL simulator is available for clean screenshots of the real LVGL UI:
+
+```sh
+brew install sdl2
+pio run -e macos
+.pio/build/macos/program --screenshots
+```
+
+The screenshot command writes basic-mode BMP captures to `screenshots/`. See `docs/macos-simulator.md` for the preview workflow.
+
 ## Hardware Notes
 
 The default display config targets the tested capacitive CYD layout:
