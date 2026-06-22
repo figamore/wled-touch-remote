@@ -6,7 +6,7 @@ Elegant LVGL + LovyanGFX firmware for the capacitive Cheap Yellow Display ESP32-
 
 Edit `include/app_config.h` if needed:
 
-- `CYD_PANEL_TYPE` / `CYD_TOUCH_TYPE`: default to the tested capacitive CYD profile, `ST7789 + CST816S`.
+- `CYD_HARDWARE_PROFILE`: defaults to `CYD_PROFILE_AUTO`. Auto mode probes for the common `FT5x06` and `CST816S` touch controllers and selects the matching display/touch profile when detected.
 - `CYD_BACKLIGHT_INVERT`: flip this from `0` to `1` if serial boot works and the profile is right but the screen is black.
 - `CYD_TFT_*` and `CYD_TOUCH_*`: display and touch pins for clone boards.
 - `WLED_TOUCH_SCAN_CHANNELS`: broadcasts across channels 1 through 13 by default.
@@ -57,11 +57,11 @@ The screenshot command writes basic-mode BMP captures to `screenshots/`. See `do
 
 ## Hardware Notes
 
-The default display config targets the tested capacitive CYD layout:
+The default display config supports two common capacitive CYD layouts:
 
-- ST7789 display SPI: `SCLK=14`, `MOSI=13`, `MISO=12`, `CS=15`, `DC=2`, backlight `27`
-- CST816S capacitive touch I2C: `SDA=33`, `SCL=32`, `RST=25`, address `0x15`
+- ST7789 display + CST816S touch: SPI `SCLK=14`, `MOSI=13`, `MISO=12`, `CS=15`, `DC=2`, backlight `27`; touch `SDA=33`, `SCL=32`, `RST=25`, address `0x15`
+- ILI9341 display + FT5x06 touch: same display SPI pins, backlight `21`; touch `SDA=33`, `SCL=32`, `INT=36`, `RST=25`, address `0x38`
 
-Some CYD sellers swap panels and touch controllers. If your board is the other common capacitive style, set `CYD_PANEL_TYPE` to `CYD_PANEL_ILI9341`, `CYD_TOUCH_TYPE` to `CYD_TOUCH_FT5X06`, `CYD_TFT_BL` to `21`, `CYD_TOUCH_INT` to `36`, `CYD_TOUCH_ADDR` to `0x38`, and `CYD_TOUCH_I2C_PORT` to `1`.
+Some CYD sellers swap panels and touch controllers. Auto detection uses the touch controller because LCD controller readback is not reliable on every CYD clone. The serial log reports whether the profile was `auto detected` or selected by `auto fallback`. If auto detection chooses the wrong profile, set `CYD_HARDWARE_PROFILE` to `CYD_PROFILE_ST7789_CST816S` or `CYD_PROFILE_ILI9341_FT5X06` in `include/app_config.h`.
 
 On every boot the firmware shows `wled.png` for two seconds before LVGL starts. If the serial log reaches `Display splash: WLED logo` but the panel stays black, change `CYD_BACKLIGHT_INVERT` first. If the backlight is on but there is no logo or fallback text, the LCD pinout or driver profile does not match your board.
