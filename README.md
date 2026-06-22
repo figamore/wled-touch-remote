@@ -1,51 +1,110 @@
-# WLED CYD ESP-NOW Remote
+# WLED Touch Remote
 
-Elegant LVGL + LovyanGFX firmware for the capacitive Cheap Yellow Display ESP32-2432S028C. It gives you a touch remote for WLED's built-in ESP-NOW actions: power, brightness slider control, and presets 1-7. Extended mode adds up to 30 presets plus WLED palette, speed, intensity, custom-slider, and color-swatch controls through WLED's `/remote.json`.
+A touchscreen remote for WLED running on the capacitive ESP32 Cheap Yellow Display.
 
-## Configure
+It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over ESP-NOW. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller.
 
-Edit `include/app_config.h` if needed:
+![Power tab](screenshots/wled-touch-remote-power.png)
 
-- `CYD_HARDWARE_PROFILE`: defaults to `CYD_PROFILE_AUTO`. Auto mode probes for the common `FT5x06` and `CST816S` touch controllers and selects the matching display/touch profile when detected.
-- `CYD_BACKLIGHT_INVERT`: flip this from `0` to `1` if serial boot works and the profile is right but the screen is black.
-- `CYD_TFT_*` and `CYD_TOUCH_*`: display and touch pins for clone boards.
-- `WLED_TOUCH_SCAN_CHANNELS`: broadcasts across channels 1 through 13 by default.
+## What It Does
 
-## WLED Pairing
+- Power on/off and brightness control
+- Presets in a simple touch-friendly layout
+- Optional Extended mode for more presets, effects, palettes, speed, intensity, and color controls
+- On-device settings for screen orientation, idle behavior, and Basic/Extended mode
+- Help screens with QR codes for setup instructions
+- Web installer support for easy browser flashing
 
-WLED's built-in ESP-NOW support is WledTouch-style button-code based. In WLED:
+## Flash It
 
-1. Open `Config -> WiFi Setup`.
-2. Enable ESP-NOW remote control.
-3. Flash and boot this display.
-4. Tap a control.
-5. Copy the `Last Seen` MAC into the `Hardware MAC` field and save.
+The easiest way is the [web installer](https://figamore.github.io/wled-touch-remote/):
 
-Default WLED behavior supports power, brightness up/down, and presets 1-7. The brightness slider translates movement into native WLED brightness step packets.
+1. Open the GitHub Pages installer for this project.
+2. Connect the CYD with a data-capable USB cable.
+3. Click Install and choose the ESP32 serial port.
 
-The Info tab shows the ESP-NOW MAC address and includes Help with a QR code for the project repository. The Settings tab lets the display orientation be flipped, the inactivity action be set to dim, turn the display off, or stay always on, and Basic/Extended remote mode be selected. In Extended mode, the Presets tab expands to presets 1-30 and the FX tab exposes palette, speed, intensity, custom slider 1, and large color-swatch controls. Settings are saved in ESP32 NVS and restored after reboot.
+Use Chrome or Edge on desktop. Web Serial requires HTTPS, so use the published GitHub Pages page rather than opening `index.html` directly.
 
-For Extended mode, upload the included `remote.json` to the root of the WLED controller filesystem as `/remote.json` using WLED's file editor:
+If the browser cannot connect, hold the CYD `BOOT` button while selecting the serial port, then release it once flashing starts.
 
-```text
-http://<wled-ip>/edit
-```
+## Pair With WLED
 
-Preset buttons 8-30 and extended effect controls rely on that file. Basic mode does not require it.
+1. Open your WLED controller in a browser.
+2. Go to `Config -> WiFi Setup`.
+3. Enable ESP-NOW remote control.
+4. Boot WLED Touch Remote and tap any control.
+5. In WLED, copy the remote's `Last Seen` MAC into the `Hardware MAC` field.
+6. Save and reboot WLED if prompted.
 
-## Build and Upload
+The Info tab on the remote also shows the MAC address you need.
+
+![Info tab](screenshots/wled-touch-remote-info.png)
+
+## Basic Mode
+
+Basic mode works with WLED's built-in ESP-NOW remote behavior. You get:
+
+- Power
+- Brightness
+- Presets 1-7
+- Settings and Info screens
+
+This mode does not require uploading any extra files to WLED.
+
+![Presets tab](screenshots/wled-touch-remote-presets.png)
+
+## Extended Mode
+
+Extended mode unlocks the richer controls. To use it, upload [`remote.json`](https://raw.githubusercontent.com/figamore/wled-touch-remote/main/remote.json) to your WLED controller as `/remote.json`.
+
+In WLED:
+
+1. Open `http://<wled-ip>/edit`
+2. Upload `remote.json`
+3. On the remote, open Settings
+4. Enable Extended mode
+
+Extended mode adds more preset buttons, WLED effects, effect settings, palette controls, and large color swatches.
+
+![FX tab](screenshots/wled-touch-remote-fx.png)
+
+## Settings
+
+The Settings tab lets you change:
+
+- Display orientation
+- Idle behavior: dim, turn off, or always on
+- Basic or Extended mode
+
+Settings are saved on the ESP32 and restored after reboot.
+
+![Settings tab](screenshots/wled-touch-remote-settings.png)
+
+## Supported Hardware
+
+This project targets capacitive ESP32 Cheap Yellow Display boards, especially ESP32-2432S028C-style CYDs.
+
+The firmware can auto-detect the common capacitive touch controllers used by these boards:
+
+- ST7789 display + CST816S touch
+- ILI9341 display + FT5x06 touch
+
+Resistive-touch CYDs are not currently supported.
+
+# Development
+
+## Building Locally
+
+Install PlatformIO, then run:
 
 ```sh
 pio run -e esp32-cyd-capacitive
 pio run -e esp32-cyd-capacitive -t upload
-pio device monitor -b 115200
 ```
-
-The startup logo is converted from `wled.png` into an RGB565 bitmap at build time. A display-sized PNG, around 320 pixels wide, avoids runtime scaling artifacts.
 
 ## macOS Simulator
 
-A native SDL simulator is available for clean screenshots of the real LVGL UI:
+A native SDL simulator is included for screenshots and UI checks:
 
 ```sh
 brew install sdl2
@@ -53,15 +112,15 @@ pio run -e macos
 .pio/build/macos/program --screenshots
 ```
 
-The screenshot command writes basic-mode BMP captures to `screenshots/`. See `docs/macos-simulator.md` for the preview workflow.
+Screenshots are written to `screenshots/`.
 
-## Hardware Notes
+## Contributing
 
-The default display config supports two common capacitive CYD layouts:
+Issues and pull requests are welcome. Please keep changes focused, touch-friendly, and friendly to the small 320x240 screen.
 
-- ST7789 display + CST816S touch: SPI `SCLK=14`, `MOSI=13`, `MISO=12`, `CS=15`, `DC=2`, backlight `27`; touch `SDA=33`, `SCL=32`, `RST=25`, address `0x15`
-- ILI9341 display + FT5x06 touch: same display SPI pins, backlight `21`; touch `SDA=33`, `SCL=32`, `INT=36`, `RST=25`, address `0x38`
+Useful areas for contributions:
 
-Some CYD sellers swap panels and touch controllers. Auto detection uses the touch controller because LCD controller readback is not reliable on every CYD clone. The serial log reports whether the profile was `auto detected` or selected by `auto fallback`. If auto detection chooses the wrong profile, set `CYD_HARDWARE_PROFILE` to `CYD_PROFILE_ST7789_CST816S` or `CYD_PROFILE_ILI9341_FT5X06` in `include/app_config.h`.
-
-On every boot the firmware shows `wled.png` for two seconds before LVGL starts. If the serial log reaches `Display splash: WLED logo` but the panel stays black, change `CYD_BACKLIGHT_INVERT` first. If the backlight is on but there is no logo or fallback text, the LCD pinout or driver profile does not match your board.
+- UI polish
+- Documentation
+- Hardware compatibility reports for capacitive CYD variants
+- New features
