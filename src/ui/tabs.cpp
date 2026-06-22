@@ -778,7 +778,7 @@ void createInfoTab(lv_obj_t* tab) {
   lv_obj_set_style_text_color(mac_label, lv_color_hex(kColorAccent), LV_PART_MAIN);
 
   lv_obj_t* hint = lv_label_create(panel);
-  lv_label_set_text(hint, "Enter this in WLED Hardware MAC");
+  lv_label_set_text(hint, "Enter this in WLED Linked MACs");
   lv_obj_set_width(hint, LV_PCT(100));
   lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_add_style(hint, &style_label_muted, LV_PART_MAIN);
