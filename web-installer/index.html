@@ -184,6 +184,10 @@
         --esp-tools-button-border-radius: 12px;
         display: block;
       }
+      esp-web-install-button:not(:defined) [slot="unsupported"],
+      esp-web-install-button:not(:defined) [slot="not-allowed"] {
+        display: none;
+      }
 
       .install-btn {
         display: inline-flex;
