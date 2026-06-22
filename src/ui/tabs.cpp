@@ -3,6 +3,7 @@
 #include "../BatteryMonitor.h"
 #include <WiFi.h>
 #include <cstring>
+#include "generated/version.h"
 #include "generated/wled_logo_png.h"
 
 namespace {
@@ -257,7 +258,15 @@ void openHelpDialog(lv_event_t*) {
 
   lv_obj_t* content = beginInfoModal("Help");
 
-  lv_obj_t* instructions = lv_label_create(content);
+  lv_obj_t* text_col = lv_obj_create(content);
+  lv_obj_remove_style_all(text_col);
+  lv_obj_set_size(text_col, 100, LV_PCT(100));
+  lv_obj_set_flex_flow(text_col, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(text_col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(text_col, 10, LV_PART_MAIN);
+  lv_obj_clear_flag(text_col, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* instructions = lv_label_create(text_col);
   lv_obj_set_width(instructions, 100);
   lv_label_set_long_mode(instructions, LV_LABEL_LONG_WRAP);
   lv_label_set_text(instructions,
@@ -267,6 +276,16 @@ void openHelpDialog(lv_event_t*) {
                     "and project\n"
                     "instructions.");
   lv_obj_add_style(instructions, &style_label_muted, LV_PART_MAIN);
+
+  lv_obj_t* version = lv_label_create(text_col);
+  lv_obj_set_width(version, 100);
+  lv_label_set_long_mode(version, LV_LABEL_LONG_WRAP);
+  lv_label_set_text_fmt(version,
+                        "Firmware v%s\n"
+                        "Copyright Figamore 2026",
+                        kAppVersion);
+  lv_obj_add_style(version, &style_label_muted, LV_PART_MAIN);
+  lv_obj_set_style_text_font(version, &lv_font_montserrat_12, LV_PART_MAIN);
 
   addQrCode(content, &kHelpQrImage, kHelpQrWidth, kHelpQrHeight);
 }

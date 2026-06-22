@@ -2,7 +2,7 @@
 
 A wireless-capable, touchscreen remote controller for WLED running on the capacitive ESP32 Cheap Yellow Display (CYD).
 
-It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over ESP-NOW. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell.
+It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over **ESP-NOW**, a wireless protocol. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell.
 
 > **Hardware note:** this project officially supports capacitive-touch CYD boards only. For best compatibility, look for the **Guition JC2432W328C** when buying online.
 
@@ -12,7 +12,7 @@ It gives you a small dedicated controller for power, brightness, presets, colors
 
 - Power on/off and brightness control
 - Preset selection
-- Optional, easy-to-configure **extended mode** for up to 20 presets, effects, palettes, speed, intensity, and color controls
+- Optional, easy-to-configure [extended mode](#extended-mode) for up to 20 presets, effects, palettes, speed, intensity, and color controls
 - On-device settings for screen orientation, idle behavior (dim, always off/on), and Basic/Extended mode
 - Help screens with QR codes for setup instructions
 - Web installer support for easy browser flashing
@@ -123,8 +123,8 @@ The slim case can be powered through USB-C, or through the board's `GND` and `5V
 
 **Battery operation instructions**
 
-- Double tap the power button to turn on.
-- Hold the power button for 10 seconds to turn off.
+- Double tap the power button to **turn on**.
+- Hold the power button for 10 seconds to **turn off**.
 - If a USB cable is connected while running on battery, the device may restart. This is normal behavior for the CYD battery circuitry.
 - Double-check polarity before powering the board. The case photos show the intended wiring path and board orientation.
 
@@ -146,10 +146,8 @@ A native SDL simulator is included for screenshots and UI checks:
 ```sh
 brew install sdl2
 pio run -e macos
-.pio/build/macos/program --screenshots
+.pio/build/macos/program
 ```
-
-Screenshots are written to `screenshots/`.
 
 ## Contributing
 
@@ -161,3 +159,5 @@ Useful areas for contributions:
 - Documentation
 - Hardware compatibility reports for capacitive CYD variants
 - New features
+
+See [Acknowledgements](ACKNOWLEDGEMENTS.md) for related projects and libraries that helped shape this project.
