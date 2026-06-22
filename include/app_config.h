@@ -44,7 +44,7 @@
 #define CYD_BATTERY_ADC_MULTIPLIER_NUM 1534
 #define CYD_BATTERY_ADC_MULTIPLIER_DEN 1000
 
-#define UI_SPLASH_MS 2000
+#define UI_SPLASH_MS 1000
 
 // WizMote remotes broadcast across channels so WLED can receive them whether it
 // is on Wi-Fi, AP mode, or a different channel. Set to 0 to use only the channel below.
