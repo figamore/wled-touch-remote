@@ -1,0 +1,80 @@
+name: Build release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 1.0.0 or v1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade platformio esptool
+
+      - name: Normalize version
+        id: version
+        run: |
+          version="${{ inputs.version }}"
+          version="${version#v}"
+          tag="v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build firmware
+        run: pio run -e esp32-cyd-capacitive
+
+      - name: Package firmware
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          boot_app0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
+          if [ -z "$boot_app0" ]; then
+            echo "boot_app0.bin not found"
+            exit 1
+          fi
+
+          package_env() {
+            env_name="$1"
+            base="wled-touch-remote-${{ steps.version.outputs.tag }}-${env_name}"
+            build_dir=".pio/build/${env_name}"
+
+            cp "${build_dir}/firmware.bin" "dist/${base}-firmware.bin"
+
+            python -m esptool --chip esp32 merge_bin \
+              --flash_mode dio \
+              --flash_freq 40m \
+              --flash_size 4MB \
+              -o "dist/${base}-merged.bin" \
+              0x1000 "${build_dir}/bootloader.bin" \
+              0x8000 "${build_dir}/partitions.bin" \
+              0xE000 "${boot_app0}" \
+              0x10000 "${build_dir}/firmware.bin"
+          }
+
+          package_env esp32-cyd-capacitive
+          cp remote.json "dist/remote.json"
+          sha256sum dist/* > "dist/SHA256SUMS.txt"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" dist/* \
+            --title "WLED Touch Remote ${{ steps.version.outputs.tag }}" \
+            --notes "Firmware release ${{ steps.version.outputs.tag }}."

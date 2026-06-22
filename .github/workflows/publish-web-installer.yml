@@ -1,0 +1,55 @@
+name: Publish web installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to publish, or "latest"'
+        required: true
+        default: latest
+      firmware_variant:
+        description: "Firmware asset variant to prefer"
+        required: true
+        default: esp32-cyd-capacitive
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build installer from release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/build_web_installer.py \
+            --repo "${{ github.repository }}" \
+            --release-tag "${{ inputs.release_tag }}" \
+            --variant "${{ inputs.firmware_variant }}" \
+            --site-dir web-installer
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web-installer
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
