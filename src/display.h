@@ -39,6 +39,7 @@ class LGFX : public lgfx::LGFX_Device {
     kSt7789Cst816s,
     kIli9341Ft5x06,
     kIli9341Xpt2046,
+    kSt7789Xpt2046,
   };
 
   struct ProfileInfo {
@@ -51,16 +52,22 @@ class LGFX : public lgfx::LGFX_Device {
     bool is_ili9341;
     bool has_i2c_touch;
     bool supports_battery;
+    uint8_t panel_offset_rotation;
+    uint8_t touch_offset_rotation;
   };
 
   static const ProfileInfo* profileTable(uint8_t& count) {
     static constexpr ProfileInfo kProfiles[] = {
         {HardwareProfile::kSt7789Cst816s, CYD_PROFILE_ST7789_CST816S, "ST7789", "CST816S",
-         "ST7789 + CST816S", CYD_TFT_BL, false, true, true},
+         "ST7789 + CST816S", CYD_TFT_BL, false, true, true, CYD_PANEL_OFFSET_ROTATION, CYD_TOUCH_OFFSET_ROTATION},
         {HardwareProfile::kIli9341Ft5x06, CYD_PROFILE_ILI9341_FT5X06, "ILI9341", "FT5x06",
-         "ILI9341 + FT5x06", CYD_ALT_TFT_BL, true, true, true},
+         "ILI9341 + FT5x06", CYD_ALT_TFT_BL, true, true, true, CYD_PANEL_OFFSET_ROTATION, CYD_TOUCH_OFFSET_ROTATION},
         {HardwareProfile::kIli9341Xpt2046, CYD_PROFILE_ILI9341_XPT2046, "ILI9341", "XPT2046",
-         "ILI9341 + XPT2046", CYD_RES_TFT_BL, true, false, false},
+         "ILI9341 + XPT2046", CYD_RES_TFT_BL, true, false, false, CYD_RES_PANEL_OFFSET_ROTATION,
+         CYD_RES_TOUCH_OFFSET_ROTATION},
+        {HardwareProfile::kSt7789Xpt2046, CYD_PROFILE_ST7789_XPT2046, "ST7789", "XPT2046",
+         "ST7789 + XPT2046", CYD_RES_TFT_BL, false, false, false, CYD_RES_ST7789_PANEL_OFFSET_ROTATION,
+         CYD_RES_ST7789_TOUCH_OFFSET_ROTATION},
     };
     count = sizeof(kProfiles) / sizeof(kProfiles[0]);
     return kProfiles;
@@ -175,6 +182,68 @@ class LGFX : public lgfx::LGFX_Device {
     return readI2cRegister(profile, 0xA7, data, sizeof(data), true) && hasNonZeroByte(data, sizeof(data));
   }
 
+  static uint32_t readPanelRegister(lgfx::IBus& bus,
+                                    uint_fast16_t cmd,
+                                    uint8_t dummy_bits,
+                                    uint8_t read_count) {
+    constexpr uint_fast8_t kDataBits = 8;
+    pinMode(CYD_TFT_CS, OUTPUT);
+    digitalWrite(CYD_TFT_CS, HIGH);
+
+    bus.beginTransaction();
+    bus.writeCommand(0, kDataBits);
+    bus.wait();
+
+    digitalWrite(CYD_TFT_CS, LOW);
+    bus.writeCommand(cmd, kDataBits);
+    bus.beginRead(dummy_bits);
+
+    uint32_t result = 0;
+    for (uint8_t i = 0; i < read_count; ++i) {
+      result |= ((bus.readData(kDataBits) >> (kDataBits - 8)) & 0xFF) << (i * 8);
+    }
+
+    bus.endTransaction();
+    digitalWrite(CYD_TFT_CS, HIGH);
+    return result;
+  }
+
+  static bool detectIli9341Panel() {
+    lgfx::Bus_SPI detect_bus;
+    auto cfg = detect_bus.config();
+    cfg.spi_host = HSPI_HOST;
+    cfg.spi_mode = 0;
+    cfg.freq_write = 8000000;
+    cfg.freq_read = 8000000;
+    cfg.spi_3wire = false;
+    cfg.use_lock = true;
+    cfg.dma_channel = 0;
+    cfg.pin_sclk = CYD_TFT_SCLK;
+    cfg.pin_mosi = CYD_TFT_MOSI;
+    cfg.pin_miso = CYD_TFT_MISO;
+    cfg.pin_dc = CYD_TFT_DC;
+    detect_bus.config(cfg);
+    detect_bus.init();
+
+    const uint32_t id1 = readPanelRegister(detect_bus, 0xDA, 0, 1);
+    const uint32_t id = readPanelRegister(detect_bus, 0x04, 1, 4);
+    detect_bus.release();
+
+    // On these CYD families, ST7789 reports 0x85 in RDDID while ILI9341
+    // reports 0x00 for RDID1.
+    Serial.printf("Display panel probe: RDID1=0x%02lX RDDID=0x%08lX\n",
+                  static_cast<unsigned long>(id1 & 0xFF),
+                  static_cast<unsigned long>(id));
+    if ((id & 0xFF) == 0x85) {
+      return false;
+    }
+    return (id1 & 0xFF) == 0x00;
+  }
+
+  static HardwareProfile resistiveProfileForPanel() {
+    return detectIli9341Panel() ? HardwareProfile::kIli9341Xpt2046 : HardwareProfile::kSt7789Xpt2046;
+  }
+
   void configureBus() {
     auto cfg = bus_.config();
     cfg.spi_host = HSPI_HOST;
@@ -203,7 +272,7 @@ class LGFX : public lgfx::LGFX_Device {
     cfg.memory_height = 320;
     cfg.offset_x = 0;
     cfg.offset_y = 0;
-    cfg.offset_rotation = CYD_PANEL_OFFSET_ROTATION;
+    cfg.offset_rotation = profileInfo(profile_).panel_offset_rotation;
     cfg.dummy_read_pixel = 8;
     cfg.dummy_read_bits = 1;
     cfg.readable = true;
@@ -233,7 +302,7 @@ class LGFX : public lgfx::LGFX_Device {
     cfg.pin_int = profile.pin_int;
     cfg.pin_rst = profile.pin_rst;
     cfg.bus_shared = false;
-    cfg.offset_rotation = CYD_TOUCH_OFFSET_ROTATION;
+    cfg.offset_rotation = profileInfo(profile_).touch_offset_rotation;
     cfg.i2c_port = profile.i2c_port;
     cfg.i2c_addr = profile.i2c_addr;
     cfg.pin_sda = CYD_TOUCH_SDA;
@@ -247,7 +316,7 @@ class LGFX : public lgfx::LGFX_Device {
     return probeFt5x06();
   }
 
-  void configureResistiveTouch() {
+  void configureResistiveTouch(HardwareProfile profile) {
     auto cfg = touch_xpt2046_.config();
     cfg.x_min = CYD_RES_TOUCH_X_MIN;
     cfg.x_max = CYD_RES_TOUCH_X_MAX;
@@ -260,7 +329,7 @@ class LGFX : public lgfx::LGFX_Device {
     cfg.pin_mosi = CYD_RES_TOUCH_MOSI;
     cfg.pin_miso = CYD_RES_TOUCH_MISO;
     cfg.pin_cs = CYD_RES_TOUCH_CS;
-    cfg.offset_rotation = CYD_RES_TOUCH_OFFSET_ROTATION;
+    cfg.offset_rotation = profileInfo(profile).touch_offset_rotation;
     touch_xpt2046_.config(cfg);
   }
 
@@ -272,6 +341,8 @@ class LGFX : public lgfx::LGFX_Device {
     return HardwareProfile::kIli9341Ft5x06;
 #elif CYD_HARDWARE_PROFILE == CYD_PROFILE_ILI9341_XPT2046
     return HardwareProfile::kIli9341Xpt2046;
+#elif CYD_HARDWARE_PROFILE == CYD_PROFILE_ST7789_XPT2046
+    return HardwareProfile::kSt7789Xpt2046;
 #else
     if (detectFt5x06()) {
       return HardwareProfile::kIli9341Ft5x06;
@@ -280,7 +351,7 @@ class LGFX : public lgfx::LGFX_Device {
       return HardwareProfile::kSt7789Cst816s;
     }
     profile_detected_ = false;
-    return HardwareProfile::kSt7789Cst816s;
+    return resistiveProfileForPanel();
 #endif
   }
 
@@ -302,11 +373,22 @@ class LGFX : public lgfx::LGFX_Device {
     if (profile_ == HardwareProfile::kIli9341Xpt2046) {
       configurePanel(panel_ili9341_);
       configureLight(profileInfo(profile_).backlight_pin);
-      configureResistiveTouch();
+      configureResistiveTouch(profile_);
       panel_ili9341_.setBus(&bus_);
       panel_ili9341_.setLight(&light_);
       panel_ili9341_.setTouch(&touch_xpt2046_);
       setPanel(&panel_ili9341_);
+      return;
+    }
+
+    if (profile_ == HardwareProfile::kSt7789Xpt2046) {
+      configurePanel(panel_st7789_);
+      configureLight(profileInfo(profile_).backlight_pin);
+      configureResistiveTouch(profile_);
+      panel_st7789_.setBus(&bus_);
+      panel_st7789_.setLight(&light_);
+      panel_st7789_.setTouch(&touch_xpt2046_);
+      setPanel(&panel_st7789_);
       return;
     }
 
@@ -334,8 +416,8 @@ class LGFX : public lgfx::LGFX_Device {
   }
 
   void setTouchProfile(HardwareProfile profile) {
-    if (profile == HardwareProfile::kIli9341Xpt2046) {
-      configureResistiveTouch();
+    if (profile == HardwareProfile::kIli9341Xpt2046 || profile == HardwareProfile::kSt7789Xpt2046) {
+      configureResistiveTouch(profile);
       getPanel()->setTouch(&touch_xpt2046_);
     } else if (profile == HardwareProfile::kIli9341Ft5x06) {
       configureTouch(touch_ft5x06_, ft5x06TouchProfile());

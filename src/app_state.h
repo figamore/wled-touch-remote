@@ -56,7 +56,7 @@ constexpr const char* kPrefsExtendedKey = "extended";
 constexpr const char* kPrefsInfoSeenKey = "infoSeen";
 constexpr const char* kPrefsHardwareProfileKey = "hwProfile";
 constexpr const char* kPrefsHardwareSetupVersionKey = "hwSetupVer";
-constexpr uint8_t kHardwareSetupVersion = 3;
+constexpr uint8_t kHardwareSetupVersion = 4;
 
 // ── Colors ──────────────────────────────────────────────────────────────────
 
