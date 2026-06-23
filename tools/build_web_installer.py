@@ -207,7 +207,7 @@ def main() -> int:
     parser.add_argument("--repo", default=DEFAULT_REPO, help="GitHub repository, e.g. figamore/wled-touch-remote")
     parser.add_argument("--release-tag", default="latest", help='Release tag to use, or "latest"')
     parser.add_argument("--site-dir", type=Path, default=DEFAULT_SITE_DIR)
-    parser.add_argument("--variant", default="esp32-cyd-capacitive")
+    parser.add_argument("--variant", default="esp32-cyd")
     args = parser.parse_args()
 
     token = os.environ.get("GITHUB_TOKEN")

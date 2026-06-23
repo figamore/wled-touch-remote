@@ -38,7 +38,7 @@ jobs:
       - name: Build firmware
         env:
           WLED_TOUCH_VERSION: ${{ steps.version.outputs.version }}
-        run: pio run -e esp32-cyd-capacitive
+        run: pio run -e esp32-cyd
 
       - name: Package firmware
         run: |
@@ -69,7 +69,7 @@ jobs:
               0x10000 "${build_dir}/firmware.bin"
           }
 
-          package_env esp32-cyd-capacitive
+          package_env esp32-cyd
           cp remote.json "dist/remote.json"
           sha256sum dist/* > "dist/SHA256SUMS.txt"
 

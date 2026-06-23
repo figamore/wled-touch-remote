@@ -1,10 +1,10 @@
 # WLED Touch Remote
 
-A wireless-capable, touchscreen remote controller for WLED running on the capacitive ESP32 Cheap Yellow Display (CYD).
+A wireless-capable, touchscreen remote controller for WLED running on the ESP32 Cheap Yellow Display (CYD).
 
 It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over **ESP-NOW**, a wireless protocol. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell.
 
-> **Hardware note:** this project officially supports capacitive-touch CYD boards only. For best compatibility, look for the **Guition JC2432W328C** when buying online.
+> **Hardware note:** the default firmware supports common capacitive and resistive CYD boards. On first boot, setup asks you to tap the screen and saves the detected touch hardware.
 
 ![Display](screenshots/case/FigCyd-Standard-2.jpg)
 
@@ -82,14 +82,14 @@ Settings are saved on the ESP32 and restored after reboot.
 
 ## Supported Hardware
 
-This project targets capacitive ESP32 Cheap Yellow Display boards, especially the Guition JC2432W328C / ESP32-2432S028C-style CYD.
+This project targets ESP32 Cheap Yellow Display boards, especially the Guition JC2432W328C / ESP32-2432S028C-style capacitive CYD and ESP32-024 / ESP32-2432S028-style resistive CYD.
 
-The firmware can auto-detect the common capacitive touch controllers used by these boards:
+The default firmware can auto-detect the common capacitive touch controllers used by these boards:
 
 - ST7789 display + CST816S touch
 - ILI9341 display + FT5x06 touch
 
-Resistive-touch CYDs are not currently supported.
+On first boot, the firmware shows a one-time touch setup screen so it can confirm the touch hardware.
 
 ## 3D Printed Case
 
@@ -142,8 +142,8 @@ The slim case can be powered through USB-C, or through the board's `GND` and `5V
 Install PlatformIO, then run:
 
 ```sh
-pio run -e esp32-cyd-capacitive
-pio run -e esp32-cyd-capacitive -t upload
+pio run -e esp32-cyd
+pio run -e esp32-cyd -t upload
 ```
 
 ## macOS Simulator
@@ -164,7 +164,7 @@ Useful areas for contributions:
 
 - UI polish
 - Documentation
-- Hardware compatibility reports for capacitive CYD variants
+- Hardware compatibility reports for CYD variants
 - New features
 
 See [Acknowledgements](ACKNOWLEDGEMENTS.md) for related projects and libraries that helped shape this project.

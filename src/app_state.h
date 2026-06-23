@@ -54,6 +54,9 @@ constexpr const char* kPrefsIdleOffKey = "idleOff";
 constexpr const char* kPrefsIdleModeKey = "idleMode";
 constexpr const char* kPrefsExtendedKey = "extended";
 constexpr const char* kPrefsInfoSeenKey = "infoSeen";
+constexpr const char* kPrefsHardwareProfileKey = "hwProfile";
+constexpr const char* kPrefsHardwareSetupVersionKey = "hwSetupVer";
+constexpr uint8_t kHardwareSetupVersion = 3;
 
 // ── Colors ──────────────────────────────────────────────────────────────────
 

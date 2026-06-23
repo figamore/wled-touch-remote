@@ -1,5 +1,8 @@
 #include "display.h"
 #include <Arduino.h>
+#if !WLED_TOUCH_SIMULATOR
+#include <Preferences.h>
+#endif
 #include "generated/version.h"
 #include "generated/wled_logo_png.h"
 
@@ -12,6 +15,152 @@ lv_color_t draw_buf_2[kScreenWidth * kLvglBufferLines];
 bool display_idle_applied = false;
 bool suppress_touch_until_release = false;
 uint32_t last_touch_ms = 0;
+
+#if !WLED_TOUCH_SIMULATOR
+using HardwareProfile = LGFX::HardwareProfile;
+
+bool loadSavedHardwareProfile(HardwareProfile& profile) {
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNamespace, true)) {
+    return false;
+  }
+  const bool has_key = prefs.isKey(kPrefsHardwareProfileKey);
+  const uint8_t version = prefs.getUChar(kPrefsHardwareSetupVersionKey, 0);
+  const uint8_t code = prefs.getUChar(kPrefsHardwareProfileKey, CYD_PROFILE_AUTO);
+  prefs.end();
+  return has_key && version == kHardwareSetupVersion && LGFX::hardwareProfileFromCode(code, profile);
+}
+
+void saveHardwareProfile(HardwareProfile profile) {
+  Preferences prefs;
+  if (prefs.begin(kPrefsNamespace, false)) {
+    prefs.putUChar(kPrefsHardwareProfileKey, LGFX::profileInfo(profile).code);
+    prefs.putUChar(kPrefsHardwareSetupVersionKey, kHardwareSetupVersion);
+    prefs.end();
+  }
+}
+
+void clearSavedHardwareProfile() {
+  Preferences prefs;
+  if (prefs.begin(kPrefsNamespace, false)) {
+    prefs.remove(kPrefsHardwareProfileKey);
+    prefs.remove(kPrefsHardwareSetupVersionKey);
+    prefs.end();
+  }
+}
+
+bool hardwareProfileResetRequested() {
+  pinMode(0, INPUT_PULLUP);
+  delay(20);
+  return digitalRead(0) == LOW;
+}
+
+const char* setupTouchName(HardwareProfile profile) {
+  return LGFX::profileInfo(profile).has_i2c_touch ? "Capacitive touch" : "Resistive touch";
+}
+
+void drawHardwareSetupPrompt(HardwareProfile profile, uint8_t attempt) {
+  (void)attempt;
+  const uint16_t bg = gfx.color565(4, 8, 14);
+  const uint16_t panel = gfx.color565(8, 47, 73);
+  const uint16_t cyan = gfx.color565(103, 232, 249);
+  const uint16_t teal = gfx.color565(45, 212, 191);
+  const uint16_t yellow = gfx.color565(250, 204, 21);
+
+  gfx.fillScreen(bg);
+  gfx.setTextDatum(middle_center);
+  gfx.setTextColor(TFT_WHITE, bg);
+  gfx.setTextSize(3);
+  gfx.drawString("TAP THE CENTER", kScreenWidth / 2, 32);
+
+  const int16_t cx = kScreenWidth / 2;
+  const int16_t cy = 128;
+  gfx.fillCircle(cx, cy, 58, panel);
+  gfx.drawCircle(cx, cy, 59, cyan);
+  gfx.drawCircle(cx, cy, 42, cyan);
+  gfx.drawCircle(cx, cy, 25, teal);
+  gfx.fillCircle(cx, cy, 12, yellow);
+  gfx.drawFastHLine(cx - 72, cy, 144, cyan);
+  gfx.drawFastVLine(cx, cy - 72, 144, cyan);
+
+  gfx.setTextColor(yellow, bg);
+  gfx.setTextSize(2);
+  gfx.drawString("HOLD UNTIL DETECTED", kScreenWidth / 2, 210);
+
+  gfx.setTextSize(1);
+  gfx.setTextColor(gfx.color565(203, 213, 225), bg);
+  gfx.drawString(setupTouchName(profile), kScreenWidth / 2, 230);
+}
+
+bool waitForSetupTouch(uint32_t timeout_ms) {
+  const uint32_t start_ms = millis();
+  while (millis() - start_ms < timeout_ms) {
+    uint16_t x = 0;
+    uint16_t y = 0;
+    if (gfx.getTouch(&x, &y)) {
+      return true;
+    }
+    delay(25);
+  }
+  return false;
+}
+
+// Order in which profiles are tried during guided setup.
+constexpr HardwareProfile kSetupCycleOrder[] = {
+    HardwareProfile::kIli9341Xpt2046,
+    HardwareProfile::kSt7789Cst816s,
+    HardwareProfile::kIli9341Ft5x06,
+};
+constexpr uint8_t kSetupCycleCount = sizeof(kSetupCycleOrder) / sizeof(kSetupCycleOrder[0]);
+
+HardwareProfile profileAtIndex(uint8_t index) {
+  return kSetupCycleOrder[index % kSetupCycleCount];
+}
+
+uint8_t profileIndex(HardwareProfile profile) {
+  for (uint8_t i = 0; i < kSetupCycleCount; ++i) {
+    if (kSetupCycleOrder[i] == profile) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+HardwareProfile runGuidedHardwareSetup(HardwareProfile first_profile) {
+  uint8_t attempt = 1;
+  uint8_t first_index = profileIndex(first_profile);
+
+  pinMode(CYD_TFT_BL, OUTPUT);
+  digitalWrite(CYD_TFT_BL, CYD_BACKLIGHT_INVERT ? LOW : HIGH);
+  pinMode(CYD_ALT_TFT_BL, OUTPUT);
+  digitalWrite(CYD_ALT_TFT_BL, CYD_BACKLIGHT_INVERT ? LOW : HIGH);
+
+  gfx.init();
+  applyDisplayRotation();
+  gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
+
+  while (true) {
+    for (uint8_t i = 0; i < kSetupCycleCount; ++i) {
+      const HardwareProfile profile = profileAtIndex(first_index + i);
+      Serial.printf("Hardware setup: trying %s\n", LGFX::profileInfo(profile).profile_name);
+      gfx.setTouchProfile(profile);
+      drawHardwareSetupPrompt(profile, attempt);
+      if (waitForSetupTouch(2500)) {
+        gfx.fillScreen(gfx.color565(7, 12, 18));
+        gfx.setTextDatum(middle_center);
+        gfx.setTextColor(gfx.color565(52, 211, 153), gfx.color565(7, 12, 18));
+        gfx.setTextSize(2);
+        gfx.drawString("Touch Detected", kScreenWidth / 2, 96);
+        gfx.setTextColor(TFT_WHITE, gfx.color565(7, 12, 18));
+        gfx.drawString("Saving setup", kScreenWidth / 2, 134);
+        delay(700);
+        return profile;
+      }
+      ++attempt;
+    }
+  }
+}
+#endif
 
 void flushDisplay(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_p) {
   const int32_t width = area->x2 - area->x1 + 1;
@@ -102,7 +251,8 @@ void drawSplash() {
     gfx.setTextColor(gfx.color565(150, 158, 170), TFT_BLACK);
     gfx.setTextDatum(middle_center);
     gfx.setTextSize(1);
-    gfx.drawString(String("Firmware v") + kAppVersion,
+    const String version = String("Firmware v") + kAppVersion;
+    gfx.drawString(version.c_str(),
                    kScreenWidth / 2,
                    y + kWledLogoHeight + 18);
   }
@@ -114,7 +264,8 @@ void drawSplash() {
     gfx.drawString("WLED", kScreenWidth / 2, kScreenHeight / 2);
     gfx.setTextColor(gfx.color565(150, 158, 170), TFT_BLACK);
     gfx.setTextSize(1);
-    gfx.drawString(String("v") + kAppVersion, kScreenWidth / 2, kScreenHeight / 2 + 34);
+    const String version = String("v") + kAppVersion;
+    gfx.drawString(version.c_str(), kScreenWidth / 2, kScreenHeight / 2 + 34);
   }
 
   delay(UI_SPLASH_MS);
@@ -123,15 +274,47 @@ void drawSplash() {
 
 void initDisplay() {
   Serial.println("Display init: starting LovyanGFX");
+  bool display_already_initialized = false;
 #if WLED_TOUCH_SIMULATOR
   lgfx::Panel_sdl::setup();
   Serial.println("Display profile: simulator SDL");
 #else
+#if CYD_HARDWARE_PROFILE == CYD_PROFILE_AUTO
+  if (hardwareProfileResetRequested()) {
+    Serial.println("Display profile: BOOT held, clearing saved hardware profile");
+    clearSavedHardwareProfile();
+  }
+
+  HardwareProfile saved_profile;
+  if (loadSavedHardwareProfile(saved_profile)) {
+    gfx.setHardwareProfile(saved_profile);
+    Serial.println("Display profile: loaded saved hardware profile");
+  } else {
+    gfx.autoConfigure();
+    const bool has_capacitive_hint = gfx.profileDetected();
+    const HardwareProfile first_profile = has_capacitive_hint
+                                              ? gfx.hardwareProfile()
+                                              : HardwareProfile::kIli9341Xpt2046;
+    if (!has_capacitive_hint) {
+      gfx.setHardwareProfile(first_profile);
+    }
+    Serial.printf("Display profile: touch setup required%s\n",
+                  has_capacitive_hint ? " (capacitive hint found)" : "");
+    const HardwareProfile selected_profile = runGuidedHardwareSetup(first_profile);
+    saveHardwareProfile(selected_profile);
+    gfx.setHardwareProfile(selected_profile);
+    gfx.init();
+    applyDisplayRotation();
+    gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
+    display_already_initialized = true;
+  }
+#else
   gfx.autoConfigure();
+#endif
   Serial.printf("Display profile: %s%s\n",
                 gfx.profileName(),
 #if CYD_HARDWARE_PROFILE == CYD_PROFILE_AUTO
-                gfx.profileDetected() ? " (auto detected)" : " (auto fallback)"
+                display_already_initialized ? " (touch setup)" : (gfx.profileDetected() ? " (auto)" : " (fallback)")
 #else
                 " (manual)"
 #endif
@@ -148,24 +331,37 @@ void initDisplay() {
 #if WLED_TOUCH_SIMULATOR
                 CYD_TFT_BL,
 #else
-                gfx.hardwareProfile() == LGFX::HardwareProfile::kIli9341Ft5x06 ? CYD_ALT_TFT_BL : CYD_TFT_BL,
+                gfx.backlightPin(),
 #endif
                 CYD_BACKLIGHT_INVERT);
-  Serial.printf("Touch pins: sda=%d scl=%d rst=%d int=%d addr=0x%02X i2cPort=%d\n",
-                CYD_TOUCH_SDA,
-                CYD_TOUCH_SCL,
-                CYD_TOUCH_RST,
-#if WLED_TOUCH_SIMULATOR
-                CYD_TOUCH_INT,
-                CYD_TOUCH_ADDR,
-                CYD_TOUCH_I2C_PORT
-#else
-                gfx.hardwareProfile() == LGFX::HardwareProfile::kIli9341Ft5x06 ? CYD_ALT_TOUCH_INT : CYD_TOUCH_INT,
-                gfx.hardwareProfile() == LGFX::HardwareProfile::kIli9341Ft5x06 ? CYD_ALT_TOUCH_ADDR : CYD_TOUCH_ADDR,
-                gfx.hardwareProfile() == LGFX::HardwareProfile::kIli9341Ft5x06 ? CYD_ALT_TOUCH_I2C_PORT : CYD_TOUCH_I2C_PORT
+#if !WLED_TOUCH_SIMULATOR
+  if (!gfx.hasI2cTouch()) {
+    Serial.printf("Touch pins: sclk=%d mosi=%d miso=%d cs=%d int=%d spiHost=%d\n",
+                  CYD_RES_TOUCH_SCLK,
+                  CYD_RES_TOUCH_MOSI,
+                  CYD_RES_TOUCH_MISO,
+                  CYD_RES_TOUCH_CS,
+                  CYD_RES_TOUCH_INT,
+                  CYD_RES_TOUCH_SPI_HOST);
+  } else
 #endif
-  );
-  const bool display_ok = gfx.init();
+  {
+    Serial.printf("Touch pins: sda=%d scl=%d rst=%d int=%d addr=0x%02X i2cPort=%d\n",
+                  CYD_TOUCH_SDA,
+                  CYD_TOUCH_SCL,
+                  CYD_TOUCH_RST,
+#if WLED_TOUCH_SIMULATOR
+                  CYD_TOUCH_INT,
+                  CYD_TOUCH_ADDR,
+                  CYD_TOUCH_I2C_PORT
+#else
+                  gfx.hardwareProfile() == LGFX::HardwareProfile::kIli9341Ft5x06 ? CYD_ALT_TOUCH_INT : CYD_TOUCH_INT,
+                  gfx.hardwareProfile() == LGFX::HardwareProfile::kIli9341Ft5x06 ? CYD_ALT_TOUCH_ADDR : CYD_TOUCH_ADDR,
+                  gfx.hardwareProfile() == LGFX::HardwareProfile::kIli9341Ft5x06 ? CYD_ALT_TOUCH_I2C_PORT : CYD_TOUCH_I2C_PORT
+#endif
+    );
+  }
+  const bool display_ok = display_already_initialized || gfx.init();
   Serial.printf("Display init: %s\n", display_ok ? "ok" : "failed");
   applyDisplayRotation();
   gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
