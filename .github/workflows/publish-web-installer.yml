@@ -10,7 +10,7 @@ on:
       firmware_variant:
         description: "Firmware asset variant to prefer"
         required: true
-        default: esp32-cyd-capacitive
+        default: esp32-cyd
 
 permissions:
   contents: read

@@ -38,7 +38,38 @@ class LGFX : public lgfx::LGFX_Device {
   enum class HardwareProfile : uint8_t {
     kSt7789Cst816s,
     kIli9341Ft5x06,
+    kIli9341Xpt2046,
   };
+
+  struct ProfileInfo {
+    HardwareProfile profile;
+    uint8_t code;  // persisted CYD_PROFILE_* code
+    const char* panel_name;
+    const char* touch_name;
+    const char* profile_name;
+    uint8_t backlight_pin;
+    bool is_ili9341;
+    bool has_i2c_touch;
+    bool supports_battery;
+  };
+
+  static const ProfileInfo* profileTable(uint8_t& count) {
+    static constexpr ProfileInfo kProfiles[] = {
+        {HardwareProfile::kSt7789Cst816s, CYD_PROFILE_ST7789_CST816S, "ST7789", "CST816S",
+         "ST7789 + CST816S", CYD_TFT_BL, false, true, true},
+        {HardwareProfile::kIli9341Ft5x06, CYD_PROFILE_ILI9341_FT5X06, "ILI9341", "FT5x06",
+         "ILI9341 + FT5x06", CYD_ALT_TFT_BL, true, true, true},
+        {HardwareProfile::kIli9341Xpt2046, CYD_PROFILE_ILI9341_XPT2046, "ILI9341", "XPT2046",
+         "ILI9341 + XPT2046", CYD_RES_TFT_BL, true, false, false},
+    };
+    count = sizeof(kProfiles) / sizeof(kProfiles[0]);
+    return kProfiles;
+  }
+
+  static const ProfileInfo& profileInfo(HardwareProfile profile) {
+    uint8_t count = 0;
+    return profileTable(count)[static_cast<uint8_t>(profile)];
+  }
 
  private:
   lgfx::Bus_SPI bus_;
@@ -47,6 +78,7 @@ class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_ILI9341 panel_ili9341_;
   lgfx::Touch_CST816S touch_cst816s_;
   lgfx::Touch_FT5x06 touch_ft5x06_;
+  lgfx::Touch_XPT2046 touch_xpt2046_;
   HardwareProfile profile_ = HardwareProfile::kSt7789Cst816s;
   bool profile_detected_ = false;
 
@@ -215,12 +247,31 @@ class LGFX : public lgfx::LGFX_Device {
     return probeFt5x06();
   }
 
+  void configureResistiveTouch() {
+    auto cfg = touch_xpt2046_.config();
+    cfg.x_min = CYD_RES_TOUCH_X_MIN;
+    cfg.x_max = CYD_RES_TOUCH_X_MAX;
+    cfg.y_min = CYD_RES_TOUCH_Y_MIN;
+    cfg.y_max = CYD_RES_TOUCH_Y_MAX;
+    cfg.pin_int = CYD_RES_TOUCH_INT;
+    cfg.bus_shared = false;
+    cfg.spi_host = CYD_RES_TOUCH_SPI_HOST;
+    cfg.pin_sclk = CYD_RES_TOUCH_SCLK;
+    cfg.pin_mosi = CYD_RES_TOUCH_MOSI;
+    cfg.pin_miso = CYD_RES_TOUCH_MISO;
+    cfg.pin_cs = CYD_RES_TOUCH_CS;
+    cfg.offset_rotation = CYD_RES_TOUCH_OFFSET_ROTATION;
+    touch_xpt2046_.config(cfg);
+  }
+
   HardwareProfile detectProfile() {
     profile_detected_ = true;
 #if CYD_HARDWARE_PROFILE == CYD_PROFILE_ST7789_CST816S
     return HardwareProfile::kSt7789Cst816s;
 #elif CYD_HARDWARE_PROFILE == CYD_PROFILE_ILI9341_FT5X06
     return HardwareProfile::kIli9341Ft5x06;
+#elif CYD_HARDWARE_PROFILE == CYD_PROFILE_ILI9341_XPT2046
+    return HardwareProfile::kIli9341Xpt2046;
 #else
     if (detectFt5x06()) {
       return HardwareProfile::kIli9341Ft5x06;
@@ -239,7 +290,7 @@ class LGFX : public lgfx::LGFX_Device {
 
     if (profile_ == HardwareProfile::kIli9341Ft5x06) {
       configurePanel(panel_ili9341_);
-      configureLight(CYD_ALT_TFT_BL);
+      configureLight(profileInfo(profile_).backlight_pin);
       configureTouch(touch_ft5x06_, ft5x06TouchProfile());
       panel_ili9341_.setBus(&bus_);
       panel_ili9341_.setLight(&light_);
@@ -248,8 +299,19 @@ class LGFX : public lgfx::LGFX_Device {
       return;
     }
 
+    if (profile_ == HardwareProfile::kIli9341Xpt2046) {
+      configurePanel(panel_ili9341_);
+      configureLight(profileInfo(profile_).backlight_pin);
+      configureResistiveTouch();
+      panel_ili9341_.setBus(&bus_);
+      panel_ili9341_.setLight(&light_);
+      panel_ili9341_.setTouch(&touch_xpt2046_);
+      setPanel(&panel_ili9341_);
+      return;
+    }
+
     configurePanel(panel_st7789_);
-    configureLight(CYD_TFT_BL);
+    configureLight(profileInfo(profile_).backlight_pin);
     configureTouch(touch_cst816s_, cst816sTouchProfile());
     panel_st7789_.setBus(&bus_);
     panel_st7789_.setLight(&light_);
@@ -266,6 +328,41 @@ class LGFX : public lgfx::LGFX_Device {
     applyProfile(detectProfile());
   }
 
+  void setHardwareProfile(HardwareProfile profile) {
+    profile_detected_ = true;
+    applyProfile(profile);
+  }
+
+  void setTouchProfile(HardwareProfile profile) {
+    if (profile == HardwareProfile::kIli9341Xpt2046) {
+      configureResistiveTouch();
+      getPanel()->setTouch(&touch_xpt2046_);
+    } else if (profile == HardwareProfile::kIli9341Ft5x06) {
+      configureTouch(touch_ft5x06_, ft5x06TouchProfile());
+      getPanel()->setTouch(&touch_ft5x06_);
+    } else {
+      configureTouch(touch_cst816s_, cst816sTouchProfile());
+      getPanel()->setTouch(&touch_cst816s_);
+    }
+    getPanel()->initTouch();
+  }
+
+  uint8_t hardwareProfileCode() const {
+    return profileInfo(profile_).code;
+  }
+
+  static bool hardwareProfileFromCode(uint8_t code, HardwareProfile& profile) {
+    uint8_t count = 0;
+    const ProfileInfo* table = profileTable(count);
+    for (uint8_t i = 0; i < count; ++i) {
+      if (table[i].code == code) {
+        profile = table[i].profile;
+        return true;
+      }
+    }
+    return false;
+  }
+
   HardwareProfile hardwareProfile() const {
     return profile_;
   }
@@ -274,16 +371,32 @@ class LGFX : public lgfx::LGFX_Device {
     return profile_detected_;
   }
 
+  bool hasI2cTouch() const {
+    return profileInfo(profile_).has_i2c_touch;
+  }
+
+  bool isIli9341() const {
+    return profileInfo(profile_).is_ili9341;
+  }
+
+  bool supportsBatteryMonitor() const {
+    return profileInfo(profile_).supports_battery;
+  }
+
+  uint8_t backlightPin() const {
+    return profileInfo(profile_).backlight_pin;
+  }
+
   const char* panelName() const {
-    return profile_ == HardwareProfile::kIli9341Ft5x06 ? "ILI9341" : "ST7789";
+    return profileInfo(profile_).panel_name;
   }
 
   const char* touchName() const {
-    return profile_ == HardwareProfile::kIli9341Ft5x06 ? "FT5x06" : "CST816S";
+    return profileInfo(profile_).touch_name;
   }
 
   const char* profileName() const {
-    return profile_ == HardwareProfile::kIli9341Ft5x06 ? "ILI9341 + FT5x06" : "ST7789 + CST816S";
+    return profileInfo(profile_).profile_name;
   }
 };
 #endif

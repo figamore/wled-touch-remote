@@ -1,7 +1,7 @@
 #pragma once
 
-// Cheap Yellow Display capacitive profiles. Auto mode detects the common
-// FT5x06 touch controller and otherwise falls back to ST7789 + CST816S.
+// Cheap Yellow Display profiles. Auto mode passively detects known capacitive
+// controllers, then uses a one-time touch setup screen for resistive boards.
 
 #ifndef WLED_CYD_ENABLE_BATTERY
 #define WLED_CYD_ENABLE_BATTERY 1
@@ -22,6 +22,7 @@
 #define CYD_PROFILE_AUTO 0
 #define CYD_PROFILE_ST7789_CST816S 1
 #define CYD_PROFILE_ILI9341_FT5X06 2
+#define CYD_PROFILE_ILI9341_XPT2046 3
 
 #ifndef CYD_HARDWARE_PROFILE
 #define CYD_HARDWARE_PROFILE CYD_PROFILE_AUTO
@@ -52,7 +53,26 @@
 #define CYD_ALT_TOUCH_ADDR 0x38
 #define CYD_ALT_TOUCH_I2C_PORT 1
 
+#define CYD_RES_TFT_BL 21
+#define CYD_RES_TOUCH_X_MIN 300
+#define CYD_RES_TOUCH_X_MAX 3900
+#define CYD_RES_TOUCH_Y_MIN 3700
+#define CYD_RES_TOUCH_Y_MAX 200
+#define CYD_RES_TOUCH_INT -1
+#define CYD_RES_TOUCH_SPI_HOST -1
+#define CYD_RES_TOUCH_SCLK 25
+#define CYD_RES_TOUCH_MOSI 32
+#define CYD_RES_TOUCH_MISO 39
+#define CYD_RES_TOUCH_CS 33
+#define CYD_RES_TOUCH_OFFSET_ROTATION 0
+
+#ifndef CYD_BOARD_CAPACITIVE
+#if CYD_HARDWARE_PROFILE == CYD_PROFILE_ILI9341_XPT2046
+#define CYD_BOARD_CAPACITIVE 0
+#else
 #define CYD_BOARD_CAPACITIVE 1
+#endif
+#endif
 
 #define CYD_BATTERY_ADC (WLED_CYD_ENABLE_BATTERY && CYD_BOARD_CAPACITIVE)
 #define CYD_BATTERY_ADC_PIN 39

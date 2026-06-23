@@ -3,16 +3,23 @@
 #include <Arduino.h>
 
 #include "app_config.h"
+#include "display.h"
 
 void initBatteryMonitor() {
 #if CYD_BATTERY_ADC
-  analogSetPinAttenuation(CYD_BATTERY_ADC_PIN, ADC_11db);
+  if (batteryAvailable()) {
+    analogSetPinAttenuation(CYD_BATTERY_ADC_PIN, ADC_11db);
+  }
 #endif
 }
 
 bool batteryAvailable() {
 #if CYD_BATTERY_ADC && CYD_BOARD_CAPACITIVE
+#if WLED_TOUCH_SIMULATOR
   return true;
+#else
+  return gfx.supportsBatteryMonitor();
+#endif
 #else
   return false;
 #endif
