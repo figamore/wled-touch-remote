@@ -69,9 +69,10 @@ void drawHardwareSetupPrompt(HardwareProfile profile, uint8_t attempt) {
 
   gfx.fillScreen(bg);
   gfx.setTextDatum(middle_center);
+  gfx.setTextSize(1);
   gfx.setTextColor(TFT_WHITE, bg);
-  gfx.setTextSize(3);
-  gfx.drawString("TAP THE CENTER", kScreenWidth / 2, 32);
+  gfx.setFont(&lgfx::fonts::FreeSansBold18pt7b);
+  gfx.drawString("Tap the center", kScreenWidth / 2, 30);
 
   const int16_t cx = kScreenWidth / 2;
   const int16_t cy = 128;
@@ -84,12 +85,14 @@ void drawHardwareSetupPrompt(HardwareProfile profile, uint8_t attempt) {
   gfx.drawFastVLine(cx, cy - 72, 144, cyan);
 
   gfx.setTextColor(yellow, bg);
-  gfx.setTextSize(2);
-  gfx.drawString("HOLD UNTIL DETECTED", kScreenWidth / 2, 210);
+  gfx.setFont(&lgfx::fonts::FreeSansBold9pt7b);
+  gfx.drawString("Hold until detected", kScreenWidth / 2, 208);
 
-  gfx.setTextSize(1);
   gfx.setTextColor(gfx.color565(203, 213, 225), bg);
-  gfx.drawString(setupTouchName(profile), kScreenWidth / 2, 230);
+  gfx.setFont(&lgfx::fonts::FreeSans9pt7b);
+  gfx.drawString(setupTouchName(profile), kScreenWidth / 2, 228);
+
+  gfx.setFont(&lgfx::fonts::Font0);
 }
 
 bool waitForSetupTouch(uint32_t timeout_ms) {
@@ -146,13 +149,17 @@ HardwareProfile runGuidedHardwareSetup(HardwareProfile first_profile) {
       gfx.setTouchProfile(profile);
       drawHardwareSetupPrompt(profile, attempt);
       if (waitForSetupTouch(2500)) {
-        gfx.fillScreen(gfx.color565(7, 12, 18));
+        const uint16_t detected_bg = gfx.color565(7, 12, 18);
+        gfx.fillScreen(detected_bg);
         gfx.setTextDatum(middle_center);
-        gfx.setTextColor(gfx.color565(52, 211, 153), gfx.color565(7, 12, 18));
-        gfx.setTextSize(2);
-        gfx.drawString("Touch Detected", kScreenWidth / 2, 96);
-        gfx.setTextColor(TFT_WHITE, gfx.color565(7, 12, 18));
-        gfx.drawString("Saving setup", kScreenWidth / 2, 134);
+        gfx.setTextSize(1);
+        gfx.setTextColor(gfx.color565(52, 211, 153), detected_bg);
+        gfx.setFont(&lgfx::fonts::FreeSansBold18pt7b);
+        gfx.drawString("Touch detected", kScreenWidth / 2, 104);
+        gfx.setTextColor(TFT_WHITE, detected_bg);
+        gfx.setFont(&lgfx::fonts::FreeSans9pt7b);
+        gfx.drawString("Saving setup", kScreenWidth / 2, 140);
+        gfx.setFont(&lgfx::fonts::Font0);
         delay(700);
         return profile;
       }
