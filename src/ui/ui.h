@@ -5,6 +5,7 @@
 // ── UI entry point ────────────────────────────────────────────────────────────
 
 void createUi();
+void initShutdownControl();
 
 // ── Label updaters (also called from simulator) ───────────────────────────────
 
@@ -20,6 +21,7 @@ void onPreset(lv_event_t* event);
 void activateEffect(const WledEffectInfo* effect);
 void onPing(lv_event_t* event);
 void onRestart(lv_event_t* event);
+void onShutdown(lv_event_t* event);
 void onRemoteAction(lv_event_t* event);
 void goToSettings(lv_event_t* event);
 void onFlipDisplay(lv_event_t* event);
