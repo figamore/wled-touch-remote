@@ -111,6 +111,7 @@ bool waitForSetupTouch(uint32_t timeout_ms) {
 // Order in which profiles are tried during guided setup.
 constexpr HardwareProfile kSetupCycleOrder[] = {
     HardwareProfile::kIli9341Xpt2046,
+    HardwareProfile::kSt7789Xpt2046,
     HardwareProfile::kSt7789Cst816s,
     HardwareProfile::kIli9341Ft5x06,
 };
@@ -299,9 +300,7 @@ void initDisplay() {
   } else {
     gfx.autoConfigure();
     const bool has_capacitive_hint = gfx.profileDetected();
-    const HardwareProfile first_profile = has_capacitive_hint
-                                              ? gfx.hardwareProfile()
-                                              : HardwareProfile::kIli9341Xpt2046;
+    const HardwareProfile first_profile = gfx.hardwareProfile();
     if (!has_capacitive_hint) {
       gfx.setHardwareProfile(first_profile);
     }

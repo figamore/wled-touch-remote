@@ -82,12 +82,14 @@ Settings are saved on the ESP32 and restored after reboot.
 
 ## Supported Hardware
 
-This project targets ESP32 Cheap Yellow Display boards, especially the Guition JC2432W328C / ESP32-2432S028C-style capacitive CYD and ESP32-024 / ESP32-2432S028-style resistive CYD.
+This project targets ESP32 Cheap Yellow Display boards, especially the Guition JC2432W328C (recommended) / ESP32-2432S028C-style capacitive CYD and ESP32-024 / ESP32-2432S028-style resistive CYD.
 
-The default firmware can auto-detect the common capacitive touch controllers used by these boards:
+The default firmware can auto-detect the common display and touch combinations used by these boards:
 
 - ST7789 display + CST816S touch
 - ILI9341 display + FT5x06 touch
+- ILI9341 display + XPT2046 touch
+- ST7789 display + XPT2046 touch
 
 On first boot, the firmware shows a one-time touch setup screen so it can confirm the touch hardware.
 
