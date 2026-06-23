@@ -27,6 +27,7 @@ IdleMode nextIdleMode(IdleMode mode) {
 }
 
 void loadSettings() {
+  bool info_seen = false;
   Preferences prefs;
   if (prefs.begin(kPrefsNamespace, true)) {
     display_flipped = prefs.getBool(kPrefsFlipKey, false);
@@ -39,9 +40,10 @@ void loadSettings() {
       idle_mode = prefs.getBool(kPrefsIdleOffKey, false) ? IdleMode::kOff : IdleMode::kDim;
     }
     extended_mode = prefs.getBool(kPrefsExtendedKey, false);
-    show_info_on_first_boot = !prefs.getBool(kPrefsInfoSeenKey, false);
+    info_seen = prefs.getBool(kPrefsInfoSeenKey, false);
     prefs.end();
   }
+  show_info_on_first_boot = !info_seen;
 #if WLED_TOUCH_SIMULATOR
   extended_mode = true;
 #endif
