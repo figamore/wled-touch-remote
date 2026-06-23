@@ -16,11 +16,22 @@ const lv_img_dsc_t kHeaderLogoImage = {
 };
 
 constexpr size_t kEffectPreviewDisplayCells = kWledEffectPreviewColors < 32 ? 32 : kWledEffectPreviewColors;
+#if WLED_CYD_ENABLE_SHUTDOWN
+constexpr uint8_t kShutdownCountdownSteps = 10;
+#endif
 
 lv_obj_t* effect_preview_cells[kEffectPreviewDisplayCells] = {};
 const WledEffectInfo* active_preview_effect = nullptr;
 uint16_t effect_preview_frame = 0;
 lv_timer_t* effect_preview_timer = nullptr;
+#if WLED_CYD_ENABLE_SHUTDOWN
+lv_obj_t* shutdown_overlay = nullptr;
+lv_obj_t* shutdown_countdown_label = nullptr;
+lv_timer_t* shutdown_timer = nullptr;
+uint32_t shutdown_started_ms = 0;
+#endif
+
+void clearEffectPreview();
 
 const WledEffectInfo* findEffectById(uint8_t effect_id) {
   for (const WledEffectInfo& effect : kWledEffects) {
@@ -61,6 +72,112 @@ uint32_t boostPreviewColor(uint32_t color) {
   return makeColor(boostPreviewChannel(colorChannel(color, 16)),
                    boostPreviewChannel(colorChannel(color, 8)),
                    boostPreviewChannel(colorChannel(color, 0)));
+}
+
+void releaseShutdownKey() {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  pinMode(WLED_CYD_SHUTDOWN_GPIO, INPUT);
+#endif
+}
+
+void holdShutdownKey() {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  digitalWrite(WLED_CYD_SHUTDOWN_GPIO, LOW);
+  pinMode(WLED_CYD_SHUTDOWN_GPIO, OUTPUT_OPEN_DRAIN);
+#endif
+}
+
+void closeShutdownOverlay() {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  if (shutdown_timer) {
+    lv_timer_del(shutdown_timer);
+    shutdown_timer = nullptr;
+  }
+  if (shutdown_overlay) {
+    lv_obj_del(shutdown_overlay);
+    shutdown_overlay = nullptr;
+  }
+  shutdown_countdown_label = nullptr;
+#endif
+}
+
+void abortShutdown(lv_event_t*) {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  releaseShutdownKey();
+  closeShutdownOverlay();
+#endif
+}
+
+void updateShutdownCountdown(lv_timer_t*) {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  if (!shutdown_countdown_label) {
+    return;
+  }
+
+  const uint32_t elapsed_ms = millis() - shutdown_started_ms;
+  const uint32_t step_ms = WLED_CYD_SHUTDOWN_HOLD_MS / kShutdownCountdownSteps;
+  if (elapsed_ms < WLED_CYD_SHUTDOWN_HOLD_MS) {
+    uint8_t count = (WLED_CYD_SHUTDOWN_HOLD_MS - elapsed_ms + step_ms - 1) / step_ms;
+    if (count > kShutdownCountdownSteps) {
+      count = kShutdownCountdownSteps;
+    }
+    if (count < 1) {
+      count = 1;
+    }
+    lv_label_set_text_fmt(shutdown_countdown_label, "%u", count);
+    return;
+  }
+
+  lv_label_set_text(shutdown_countdown_label, "...");
+#endif
+}
+
+void startShutdownUi() {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  if (shutdown_overlay) {
+    return;
+  }
+
+  clearEffectPreview();
+  shutdown_started_ms = millis();
+  holdShutdownKey();
+
+  shutdown_overlay = lv_obj_create(lv_scr_act());
+  lv_obj_remove_style_all(shutdown_overlay);
+  lv_obj_set_size(shutdown_overlay, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(shutdown_overlay, lv_color_hex(kColorBg), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(shutdown_overlay, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_flex_flow(shutdown_overlay, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(shutdown_overlay, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(shutdown_overlay, 18, LV_PART_MAIN);
+  lv_obj_clear_flag(shutdown_overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_move_foreground(shutdown_overlay);
+
+  lv_obj_t* title = lv_label_create(shutdown_overlay);
+  lv_label_set_text(title, "Shutting down");
+  lv_obj_set_style_text_color(title, lv_color_hex(kColorAccent), LV_PART_MAIN);
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
+
+  shutdown_countdown_label = lv_label_create(shutdown_overlay);
+  lv_label_set_text(shutdown_countdown_label, "10");
+  lv_obj_set_style_text_color(shutdown_countdown_label, lv_color_hex(kColorText), LV_PART_MAIN);
+  lv_obj_set_style_text_font(shutdown_countdown_label, &lv_font_montserrat_48, LV_PART_MAIN);
+  lv_obj_set_style_text_align(shutdown_countdown_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_size(shutdown_countdown_label, LV_PCT(100), 64);
+
+  lv_obj_t* abort = lv_btn_create(shutdown_overlay);
+  lv_obj_add_style(abort, &style_button, LV_PART_MAIN);
+  lv_obj_add_style(abort, &style_button_pressed, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_size(abort, 104, 38);
+  lv_obj_add_event_cb(abort, abortShutdown, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* abort_label = lv_label_create(abort);
+  lv_label_set_text(abort_label, "Abort");
+  lv_obj_center(abort_label);
+
+  shutdown_timer = lv_timer_create(updateShutdownCountdown, 100, nullptr);
+  updateShutdownCountdown(nullptr);
+#endif
 }
 
 uint32_t blendColor(uint32_t left, uint32_t right, uint8_t amount) {
@@ -294,6 +411,10 @@ void activateEffect(const WledEffectInfo* effect) {
   setPowerUi(true);
 }
 
+void initShutdownControl() {
+  releaseShutdownKey();
+}
+
 void onPing(lv_event_t*) {
   clearEffectPreview();
   sendWledTouchButton(kWledTouchButtonOn);
@@ -302,6 +423,11 @@ void onPing(lv_event_t*) {
 void onRestart(lv_event_t*) {
   touchActivity();
   ESP.restart();
+}
+
+void onShutdown(lv_event_t*) {
+  touchActivity();
+  startShutdownUi();
 }
 
 void onRemoteAction(lv_event_t* event) {

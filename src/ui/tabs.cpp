@@ -826,14 +826,22 @@ void createInfoTab(lv_obj_t* tab) {
   lv_label_set_text(help_label, LV_SYMBOL_LIST "  Help");
   lv_obj_center(help_label);
 
-  lv_obj_t* restart = lv_btn_create(actions);
-  styleButton(restart);
-  lv_obj_set_size(restart, 84, 36);
-  lv_obj_add_event_cb(restart, onRestart, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* power_action = lv_btn_create(actions);
+  styleButton(power_action);
+#if WLED_CYD_ENABLE_SHUTDOWN
+  lv_obj_set_size(power_action, 98, 36);
+  lv_obj_add_event_cb(power_action, onShutdown, LV_EVENT_CLICKED, nullptr);
 
-  lv_obj_t* restart_label = lv_label_create(restart);
-  lv_label_set_text(restart_label, LV_SYMBOL_POWER "  Restart");
-  lv_obj_center(restart_label);
+  lv_obj_t* power_action_label = lv_label_create(power_action);
+  lv_label_set_text(power_action_label, LV_SYMBOL_POWER "  Shutdown");
+#else
+  lv_obj_set_size(power_action, 84, 36);
+  lv_obj_add_event_cb(power_action, onRestart, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* power_action_label = lv_label_create(power_action);
+  lv_label_set_text(power_action_label, LV_SYMBOL_POWER "  Restart");
+#endif
+  lv_obj_center(power_action_label);
 }
 
 void createSettingsTab(lv_obj_t* tab) {

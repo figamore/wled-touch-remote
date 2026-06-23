@@ -8,3 +8,4 @@
 *.bmp
 .wled-preview-cache.json
 include/generated/version.h
+notes.md
