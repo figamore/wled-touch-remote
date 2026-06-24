@@ -29,9 +29,16 @@ lv_obj_t* shutdown_overlay = nullptr;
 lv_obj_t* shutdown_countdown_label = nullptr;
 lv_timer_t* shutdown_timer = nullptr;
 uint32_t shutdown_started_ms = 0;
+bool shutdown_button_last_read_pressed = false;
+uint32_t shutdown_last_tap_ms = 0;
+uint32_t shutdown_last_press_edge_ms = 0;
+uint32_t shutdown_last_debug_status_ms = 0;
 #endif
 
 void clearEffectPreview();
+#if WLED_CYD_ENABLE_SHUTDOWN
+void startShutdownUi();
+#endif
 
 const WledEffectInfo* findEffectById(uint8_t effect_id) {
   for (const WledEffectInfo& effect : kWledEffects) {
@@ -74,16 +81,88 @@ uint32_t boostPreviewColor(uint32_t color) {
                    boostPreviewChannel(colorChannel(color, 0)));
 }
 
+#if WLED_CYD_ENABLE_SHUTDOWN && WLED_CYD_SHUTDOWN_DEBUG
+const char* shutdownLevelName(bool pressed) {
+  return pressed ? "LOW/pressed" : "HIGH/released";
+}
+#endif
+
 void releaseShutdownKey() {
 #if WLED_CYD_ENABLE_SHUTDOWN
+#if WLED_CYD_SHUTDOWN_PULLUP
+  pinMode(WLED_CYD_SHUTDOWN_GPIO, INPUT_PULLUP);
+#else
   pinMode(WLED_CYD_SHUTDOWN_GPIO, INPUT);
+#endif
+#if WLED_CYD_SHUTDOWN_DEBUG
+  Serial.printf("Shutdown GPIO %d released to %s\n",
+                WLED_CYD_SHUTDOWN_GPIO,
+                WLED_CYD_SHUTDOWN_PULLUP ? "INPUT_PULLUP" : "INPUT");
+#endif
 #endif
 }
 
 void holdShutdownKey() {
 #if WLED_CYD_ENABLE_SHUTDOWN
+#if WLED_CYD_SHUTDOWN_DEBUG
+  Serial.printf("Shutdown GPIO %d driven LOW with OUTPUT_OPEN_DRAIN\n", WLED_CYD_SHUTDOWN_GPIO);
+#endif
   digitalWrite(WLED_CYD_SHUTDOWN_GPIO, LOW);
   pinMode(WLED_CYD_SHUTDOWN_GPIO, OUTPUT_OPEN_DRAIN);
+#endif
+}
+
+bool readShutdownButtonPressed() {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  return digitalRead(WLED_CYD_SHUTDOWN_GPIO) == LOW;
+#else
+  return false;
+#endif
+}
+
+void syncShutdownButtonState(const char* reason) {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  const bool pressed = readShutdownButtonPressed();
+  shutdown_button_last_read_pressed = pressed;
+  const uint32_t now = millis();
+  shutdown_last_tap_ms = 0;
+  shutdown_last_press_edge_ms = 0;
+  shutdown_last_debug_status_ms = now;
+#if WLED_CYD_SHUTDOWN_DEBUG
+  Serial.printf("Shutdown GPIO state sync (%s): %s\n", reason, shutdownLevelName(pressed));
+#endif
+#endif
+}
+
+void handleShutdownTap(uint32_t now) {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  if (shutdown_last_press_edge_ms != 0 &&
+      now - shutdown_last_press_edge_ms < WLED_CYD_SHUTDOWN_TAP_LOCKOUT_MS) {
+#if WLED_CYD_SHUTDOWN_DEBUG
+    Serial.printf("Shutdown GPIO press pulse ignored: lockout delta=%ums\n",
+                  now - shutdown_last_press_edge_ms);
+#endif
+    shutdown_last_press_edge_ms = now;
+    return;
+  }
+
+  shutdown_last_press_edge_ms = now;
+
+  if (shutdown_last_tap_ms != 0 &&
+      now - shutdown_last_tap_ms <= WLED_CYD_SHUTDOWN_DOUBLE_TAP_MS) {
+#if WLED_CYD_SHUTDOWN_DEBUG
+    Serial.printf("Shutdown GPIO double tap detected: delta=%ums\n", now - shutdown_last_tap_ms);
+#endif
+    shutdown_last_tap_ms = 0;
+    touchActivity();
+    startShutdownUi();
+    return;
+  }
+
+  shutdown_last_tap_ms = now;
+#if WLED_CYD_SHUTDOWN_DEBUG
+  Serial.printf("Shutdown GPIO first tap at %ums\n", now);
+#endif
 #endif
 }
 
@@ -104,6 +183,8 @@ void closeShutdownOverlay() {
 void abortShutdown(lv_event_t*) {
 #if WLED_CYD_ENABLE_SHUTDOWN
   releaseShutdownKey();
+  delay(5);
+  syncShutdownButtonState("abort");
   closeShutdownOverlay();
 #endif
 }
@@ -412,7 +493,52 @@ void activateEffect(const WledEffectInfo* effect) {
 }
 
 void initShutdownControl() {
+#if WLED_CYD_ENABLE_SHUTDOWN
   releaseShutdownKey();
+  delay(5);
+  syncShutdownButtonState("init");
+#if WLED_CYD_SHUTDOWN_DEBUG
+  Serial.printf("Shutdown GPIO debug: gpio=%d active=LOW pullup=%u lockout=%ums double_tap=%ums hold=%ums\n",
+                WLED_CYD_SHUTDOWN_GPIO,
+                WLED_CYD_SHUTDOWN_PULLUP,
+                WLED_CYD_SHUTDOWN_TAP_LOCKOUT_MS,
+                WLED_CYD_SHUTDOWN_DOUBLE_TAP_MS,
+                WLED_CYD_SHUTDOWN_HOLD_MS);
+#endif
+#endif
+}
+
+void pollShutdownControl() {
+#if WLED_CYD_ENABLE_SHUTDOWN
+  if (shutdown_overlay) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  const bool pressed = readShutdownButtonPressed();
+#if WLED_CYD_SHUTDOWN_DEBUG
+  if (now - shutdown_last_debug_status_ms >= WLED_CYD_SHUTDOWN_DEBUG_STATUS_MS) {
+    shutdown_last_debug_status_ms = now;
+    const uint32_t tap_age = shutdown_last_tap_ms == 0 ? 0 : now - shutdown_last_tap_ms;
+    Serial.printf("Shutdown GPIO status: raw=%s last_tap_age=%ums\n",
+                  shutdownLevelName(pressed),
+                  tap_age);
+  }
+#endif
+
+  if (pressed != shutdown_button_last_read_pressed) {
+    shutdown_button_last_read_pressed = pressed;
+#if WLED_CYD_SHUTDOWN_DEBUG
+    Serial.printf("Shutdown GPIO raw transition: %s at %ums\n",
+                  shutdownLevelName(pressed),
+                  now);
+#endif
+    if (pressed) {
+      handleShutdownTap(now);
+    }
+    return;
+  }
+#endif
 }
 
 void onPing(lv_event_t*) {

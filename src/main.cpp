@@ -42,6 +42,7 @@ void loop() {
 
   displayUpdateIdle(now);
   applyPendingStatus();
+  pollShutdownControl();
   lv_timer_handler();
   delay(1);
 }

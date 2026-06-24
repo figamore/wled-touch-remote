@@ -6,6 +6,7 @@
 
 void createUi();
 void initShutdownControl();
+void pollShutdownControl();
 
 // ── Label updaters (also called from simulator) ───────────────────────────────
 
