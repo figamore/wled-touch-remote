@@ -182,6 +182,23 @@ class LGFX : public lgfx::LGFX_Device {
     return readI2cRegister(profile, 0xA7, data, sizeof(data), true) && hasNonZeroByte(data, sizeof(data));
   }
 
+  static void prepareResistiveTouchPins() {
+    Wire.end();
+    Wire1.end();
+    delay(1);
+
+    pinMode(CYD_RES_TOUCH_CS, OUTPUT);
+    digitalWrite(CYD_RES_TOUCH_CS, HIGH);
+
+    if (CYD_RES_TOUCH_SPI_HOST < 0) {
+      pinMode(CYD_RES_TOUCH_SCLK, OUTPUT);
+      digitalWrite(CYD_RES_TOUCH_SCLK, LOW);
+      pinMode(CYD_RES_TOUCH_MOSI, OUTPUT);
+      digitalWrite(CYD_RES_TOUCH_MOSI, LOW);
+      pinMode(CYD_RES_TOUCH_MISO, INPUT_PULLUP);
+    }
+  }
+
   static uint32_t readPanelRegister(lgfx::IBus& bus,
                                     uint_fast16_t cmd,
                                     uint8_t dummy_bits,
@@ -313,10 +330,12 @@ class LGFX : public lgfx::LGFX_Device {
 
   bool detectFt5x06() {
     configureTouch(touch_ft5x06_, ft5x06TouchProfile());
-    return probeFt5x06();
+    return touch_ft5x06_.init();
   }
 
   void configureResistiveTouch(HardwareProfile profile) {
+    prepareResistiveTouchPins();
+
     auto cfg = touch_xpt2046_.config();
     cfg.x_min = CYD_RES_TOUCH_X_MIN;
     cfg.x_max = CYD_RES_TOUCH_X_MAX;
@@ -415,7 +434,7 @@ class LGFX : public lgfx::LGFX_Device {
     applyProfile(profile);
   }
 
-  void setTouchProfile(HardwareProfile profile) {
+  bool setTouchProfile(HardwareProfile profile) {
     if (profile == HardwareProfile::kIli9341Xpt2046 || profile == HardwareProfile::kSt7789Xpt2046) {
       configureResistiveTouch(profile);
       getPanel()->setTouch(&touch_xpt2046_);
@@ -426,7 +445,11 @@ class LGFX : public lgfx::LGFX_Device {
       configureTouch(touch_cst816s_, cst816sTouchProfile());
       getPanel()->setTouch(&touch_cst816s_);
     }
-    getPanel()->initTouch();
+    const bool touch_init_ok = getPanel()->initTouch();
+    Serial.printf("Hardware setup: touch driver init for %s: %s\n",
+                  profileInfo(profile).profile_name,
+                  touch_init_ok ? "ok" : "failed");
+    return touch_init_ok;
   }
 
   uint8_t hardwareProfileCode() const {
