@@ -14,6 +14,7 @@ lv_color_t draw_buf_2[kScreenWidth * kLvglBufferLines];
 
 bool display_idle_applied = false;
 bool suppress_touch_until_release = false;
+bool display_hardware_ready = false;
 uint32_t last_touch_ms = 0;
 
 #if !WLED_TOUCH_SIMULATOR
@@ -305,6 +306,7 @@ void drawSplash() {
 
 void initDisplay() {
   Serial.println("Display init: starting LovyanGFX");
+  display_hardware_ready = false;
   bool display_already_initialized = false;
 #if WLED_TOUCH_SIMULATOR
   lgfx::Panel_sdl::setup();
@@ -418,6 +420,12 @@ void initDisplay() {
   indev_drv.scroll_limit = 6;
   indev_drv.scroll_throw = 8;
   lv_indev_drv_register(&indev_drv);
+
+  display_hardware_ready = display_ok;
+}
+
+bool displayHardwareReady() {
+  return display_hardware_ready;
 }
 
 void displayUpdateIdle(uint32_t now) {

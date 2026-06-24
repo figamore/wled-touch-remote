@@ -517,6 +517,7 @@ extern uint16_t sim_framebuffer[kScreenWidth * kScreenHeight];
 // ── Display functions ─────────────────────────────────────────────────────────
 
 void initDisplay();
+bool displayHardwareReady();
 void drawSplash();
 void applyDisplayRotation();
 void touchActivity();
