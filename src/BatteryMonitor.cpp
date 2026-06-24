@@ -18,7 +18,7 @@ bool batteryAvailable() {
 #if WLED_TOUCH_SIMULATOR
   return true;
 #else
-  return gfx.supportsBatteryMonitor();
+  return displayHardwareReady() && gfx.supportsBatteryMonitor();
 #endif
 #else
   return false;
