@@ -55,8 +55,8 @@ bool hardwareProfileResetRequested() {
   return digitalRead(0) == LOW;
 }
 
-const char* setupTouchName(HardwareProfile profile) {
-  return LGFX::profileInfo(profile).has_i2c_touch ? "Capacitive touch" : "Resistive touch";
+const char* setupTouchKind(HardwareProfile profile) {
+  return LGFX::profileInfo(profile).has_i2c_touch ? "Capacitive" : "Resistive";
 }
 
 void drawHardwareSetupPrompt(HardwareProfile profile, uint8_t attempt) {
@@ -86,14 +86,19 @@ void drawHardwareSetupPrompt(HardwareProfile profile, uint8_t attempt) {
 
   gfx.setTextColor(yellow, bg);
   gfx.setFont(&lgfx::fonts::FreeSansBold9pt7b);
-  gfx.drawString("Hold until detected", kScreenWidth / 2, 208);
+  gfx.drawString("Tap repeatedly", kScreenWidth / 2, 204);
+  gfx.drawString("until detected", kScreenWidth / 2, 220);
 
-  gfx.setTextColor(gfx.color565(203, 213, 225), bg);
-  gfx.setFont(&lgfx::fonts::FreeSans9pt7b);
-  gfx.drawString(setupTouchName(profile), kScreenWidth / 2, 228);
+  gfx.setTextDatum(top_left);
+  gfx.setTextColor(gfx.color565(148, 163, 184), bg);
+  gfx.setFont(&lgfx::fonts::Font0);
+  gfx.drawString(setupTouchKind(profile), 6, 222);
+  gfx.drawString("touch", 6, 232);
 
   gfx.setFont(&lgfx::fonts::Font0);
 }
+
+constexpr uint32_t kSetupTouchWindowMs = 1500;
 
 bool waitForSetupTouch(uint32_t timeout_ms) {
   const uint32_t start_ms = millis();
@@ -108,31 +113,37 @@ bool waitForSetupTouch(uint32_t timeout_ms) {
   return false;
 }
 
-// Order in which profiles are tried during guided setup.
-constexpr HardwareProfile kSetupCycleOrder[] = {
-    HardwareProfile::kIli9341Xpt2046,
-    HardwareProfile::kSt7789Xpt2046,
-    HardwareProfile::kSt7789Cst816s,
-    HardwareProfile::kIli9341Ft5x06,
-};
-constexpr uint8_t kSetupCycleCount = sizeof(kSetupCycleOrder) / sizeof(kSetupCycleOrder[0]);
+constexpr uint8_t kSetupCycleCount = 4;
 
-HardwareProfile profileAtIndex(uint8_t index) {
-  return kSetupCycleOrder[index % kSetupCycleCount];
+HardwareProfile resistiveProfileForSamePanel(HardwareProfile profile) {
+  return LGFX::profileInfo(profile).is_ili9341 ? HardwareProfile::kIli9341Xpt2046
+                                               : HardwareProfile::kSt7789Xpt2046;
 }
 
-uint8_t profileIndex(HardwareProfile profile) {
-  for (uint8_t i = 0; i < kSetupCycleCount; ++i) {
-    if (kSetupCycleOrder[i] == profile) {
-      return i;
-    }
+HardwareProfile alternateCapacitiveProfile(HardwareProfile profile) {
+  return profile == HardwareProfile::kIli9341Ft5x06 ? HardwareProfile::kSt7789Cst816s
+                                                     : HardwareProfile::kIli9341Ft5x06;
+}
+
+HardwareProfile setupProfileAt(uint8_t index, HardwareProfile first_profile) {
+  const HardwareProfile resistive_profile = resistiveProfileForSamePanel(first_profile);
+  const bool first_is_capacitive = LGFX::profileInfo(first_profile).has_i2c_touch;
+  const HardwareProfile first_capacitive = first_is_capacitive ? first_profile : HardwareProfile::kSt7789Cst816s;
+  const HardwareProfile second_capacitive = alternateCapacitiveProfile(first_capacitive);
+
+  if (first_is_capacitive) {
+    const HardwareProfile order[] = {first_capacitive, resistive_profile, second_capacitive, resistive_profile};
+    return order[index % kSetupCycleCount];
   }
-  return 0;
+
+  const HardwareProfile order[] = {resistive_profile, first_capacitive, resistive_profile, second_capacitive};
+  return order[index % kSetupCycleCount];
 }
 
 HardwareProfile runGuidedHardwareSetup(HardwareProfile first_profile) {
   uint8_t attempt = 1;
-  uint8_t first_index = profileIndex(first_profile);
+  bool has_last_wait_profile = false;
+  HardwareProfile last_wait_profile = first_profile;
 
   pinMode(CYD_TFT_BL, OUTPUT);
   digitalWrite(CYD_TFT_BL, CYD_BACKLIGHT_INVERT ? LOW : HIGH);
@@ -145,11 +156,23 @@ HardwareProfile runGuidedHardwareSetup(HardwareProfile first_profile) {
 
   while (true) {
     for (uint8_t i = 0; i < kSetupCycleCount; ++i) {
-      const HardwareProfile profile = profileAtIndex(first_index + i);
+      const HardwareProfile profile = setupProfileAt(i, first_profile);
+      if (has_last_wait_profile && profile == last_wait_profile) {
+        ++attempt;
+        continue;
+      }
+
       Serial.printf("Hardware setup: trying %s\n", LGFX::profileInfo(profile).profile_name);
-      gfx.setTouchProfile(profile);
+      const bool touch_init_ok = gfx.setTouchProfile(profile);
+      if (!touch_init_ok) {
+        ++attempt;
+        continue;
+      }
+
       drawHardwareSetupPrompt(profile, attempt);
-      if (waitForSetupTouch(2500)) {
+      has_last_wait_profile = true;
+      last_wait_profile = profile;
+      if (waitForSetupTouch(kSetupTouchWindowMs)) {
         const uint16_t detected_bg = gfx.color565(7, 12, 18);
         gfx.fillScreen(detected_bg);
         gfx.setTextDatum(middle_center);
