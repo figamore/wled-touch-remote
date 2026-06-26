@@ -98,11 +98,15 @@ On first boot, the firmware shows a one-time touch setup screen so it can confir
 ##### - Cheap Yellow Display
 CYDs come in two variants: capacitive and resistive. The capacitive version is preferred due to its more responsive touch, slightly nicer display, and wider support. Additionally, only the capacitive CYDs support Li-Ion batteries (you must check whether it has the "BAT" connector before you buy as several variants exist). Most resistive CYDs are also supported, but not recommended. There are too many resistive variants to guarantee support for all of them.
 
-Search for "JC2432W328C" or "Capacitive CYD" on AliExpress or Amazon. Below are some available options at this time for the capacitive CYD:
+Search for "JC2432W328C" or "Capacitive CYD" on AliExpress or Amazon. `Guition` is the recommended brand for capacitive displays - but please avoid their resistive displays as they are likely not supported.
+
+ Below are some available options at this time for the capacitive CYD:
 
 https://www.amazon.com/DIYmalls-Touchscreen-ESP-WROOM-32-Development-JC2432W328C
 
 https://www.aliexpress.us/item/3256806545687380.html
+
+![Info tab](screenshots/capacitive-cyd.png)
 
 ##### - Fasteners for 3D printed case
    - **Slim version**: 4 M3x10 bolts
@@ -111,7 +115,7 @@ https://www.aliexpress.us/item/3256806545687380.html
 ##### - Mating connectors (optional)
 - One JST-PB 1.25mm 4-pin connector is typically included when buying a CYD. This allows you to add buttons.
 
-- A JST-PB 1.25mm 2-pin connector should be used if battery operation is desired - although it may suffice to carefully slice a 4-pin connector in 2 if it can't be sourced.
+- A JST-PB 1.25mm 2-pin connector should be used if battery operation is desired - although it may suffice to carefully slice a 4-pin connector in half if a 2-pin connector can't be sourced.
 
 ## 3D Printed Case
 
