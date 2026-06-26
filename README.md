@@ -2,7 +2,7 @@
 
 A wireless-capable, touchscreen remote controller for WLED running on the ESP32 Cheap Yellow Display (CYD).
 
-It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over **ESP-NOW**, a wireless protocol. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell.
+It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over **ESP-NOW**, a wireless protocol. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell. [See the Bill of Materials](#bom)
 
 > **Hardware note:** the default firmware supports common capacitive and resistive CYD boards. On first boot, setup asks you to tap the screen and saves the detected touch hardware.
 
@@ -93,6 +93,26 @@ The default firmware can auto-detect the common display and touch combinations u
 
 On first boot, the firmware shows a one-time touch setup screen so it can confirm the touch hardware.
 
+## BOM
+
+##### - Cheap Yellow Display
+CYDs come in two variants: capacitive and resistive. The capacitive version is preferred due to its more responsive touch, slightly nicer display, and wider support. Additionally, only the capacitive CYDs support Li-Ion batteries (you must check whether it has the "BAT" connector before you buy as several variants exist). Most resistive CYDs are also supported, but not recommended. There are too many resistive variants to guarantee support for all of them.
+
+Search for "JC2432W328C" or "Capacitive CYD" on AliExpress or Amazon. Below are some available options at this time for the capacitive CYD:
+
+https://www.amazon.com/DIYmalls-Touchscreen-ESP-WROOM-32-Development-JC2432W328C
+
+https://www.aliexpress.us/item/3256806545687380.html
+
+##### - Fasteners for 3D printed case
+   - **Slim version**: 4 M3x10 bolts
+   - **Battery version**: 4 M3x20 bolts
+
+##### - Mating connectors (optional)
+- One JST-PB 1.25mm 4-pin connector is typically included when buying a CYD. This allows you to add buttons.
+
+- A JST-PB 1.25mm 2-pin connector should be used if battery operation is desired - although it may suffice to carefully slice a 4-pin connector in 2 if it can't be sourced.
+
 ## 3D Printed Case
 
 Optional snap-fit cases are available on MakerWorld:
@@ -101,7 +121,7 @@ Optional snap-fit cases are available on MakerWorld:
 
 Choose one of the two case styles from MakerWorld:
 
-- **Slim case**: for a clean remote without an internal battery.
+- **Slim case**: for a clean remote without an internal battery. Useful when fixed on a wall or control cabinet with always-on power via USB-C or 5V.
 
 ![Slim case](screenshots/case/FigCyd-Standard.jpg)
 
