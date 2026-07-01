@@ -26,9 +26,21 @@ struct esp_now_peer_info_t {
 
 using esp_now_send_cb_t = void (*)(const uint8_t*, esp_now_send_status_t);
 
+using esp_now_recv_cb_t = void (*)(const uint8_t*, const uint8_t*, int);
+
 inline esp_now_send_cb_t& simEspNowCallback() {
   static esp_now_send_cb_t callback = nullptr;
   return callback;
+}
+
+inline esp_now_recv_cb_t& simEspNowRecvCallback() {
+  static esp_now_recv_cb_t callback = nullptr;
+  return callback;
+}
+
+inline esp_err_t esp_now_register_recv_cb(esp_now_recv_cb_t callback) {
+  simEspNowRecvCallback() = callback;
+  return ESP_OK;
 }
 
 inline esp_err_t esp_now_init() {

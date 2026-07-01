@@ -3,7 +3,9 @@
 #include "../app_state.h"
 
 void createLiveTab(lv_obj_t* tab);
+void updatePeekStrip();
 void createLooksTab(lv_obj_t* tab);
+void updateColorControlsFromModel();
 void rebuildPresetTab();
 void createFxTab(lv_obj_t* tab);
 void rebuildFxTab();

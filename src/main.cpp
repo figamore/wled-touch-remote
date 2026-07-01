@@ -10,6 +10,7 @@
 #include "espnow.h"
 #include "settings.h"
 #include "BatteryMonitor.h"
+#include "wled_api.h"
 #include "ui/ui.h"
 #include "ui/tabs.h"
 
@@ -27,6 +28,8 @@ void setup() {
 #endif
   createUi();
   initEspNow();
+  wled::begin();
+  syncLivePeekSubscription();
   touchActivity();
 }
 
@@ -39,6 +42,10 @@ void loop() {
   const uint32_t elapsed = now - last_tick_ms;
   last_tick_ms = now;
   lv_tick_inc(elapsed);
+
+  wled::loop(now);
+  uiSyncFromModel();
+  updatePeekStrip();
 
   displayUpdateIdle(now);
   applyPendingStatus();

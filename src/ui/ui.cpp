@@ -4,6 +4,7 @@
 #include "../espnow.h"
 #include "../settings.h"
 #include "../BatteryMonitor.h"
+#include "../wled_api.h"
 #include <Arduino.h>
 #include "generated/wled_logo_png.h"
 
@@ -270,7 +271,7 @@ uint32_t blendColor(uint32_t left, uint32_t right, uint8_t amount) {
 }
 
 uint32_t previewColorAt(const WledEffectInfo& effect, uint16_t frame, size_t display_index) {
-  if constexpr (kEffectPreviewDisplayCells == kWledEffectPreviewColors) {
+  if (kEffectPreviewDisplayCells == kWledEffectPreviewColors) {
     return boostPreviewColor(rgb565ToRgb888(effect.preview[frame][display_index]));
   }
 
@@ -347,7 +348,8 @@ void setSelectedPreset(uint8_t preset) {
       continue;
     }
 
-    if (i + 1 == selected_preset) {
+    const uint8_t id = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(lv_obj_get_user_data(preset_buttons[i])));
+    if (id == selected_preset) {
       lv_obj_add_state(preset_buttons[i], LV_STATE_CHECKED);
     } else {
       lv_obj_clear_state(preset_buttons[i], LV_STATE_CHECKED);
@@ -357,7 +359,7 @@ void setSelectedPreset(uint8_t preset) {
 
 void setSelectedEffect(uint8_t effect_id) {
   selected_effect_id = effect_id;
-  setEffectPreview(findEffectById(effect_id));
+  clearEffectPreview();
 }
 
 void initStyles() {
@@ -455,31 +457,74 @@ void updateModeLabel() {
   }
 }
 
+void updateConnLabel() {
+  if (!conn_label) return;
+  const wled::Model& m = wled::model();
+  if (m.online) {
+    lv_label_set_text_fmt(conn_label, LV_SYMBOL_OK " %s", m.name.empty() ? "Connected" : m.name.c_str());
+    lv_obj_set_style_text_color(conn_label, lv_color_hex(kColorOk), LV_PART_MAIN);
+  } else {
+    lv_label_set_text(conn_label, "Searching for WLED...");
+    lv_obj_set_style_text_color(conn_label, lv_color_hex(kColorWarn), LV_PART_MAIN);
+  }
+}
+
+// ── Live state reflection ─────────────────────────────────────────────────────
+
+void uiSyncFromModel() {
+  static uint32_t seen_catalog = UINT32_MAX;
+  const uint32_t crev = wled::catalogRevision();
+  if (crev != seen_catalog) {
+    seen_catalog = crev;
+    rebuildPresetTab();
+    rebuildFxTab();
+  }
+
+  static uint32_t seen_state = UINT32_MAX;
+  const uint32_t rev = wled::stateRevision();
+  if (rev == seen_state) return;
+  seen_state = rev;
+
+  updateConnLabel();
+
+  const wled::Model& m = wled::model();
+  if (state.power != m.power) setPowerUi(m.power);
+
+  if (state.brightness != m.brightness) {
+    state.brightness = m.brightness;
+    if (brightness_slider) lv_slider_set_value(brightness_slider, m.brightness, LV_ANIM_OFF);
+    if (brightness_label) lv_label_set_text_fmt(brightness_label, "%u", m.brightness);
+  }
+
+  updateColorControlsFromModel();
+
+  if (m.effect >= 0 && static_cast<uint8_t>(m.effect) != selected_effect_id) {
+    setSelectedEffect(static_cast<uint8_t>(m.effect));
+  }
+
+  setSelectedPreset(m.preset > 0 ? static_cast<uint8_t>(m.preset) : 0);
+}
+
 // ── Event handlers ────────────────────────────────────────────────────────────
 
 void onPower(lv_event_t*) {
-  clearEffectPreview();
   setPowerUi(!state.power);
-  sendPower(state.power);
+  wled::setPower(state.power);
 }
 
 void onBrightness(lv_event_t* event) {
-  clearEffectPreview();
-  const uint8_t previous = state.brightness;
   state.brightness = lv_slider_get_value(lv_event_get_target(event));
   if (brightness_label) {
     lv_label_set_text_fmt(brightness_label, "%u", state.brightness);
   }
-  sendBrightnessDelta(static_cast<int>(state.brightness) - previous);
+  wled::setBrightness(state.brightness);
 }
 
 void onPreset(lv_event_t* event) {
-  clearEffectPreview();
   const uintptr_t preset = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
   const uint8_t preset_number = static_cast<uint8_t>(preset);
   setSelectedPreset(preset_number);
-  sendPreset(preset_number);
-  setPowerUi(true);
+  wled::applyPreset(preset_number);
 }
 
 void activateEffect(const WledEffectInfo* effect) {
@@ -488,8 +533,12 @@ void activateEffect(const WledEffectInfo* effect) {
   }
 
   setSelectedEffect(effect->id);
-  sendWledTouchButton(effect->button);
-  setPowerUi(true);
+  wled::setEffect(effect->id);
+}
+
+void activateEffectId(uint8_t effect_id) {
+  setSelectedEffect(effect_id);
+  wled::setEffect(effect_id);
 }
 
 void initShutdownControl() {
@@ -542,8 +591,8 @@ void pollShutdownControl() {
 }
 
 void onPing(lv_event_t*) {
-  clearEffectPreview();
-  sendWledTouchButton(kWledTouchButtonOn);
+  wled::poll();
+  wled::requestCatalogs();
 }
 
 void onRestart(lv_event_t*) {
@@ -607,6 +656,15 @@ void onToggleControlMode(lv_event_t* event) {
 }
 
 // ── UI entry point ────────────────────────────────────────────────────────────
+
+void syncLivePeekSubscription() {
+  if (!main_tabs) return;
+  wled::setLivePeek(lv_tabview_get_tab_act(main_tabs) == 0);  // stream peek only on the Power tab
+}
+
+static void onTabChanged(lv_event_t*) {
+  syncLivePeekSubscription();
+}
 
 void createUi() {
   Serial.println("UI init: building screen");
@@ -700,6 +758,8 @@ void createUi() {
   createFxTab(fx_tab);
   createInfoTab(info);
   createSettingsTab(settings);
+
+  lv_obj_add_event_cb(main_tabs, onTabChanged, LV_EVENT_VALUE_CHANGED, nullptr);
 
   if (show_info_on_first_boot) {
     lv_tabview_set_act(main_tabs, kInfoTabIndex, LV_ANIM_OFF);
