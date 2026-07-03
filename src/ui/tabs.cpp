@@ -4,6 +4,9 @@
 #include "../wled_api.h"
 #include <Arduino.h>
 #include <WiFi.h>
+#if !WLED_TOUCH_SIMULATOR
+#include <esp_heap_caps.h>  // temporary: palette-freeze heap diagnostics
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -28,8 +31,11 @@ constexpr size_t kPeekCellCount = 48;
 constexpr uint32_t kPeekFreshMs = 1200;
 constexpr lv_coord_t kColorWheelSize = 168;
 constexpr lv_coord_t kColorSelectorSize = 18;
-constexpr lv_coord_t kPaletteChooserRowHeight = 56;
+constexpr lv_coord_t kPaletteChooserRowHeight = 52;
+constexpr lv_coord_t kPaletteChooserRowGap = 8;
 constexpr lv_coord_t kPalettePreviewHeight = 10;
+constexpr size_t kPaletteChooserVisibleRows = 5;
+constexpr size_t kPaletteChooserNoRow = static_cast<size_t>(-1);
 lv_obj_t* peek_cells[kPeekCellCount] = {};
 lv_obj_t* peek_status_label = nullptr;
 lv_obj_t* color_wheel = nullptr;
@@ -47,6 +53,19 @@ bool fx_controls_pending = false;
 bool palette_chooser_pending = false;
 std::vector<size_t> palette_table_order;
 int palette_chooser_selected = -1;
+bool help_dialog_deleting = false;
+lv_obj_t* palette_list_container = nullptr;
+lv_obj_t* palette_scroll_spacer = nullptr;
+
+struct PaletteVisibleRow {
+  lv_obj_t* button = nullptr;
+  lv_obj_t* label = nullptr;
+  lv_obj_t* preview = nullptr;
+  size_t order_index = kPaletteChooserNoRow;
+  uint16_t palette_id = 0;
+};
+
+PaletteVisibleRow palette_visible_rows[kPaletteChooserVisibleRows];
 
 // ── Widget helpers ────────────────────────────────────────────────────────────
 
@@ -385,14 +404,39 @@ void createColorSwatches(lv_obj_t* parent) {
 
 // ── Dialog helpers ────────────────────────────────────────────────────────────
 
-void closeHelpDialog(lv_event_t*) {
-  if (help_dialog) {
-    lv_obj_del(help_dialog);
-    help_dialog = nullptr;
+void resetPaletteChooserState() {
+  palette_table_order.clear();
+  palette_chooser_selected = -1;
+  palette_list_container = nullptr;
+  palette_scroll_spacer = nullptr;
+  for (PaletteVisibleRow& row : palette_visible_rows) {
+    row = PaletteVisibleRow();
   }
 }
 
+void onHelpDialogDeleted(lv_event_t*) {
+  help_dialog = nullptr;
+  help_dialog_deleting = false;
+  resetPaletteChooserState();
+}
+
+void closeHelpDialogTimer(lv_timer_t*) {
+  if (help_dialog) {
+    lv_obj_del_async(help_dialog);
+  }
+}
+
+void closeHelpDialog(lv_event_t*) {
+  if (!help_dialog || help_dialog_deleting) return;
+  help_dialog_deleting = true;
+  lv_timer_t* timer = lv_timer_create(closeHelpDialogTimer, 30, nullptr);
+  lv_timer_set_repeat_count(timer, 1);
+}
+
 lv_obj_t* beginInfoModal(const char* title_text) {
+  if (help_dialog_deleting) return nullptr;
+
+  help_dialog_deleting = false;
   help_dialog = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(help_dialog);
   lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
@@ -400,6 +444,7 @@ lv_obj_t* beginInfoModal(const char* title_text) {
   lv_obj_set_style_bg_opa(help_dialog, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(help_dialog, onHelpDialogDeleted, LV_EVENT_DELETE, nullptr);
 
   lv_obj_t* header = lv_obj_create(help_dialog);
   lv_obj_remove_style_all(header);
@@ -457,6 +502,7 @@ void openHelpDialog(lv_event_t*) {
   }
 
   lv_obj_t* content = beginInfoModal("Help");
+  if (!content) return;
 
   lv_obj_t* text_col = lv_obj_create(content);
   lv_obj_remove_style_all(text_col);
@@ -648,18 +694,20 @@ void drawPalettePreviewArea(lv_draw_ctx_t* draw_ctx, const lv_area_t& coords, ui
   const lv_coord_t width = lv_area_get_width(&coords);
   if (width <= 0) return;
 
+  const lv_coord_t segments = std::min<lv_coord_t>(width, 36);
   lv_draw_rect_dsc_t rect;
   lv_draw_rect_dsc_init(&rect);
   rect.bg_opa = LV_OPA_COVER;
   rect.border_width = 0;
   rect.radius = 0;
 
-  lv_area_t col = coords;
-  for (lv_coord_t x = 0; x < width; ++x) {
-    const uint8_t pos = width == 1 ? 0 : uint8_t((uint32_t(x) * 255U) / uint32_t(width - 1));
+  for (lv_coord_t i = 0; i < segments; ++i) {
+    const uint8_t pos = segments == 1 ? 0 : uint8_t((uint32_t(i) * 255U) / uint32_t(segments - 1));
     rect.bg_color = lv_color_hex(palettePreviewColor(palette, pos));
-    col.x1 = coords.x1 + x;
-    col.x2 = col.x1;
+    lv_area_t col = coords;
+    col.x1 = coords.x1 + (int32_t(i) * width) / segments;
+    col.x2 = coords.x1 + (int32_t(i + 1) * width) / segments - 1;
+    if (i == segments - 1) col.x2 = coords.x2;
     lv_draw_rect(draw_ctx, &rect, &col);
   }
 }
@@ -678,63 +726,102 @@ lv_obj_t* createPalettePreview(lv_obj_t* parent, uint16_t palette, lv_coord_t he
   return strip;
 }
 
-void onPaletteTableClicked(lv_event_t* event) {
-  lv_obj_t* table = lv_event_get_target(event);
-  uint16_t row = LV_TABLE_CELL_NONE;
-  uint16_t col = LV_TABLE_CELL_NONE;
-  lv_table_get_selected_cell(table, &row, &col);
-  if (row == LV_TABLE_CELL_NONE || row >= palette_table_order.size()) return;
-
-  const size_t palette_id = palette_table_order[row];
-  if (palette_id > 255) return;
-  palette_chooser_selected = static_cast<int>(palette_id);
-  wled::setPalette(static_cast<uint8_t>(palette_id));
-  lv_obj_invalidate(table);
+constexpr lv_coord_t paletteRowPitch() {
+  return kPaletteChooserRowHeight + kPaletteChooserRowGap;
 }
 
-void onPaletteTableDrawPart(lv_event_t* event) {
-  lv_obj_draw_part_dsc_t* dsc = lv_event_get_draw_part_dsc(event);
-  if (!dsc || !lv_obj_draw_part_check_type(dsc, &lv_table_class, LV_TABLE_DRAW_PART_CELL)) return;
+void updatePaletteVisibleRows();
 
-  const uint16_t row = dsc->id;
-  if (row >= palette_table_order.size()) return;
+void drawPalettePreviewForVisibleRow(lv_event_t* event) {
+  lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(event);
+  PaletteVisibleRow* row = static_cast<PaletteVisibleRow*>(lv_event_get_user_data(event));
+  if (!draw_ctx || !row) return;
 
-  const bool selected = static_cast<int>(palette_table_order[row]) == palette_chooser_selected;
-  const lv_event_code_t code = lv_event_get_code(event);
-  if (code == LV_EVENT_DRAW_PART_BEGIN) {
-    if (dsc->rect_dsc) {
-      dsc->rect_dsc->radius = 8;
-      dsc->rect_dsc->border_width = selected ? 1 : 0;
-      dsc->rect_dsc->border_color = lv_color_hex(kColorSelectedBorder);
-      dsc->rect_dsc->bg_color = lv_color_hex(selected ? kColorSelected : (row % 2 ? kColorSurfaceRaised : kColorSurface));
+  lv_area_t coords;
+  lv_obj_get_coords(lv_event_get_target(event), &coords);
+  drawPalettePreviewArea(draw_ctx, coords, row->palette_id);
+}
+
+void onPaletteRowClicked(lv_event_t* event) {
+  PaletteVisibleRow* row = static_cast<PaletteVisibleRow*>(lv_event_get_user_data(event));
+  if (!row || row->palette_id > 255) return;
+
+  palette_chooser_selected = row->palette_id;
+  wled::setPalette(static_cast<uint8_t>(row->palette_id));
+
+  for (PaletteVisibleRow& visible_row : palette_visible_rows) {
+    if (visible_row.button) {
+      lv_obj_clear_state(visible_row.button, LV_STATE_CHECKED);
     }
-    if (dsc->label_dsc) {
-      dsc->label_dsc->align = LV_TEXT_ALIGN_CENTER;
-      dsc->label_dsc->color = lv_color_hex(selected ? 0xFFFFFF : kColorText);
-    }
-    return;
   }
+  lv_obj_add_state(lv_event_get_target(event), LV_STATE_CHECKED);
+}
 
-  if (code != LV_EVENT_DRAW_PART_END || !dsc->draw_ctx || !dsc->draw_area) return;
+void onPaletteListScrolled(lv_event_t*) {
+  updatePaletteVisibleRows();
+}
 
-  lv_area_t preview = *dsc->draw_area;
-  preview.x1 += 9;
-  preview.x2 -= 9;
-  preview.y1 = preview.y2 - 11;
-  preview.y2 -= 3;
-  if (preview.x1 <= preview.x2 && preview.y1 <= preview.y2) {
-    drawPalettePreviewArea(dsc->draw_ctx, preview, static_cast<uint16_t>(palette_table_order[row]));
+void updatePaletteVisibleRows() {
+  if (!palette_list_container) return;
+
+  const wled::Model& m = wled::model();
+  const lv_coord_t pitch = paletteRowPitch();
+  lv_coord_t scroll_y = lv_obj_get_scroll_y(palette_list_container);
+  if (scroll_y < 0) scroll_y = 0;
+  const size_t first = static_cast<size_t>(scroll_y / pitch);
+
+  for (size_t slot = 0; slot < kPaletteChooserVisibleRows; ++slot) {
+    PaletteVisibleRow& row = palette_visible_rows[slot];
+    if (!row.button || !row.label || !row.preview) continue;
+
+    const size_t order_index = first + slot;
+    if (order_index >= palette_table_order.size()) {
+      row.order_index = kPaletteChooserNoRow;
+      lv_obj_add_flag(row.button, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+
+    const size_t id = palette_table_order[order_index];
+    const bool row_changed = row.order_index != order_index;
+    row.order_index = order_index;
+    lv_obj_clear_flag(row.button, LV_OBJ_FLAG_HIDDEN);
+    if (row_changed) {
+      row.palette_id = id > 255 ? 0 : static_cast<uint16_t>(id);
+      lv_obj_set_pos(row.button, 0, static_cast<lv_coord_t>(order_index) * pitch);
+      lv_label_set_text(row.label, paletteNameOrFallback(m.palettes, id));
+      lv_obj_invalidate(row.preview);
+    }
+
+    const bool selected = static_cast<int>(id) == palette_chooser_selected;
+    if (selected) {
+      lv_obj_add_state(row.button, LV_STATE_CHECKED);
+    } else {
+      lv_obj_clear_state(row.button, LV_STATE_CHECKED);
+    }
   }
 }
 
 lv_obj_t* beginPaletteModal(const char* title_text) {
-  help_dialog = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(help_dialog);
-  lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(help_dialog, lv_color_hex(kColorBg), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(help_dialog, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
+  if (help_dialog_deleting) return nullptr;
+
+  help_dialog_deleting = false;
+  if (help_dialog) {
+    lv_obj_clean(help_dialog);
+    palette_list_container = nullptr;
+    palette_scroll_spacer = nullptr;
+    for (PaletteVisibleRow& row : palette_visible_rows) {
+      row = PaletteVisibleRow();
+    }
+  } else {
+    help_dialog = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(help_dialog);
+    lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(help_dialog, lv_color_hex(kColorBg), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(help_dialog, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(help_dialog, onHelpDialogDeleted, LV_EVENT_DELETE, nullptr);
+  }
 
   lv_obj_t* header = lv_obj_create(help_dialog);
   lv_obj_remove_style_all(header);
@@ -771,18 +858,36 @@ lv_obj_t* beginPaletteModal(const char* title_text) {
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(content, 8, LV_PART_MAIN);
-  configurePageScroll(content, true);
+  lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM |
+                             LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_CHAIN_HOR |
+                             LV_OBJ_FLAG_GESTURE_BUBBLE);
   return content;
 }
 
+// Temporary: log free heap + largest contiguous block to test whether the palette
+// freeze is heap exhaustion/fragmentation (an LVGL malloc-fail assert). Remove with
+// the lv_conf.h diagnostics block once the freeze is identified.
+void logPaletteHeap(const char* where) {
+#if !WLED_TOUCH_SIMULATOR
+  printf("[palette][heap] %s free=%u largest=%u\n", where,
+         static_cast<unsigned>(esp_get_free_heap_size()),
+         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+#else
+  (void)where;
+#endif
+}
+
 void openPaletteChooser() {
-  if (help_dialog) return;
+  if (help_dialog_deleting) return;
+  logPaletteHeap("open-enter");
 
   const wled::Model& m = wled::model();
   palette_table_order = paletteDisplayOrder(m.palettes);
   palette_chooser_selected = m.palette;
 
   lv_obj_t* content = beginPaletteModal("Choose Palette");
+  if (!content) return;
   if (m.palettes.empty()) {
     lv_obj_t* hint = lv_label_create(content);
     lv_obj_set_width(hint, LV_PCT(100));
@@ -793,61 +898,84 @@ void openPaletteChooser() {
     return;
   }
 
-  lv_obj_t* table = lv_table_create(content);
-  lv_obj_set_width(table, LV_PCT(100));
-  lv_obj_set_flex_grow(table, 1);
-  lv_table_set_col_cnt(table, 1);
-  lv_table_set_row_cnt(table, palette_table_order.size());
-  lv_table_set_col_width(table, 0, 296);
-  lv_obj_set_scroll_dir(table, LV_DIR_VER);
-  lv_obj_set_scrollbar_mode(table, LV_SCROLLBAR_MODE_AUTO);
-  lv_obj_add_flag(table, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM |
-                         LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_CHAIN_HOR |
-                         LV_OBJ_FLAG_GESTURE_BUBBLE);
-  lv_obj_set_style_bg_opa(table, LV_OPA_TRANSP, LV_PART_MAIN);
-  lv_obj_set_style_border_width(table, 0, LV_PART_MAIN);
-  lv_obj_set_style_pad_all(table, 0, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(table, lv_color_hex(kColorAccent), LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_opa(table, LV_OPA_50, LV_PART_SCROLLBAR);
-  lv_obj_set_style_width(table, 4, LV_PART_SCROLLBAR);
-  lv_obj_set_style_radius(table, 2, LV_PART_SCROLLBAR);
-  lv_obj_set_style_min_height(table, kPaletteChooserRowHeight, LV_PART_ITEMS);
-  lv_obj_set_style_pad_left(table, 10, LV_PART_ITEMS);
-  lv_obj_set_style_pad_right(table, 10, LV_PART_ITEMS);
-  lv_obj_set_style_pad_top(table, 9, LV_PART_ITEMS);
-  lv_obj_set_style_pad_bottom(table, 20, LV_PART_ITEMS);
-  lv_obj_set_style_bg_opa(table, LV_OPA_COVER, LV_PART_ITEMS);
-  lv_obj_set_style_text_color(table, lv_color_hex(kColorText), LV_PART_ITEMS);
-  lv_obj_set_style_border_width(table, 0, LV_PART_ITEMS);
+  palette_list_container = lv_obj_create(content);
+  lv_obj_remove_style_all(palette_list_container);
+  lv_obj_set_size(palette_list_container, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_scroll_dir(palette_list_container, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(palette_list_container, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_add_flag(palette_list_container, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(palette_list_container, LV_OBJ_FLAG_SCROLL_ELASTIC |
+                                            LV_OBJ_FLAG_SCROLL_MOMENTUM |
+                                            LV_OBJ_FLAG_SCROLL_CHAIN_HOR |
+                                            LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_set_style_bg_color(palette_list_container, lv_color_hex(kColorBg), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(palette_list_container, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(palette_list_container, lv_color_hex(kColorAccent), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(palette_list_container, LV_OPA_50, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(palette_list_container, 4, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(palette_list_container, 2, LV_PART_SCROLLBAR);
+  lv_obj_add_event_cb(palette_list_container, onPaletteListScrolled, LV_EVENT_SCROLL, nullptr);
 
-  uint16_t selected_row = LV_TABLE_CELL_NONE;
+  palette_scroll_spacer = lv_obj_create(palette_list_container);
+  lv_obj_remove_style_all(palette_scroll_spacer);
+  lv_obj_set_size(palette_scroll_spacer, 1,
+                  static_cast<lv_coord_t>(palette_table_order.size()) * paletteRowPitch());
+  lv_obj_set_pos(palette_scroll_spacer, 0, 0);
+  lv_obj_clear_flag(palette_scroll_spacer, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+  for (size_t slot = 0; slot < kPaletteChooserVisibleRows; ++slot) {
+    PaletteVisibleRow& row = palette_visible_rows[slot];
+    row.button = lv_btn_create(palette_list_container);
+    styleButton(row.button, true);
+    lv_obj_set_size(row.button, LV_PCT(100), kPaletteChooserRowHeight);
+    lv_obj_clear_flag(row.button, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN_HOR |
+                                  LV_OBJ_FLAG_GESTURE_BUBBLE | LV_OBJ_FLAG_SCROLL_MOMENTUM |
+                                  LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_add_event_cb(row.button, onPaletteRowClicked, LV_EVENT_CLICKED, &row);
+
+    row.label = lv_label_create(row.button);
+    lv_obj_set_width(row.label, LV_PCT(88));
+    lv_label_set_long_mode(row.label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(row.label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(row.label, LV_ALIGN_CENTER, 0, -6);
+
+    row.preview = lv_obj_create(row.button);
+    lv_obj_remove_style_all(row.preview);
+    lv_obj_set_size(row.preview, LV_PCT(100), 8);
+    lv_obj_set_style_radius(row.preview, 4, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(row.preview, lv_color_hex(kColorBg), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row.preview, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_clip_corner(row.preview, true, LV_PART_MAIN);
+    lv_obj_clear_flag(row.preview, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(row.preview, drawPalettePreviewForVisibleRow, LV_EVENT_DRAW_MAIN_END, &row);
+    lv_obj_align(row.preview, LV_ALIGN_BOTTOM_MID, 0, 0);
+  }
+
+  size_t selected_index = 0;
   for (size_t row = 0; row < palette_table_order.size(); ++row) {
-    const size_t id = palette_table_order[row];
-    lv_table_set_cell_value(table, row, 0, paletteNameOrFallback(m.palettes, id));
-    lv_table_add_cell_ctrl(table, row, 0, LV_TABLE_CELL_CTRL_TEXT_CROP);
-    if (static_cast<int>(id) == palette_chooser_selected) {
-      selected_row = static_cast<uint16_t>(row);
+    if (static_cast<int>(palette_table_order[row]) == palette_chooser_selected) {
+      selected_index = row;
+      break;
     }
   }
-  lv_obj_add_event_cb(table, onPaletteTableClicked, LV_EVENT_VALUE_CHANGED, nullptr);
-  lv_obj_add_event_cb(table, onPaletteTableDrawPart, LV_EVENT_DRAW_PART_BEGIN, nullptr);
-  lv_obj_add_event_cb(table, onPaletteTableDrawPart, LV_EVENT_DRAW_PART_END, nullptr);
-
-  if (selected_row != LV_TABLE_CELL_NONE) {
-    lv_obj_scroll_to_y(table, selected_row * kPaletteChooserRowHeight, LV_ANIM_OFF);
-  }
+  lv_obj_update_layout(palette_list_container);
+  lv_obj_scroll_to_y(palette_list_container,
+                     static_cast<lv_coord_t>(selected_index) * paletteRowPitch(),
+                     LV_ANIM_OFF);
+  updatePaletteVisibleRows();
+  logPaletteHeap("open-done");
 }
 
-void openPaletteChooserAsync(void*) {
+void openPaletteChooserTimer(lv_timer_t*) {
   palette_chooser_pending = false;
-  closeHelpDialog(nullptr);
   openPaletteChooser();
 }
 
 void schedulePaletteChooserOpen(lv_event_t*) {
   if (palette_chooser_pending) return;
   palette_chooser_pending = true;
-  lv_async_call(openPaletteChooserAsync, nullptr);
+  lv_timer_t* timer = lv_timer_create(openPaletteChooserTimer, 40, nullptr);
+  lv_timer_set_repeat_count(timer, 1);
 }
 
 void openFxControlsAsync(void*) {
@@ -869,6 +997,7 @@ void openFxControls() {
   }
 
   lv_obj_t* content = beginInfoModal("FX Controls");
+  if (!content) return;
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(content, 8, LV_PART_MAIN);
