@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "app_state.h"  // kBroadcastMac
+#include "generated/wled_catalog.h"
 
 namespace wled {
 namespace {
@@ -31,9 +32,8 @@ constexpr uint32_t kResyncMs = 30000;     // periodic full state poll to correct
 constexpr uint32_t kOfflineMs = 10000;    // no rx for this long => offline (must exceed kHeartbeatMs)
 constexpr uint32_t kHopDwellMs = 150;     // time spent probing each channel while hunting for WLED
 constexpr uint32_t kReasmTimeoutMs = 500;
-constexpr uint32_t kCatalogStepMs = 1400; // WLED handles one queued ESP-NOW API request at a time
 constexpr uint8_t  kMaxChannel = 13;
-constexpr uint8_t  kCatalogTries = 6;     // give up refetching catalogs after this many attempts
+constexpr uint8_t  kCatalogTries = 6;     // give up refetching the preset list after this many attempts
 
 Model g_model;
 uint32_t g_stateRev = 0;
@@ -86,10 +86,6 @@ uint32_t g_lastHeartbeat = 0;
 uint32_t g_lastPoll = 0;
 uint32_t g_lastCatalog = 0;
 uint8_t g_catalogTries = 0;
-uint8_t g_catalogStage = 0;
-uint32_t g_nextCatalogSend = 0;
-bool g_effectsLoaded = false;
-bool g_palettesLoaded = false;
 bool g_presetsLoaded = false;
 
 void resetReasm() {
@@ -261,6 +257,9 @@ void applyState(JsonObjectConst state, JsonObjectConst info) {
       if (seg["pal"].is<int>()) g_model.palette = seg["pal"].as<int>();
       if (seg["sx"].is<int>()) g_model.speed = seg["sx"].as<int>();
       if (seg["ix"].is<int>()) g_model.intensity = seg["ix"].as<int>();
+      if (seg["c1"].is<int>()) g_model.custom1 = seg["c1"].as<int>();
+      if (seg["c2"].is<int>()) g_model.custom2 = seg["c2"].as<int>();
+      if (seg["c3"].is<int>()) g_model.custom3 = seg["c3"].as<int>();
       JsonArrayConst col = seg["col"].as<JsonArrayConst>();
       if (!col.isNull() && col.size() > 0) g_model.color = colorFromArray(col[0].as<JsonArrayConst>());
     }
@@ -285,22 +284,6 @@ void parseInbox(const uint8_t* data, size_t len) {
   } else if (doc["state"].is<JsonObject>()) {
     applyState(doc["state"].as<JsonObjectConst>(), doc["info"].as<JsonObjectConst>());
     g_stateRev++;
-  } else if (doc["effects"].is<JsonArray>()) {
-    g_model.effects.clear();
-    for (JsonVariantConst v : doc["effects"].as<JsonArrayConst>()) {
-      const char* s = v.as<const char*>();
-      g_model.effects.push_back(s ? s : "");
-    }
-    g_effectsLoaded = true;
-    g_catalogRev++;
-  } else if (doc["palettes"].is<JsonArray>()) {
-    g_model.palettes.clear();
-    for (JsonVariantConst v : doc["palettes"].as<JsonArrayConst>()) {
-      const char* s = v.as<const char*>();
-      g_model.palettes.push_back(s ? s : "");
-    }
-    g_palettesLoaded = true;
-    g_catalogRev++;
   } else if (doc["presets"].is<JsonObject>()) {
     g_model.presets.clear();
     for (JsonPairConst kv : doc["presets"].as<JsonObjectConst>()) {
@@ -336,34 +319,6 @@ void decodeLive(const uint8_t* data, size_t len) {
   memcpy(g_live, data + pos, n * 3);
   g_liveCount = uint16_t(n);
   g_liveRev++;
-}
-
-void pumpCatalogRequests(uint32_t now_ms) {
-  if (!g_catalogStage || now_ms < g_nextCatalogSend) return;
-
-  switch (g_catalogStage) {
-    case 1:
-      sendJson("{\"get\":\"fx\"}");
-      break;
-    case 2:
-      sendJson("{\"get\":\"pal\"}");
-      break;
-    case 3:
-      sendJson("{\"get\":\"ps\"}");
-      break;
-    default:
-      g_catalogStage = 0;
-      return;
-  }
-
-  g_catalogStage++;
-  if (g_catalogStage > 3) g_catalogStage = 0;
-  g_nextCatalogSend = now_ms + kCatalogStepMs;
-  g_lastCatalog = now_ms;
-}
-
-bool catalogsLoaded() {
-  return g_effectsLoaded && g_palettesLoaded && g_presetsLoaded;
 }
 
 }  // namespace
@@ -413,7 +368,6 @@ void loop(uint32_t now_ms) {
   }
 
   if (g_channelLocked) {
-    pumpCatalogRequests(now_ms);
     if (now_ms - g_lastHeartbeat > kHeartbeatMs) {
       sendFrame(kMsgHello, nullptr, 0);  // cheap keepalive: refreshes rx + WLED's push presence
       g_lastHeartbeat = now_ms;
@@ -422,8 +376,7 @@ void loop(uint32_t now_ms) {
       poll();
       g_lastPoll = now_ms;
     }
-    if (!catalogsLoaded() && !g_catalogStage && g_catalogTries < kCatalogTries &&
-        now_ms - g_lastCatalog > 5000) {
+    if (!g_presetsLoaded && g_catalogTries < kCatalogTries && now_ms - g_lastCatalog > 5000) {
       requestCatalogs();
       g_catalogTries++;
     }
@@ -457,8 +410,8 @@ uint32_t liveFrameAgeMs(uint32_t now_ms) {
 void poll() { sendJson("{\"v\":true}"); }
 
 void requestCatalogs() {
-  g_catalogStage = 1;
-  g_nextCatalogSend = 0;
+  g_lastCatalog = millis();
+  sendJson("{\"get\":\"ps\"}");
 }
 
 void setPower(bool on) { sendJson(on ? "{\"on\":true,\"v\":true}" : "{\"on\":false,\"v\":true}"); }
@@ -503,6 +456,13 @@ void setEffectParams(int speed, int intensity) {
   if (intensity >= 0) { n += snprintf(seg + n, sizeof(seg) - n, "%s\"ix\":%d", comma ? "," : "", intensity); }
   snprintf(seg + n, sizeof(seg) - n, "}],\"v\":true}");
   sendJson(seg);
+}
+
+void setCustomParam(uint8_t index, uint8_t value) {
+  if (index < 1 || index > 3) return;
+  char buf[48];
+  snprintf(buf, sizeof(buf), "{\"seg\":[{\"c%u\":%u}],\"v\":true}", index, value);
+  sendJson(buf);
 }
 
 void sendRaw(const char* json) { sendJson(json); }

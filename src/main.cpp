@@ -13,6 +13,9 @@
 #include "wled_api.h"
 #include "ui/ui.h"
 #include "ui/tabs.h"
+#if WLED_TOUCH_SIMULATOR
+#include "sim_wled.h"
+#endif
 
 void setup() {
   Serial.begin(115200);
@@ -36,6 +39,7 @@ void setup() {
 void loop() {
 #if WLED_TOUCH_SIMULATOR
   lgfx::Panel_sdl::loop();
+  simWledTick();
 #endif
   static uint32_t last_tick_ms = millis();
   const uint32_t now = millis();

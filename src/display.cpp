@@ -5,6 +5,7 @@
 #endif
 #include "generated/version.h"
 #include "generated/wled_logo_png.h"
+#include "wled_api.h"
 
 namespace {
 
@@ -222,9 +223,24 @@ void flushDisplay(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_
   lv_disp_flush_ready(disp);
 }
 
+#if WLED_TOUCH_SIMULATOR
+bool sim_touch_down = false;
+int16_t sim_touch_x = 0;
+int16_t sim_touch_y = 0;
+#endif
+
 void readTouch(lv_indev_drv_t*, lv_indev_data_t* data) {
   uint16_t x = 0;
   uint16_t y = 0;
+#if WLED_TOUCH_SIMULATOR
+  if (sim_touch_down) {
+    data->state = LV_INDEV_STATE_PR;
+    data->point.x = sim_touch_x;
+    data->point.y = sim_touch_y;
+    touchActivity();
+    return;
+  }
+#endif
   if (gfx.getTouch(&x, &y)) {
     if ((display_idle_applied && idle_mode == IdleMode::kOff) || suppress_touch_until_release) {
       suppress_touch_until_release = true;
@@ -249,9 +265,20 @@ LGFX gfx;
 
 #if WLED_TOUCH_SIMULATOR
 uint16_t sim_framebuffer[kScreenWidth * kScreenHeight] = {};
+
+void simulatorSetTouch(bool down, int16_t x, int16_t y) {
+  sim_touch_down = down;
+  sim_touch_x = x;
+  sim_touch_y = y;
+}
 #endif
 
 void touchActivity() {
+  if (display_idle_applied) {
+    // Waking up: refresh state immediately and resume the live peek stream.
+    wled::poll();
+    wled::setLivePeek(true);
+  }
   last_touch_ms = millis();
   display_idle_applied = false;
   gfx.setBrightness(UI_ACTIVE_BRIGHTNESS);
@@ -432,5 +459,8 @@ void displayUpdateIdle(uint32_t now) {
   if (idle_mode != IdleMode::kAlwaysOn && !display_idle_applied && now - last_touch_ms > UI_DIM_AFTER_MS) {
     display_idle_applied = true;
     gfx.setBrightness(idle_mode == IdleMode::kOff ? 0 : UI_IDLE_BRIGHTNESS);
+    if (idle_mode == IdleMode::kOff) {
+      wled::setLivePeek(false);  // no point streaming frames to a dark screen
+    }
   }
 }

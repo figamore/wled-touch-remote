@@ -4,16 +4,15 @@
 #include "../wled_api.h"
 #include <Arduino.h>
 #include <WiFi.h>
-#if !WLED_TOUCH_SIMULATOR
-#include <esp_heap_caps.h>  // temporary: palette-freeze heap diagnostics
-#endif
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <strings.h>
 #include <string>
 #include <vector>
 #include "generated/version.h"
+#include "generated/wled_catalog.h"
 #include "generated/wled_logo_png.h"
 
 namespace {
@@ -27,17 +26,15 @@ const lv_img_dsc_t kHelpQrImage = {
 };
 
 
-constexpr size_t kPeekCellCount = 48;
-constexpr uint32_t kPeekFreshMs = 1200;
 constexpr lv_coord_t kColorWheelSize = 168;
 constexpr lv_coord_t kColorSelectorSize = 18;
-constexpr lv_coord_t kPaletteChooserRowHeight = 52;
-constexpr lv_coord_t kPaletteChooserRowGap = 8;
 constexpr lv_coord_t kPalettePreviewHeight = 10;
-constexpr size_t kPaletteChooserVisibleRows = 5;
-constexpr size_t kPaletteChooserNoRow = static_cast<size_t>(-1);
-lv_obj_t* peek_cells[kPeekCellCount] = {};
-lv_obj_t* peek_status_label = nullptr;
+// Sentinel palette id: preview strip follows the model's current palette.
+constexpr uint16_t kPaletteCurrent = 0xFFFF;
+constexpr lv_coord_t kPaletteRowPadTop = 7;
+constexpr lv_coord_t kPaletteRowPadBottom = 21;
+constexpr uint32_t kSliderSendIntervalMs = 150;
+
 lv_obj_t* color_wheel = nullptr;
 lv_obj_t* color_selector = nullptr;
 lv_obj_t* color_preview = nullptr;
@@ -50,22 +47,68 @@ lv_img_dsc_t color_wheel_image = {
     nullptr,
 };
 bool fx_controls_pending = false;
-bool palette_chooser_pending = false;
+bool fx_rebuild_pending = false;
 std::vector<size_t> palette_table_order;
 int palette_chooser_selected = -1;
 bool help_dialog_deleting = false;
-lv_obj_t* palette_list_container = nullptr;
-lv_obj_t* palette_scroll_spacer = nullptr;
+lv_obj_t* palette_dialog = nullptr;
+lv_obj_t* palette_table = nullptr;       // table inside the palette chooser dialog
+lv_obj_t* palette_list_table = nullptr;  // table embedded in the Colors tab
+lv_obj_t* fx_speed_slider = nullptr;
+lv_obj_t* fx_speed_value = nullptr;
+lv_obj_t* fx_intensity_slider = nullptr;
+lv_obj_t* fx_intensity_value = nullptr;
+lv_obj_t* fx_custom_slider[3] = {nullptr, nullptr, nullptr};
+lv_obj_t* fx_custom_value[3] = {nullptr, nullptr, nullptr};
+lv_obj_t* fx_palette_button = nullptr;
+lv_obj_t* fx_palette_label = nullptr;
+lv_obj_t* now_playing_label = nullptr;
 
-struct PaletteVisibleRow {
-  lv_obj_t* button = nullptr;
-  lv_obj_t* label = nullptr;
-  lv_obj_t* preview = nullptr;
-  size_t order_index = kPaletteChooserNoRow;
-  uint16_t palette_id = 0;
-};
+// FX tab category filter: effects are tagged 1D/2D/audio in the baked catalog.
+enum class FxFilter : uint8_t { kAll, k1D, k2D, kSound };
+FxFilter fx_filter = FxFilter::kAll;
+std::vector<uint16_t> fx_table_order;  // table row -> effect id
 
-PaletteVisibleRow palette_visible_rows[kPaletteChooserVisibleRows];
+bool fxMatchesFilter(uint8_t flags, FxFilter filter) {
+  switch (filter) {
+    case FxFilter::k1D: return flags & kFxFlag1D;
+    case FxFilter::k2D: return flags & kFxFlag2D;
+    case FxFilter::kSound: return flags & (kFxFlagAudioVolume | kFxFlagAudioFreq);
+    default: return true;
+  }
+}
+
+// Solid stays pinned first (like the WLED UI); everything else alphabetical.
+void buildFxTableOrder() {
+  fx_table_order.clear();
+  for (size_t id = 0; id < kWledFxCount; ++id) {
+    if (!kWledFx[id].name || !kWledFx[id].name[0]) continue;
+    if (!fxMatchesFilter(kWledFx[id].flags, fx_filter)) continue;
+    fx_table_order.push_back(static_cast<uint16_t>(id));
+  }
+  std::sort(fx_table_order.begin(), fx_table_order.end(), [](uint16_t a, uint16_t b) {
+    if (a == 0 || b == 0) return a == 0;
+    return strcasecmp(kWledFx[a].name, kWledFx[b].name) < 0;
+  });
+}
+
+// '|'-separated slider labels from the catalog: speed|intensity|c1|c2|c3|o1|o2|o3.
+void fxSliderLabels(uint16_t fx_id, std::string out[8]) {
+  for (int i = 0; i < 8; ++i) out[i].clear();
+  if (fx_id >= kWledFxCount || !kWledFx[fx_id].sliders) return;
+  const char* p = kWledFx[fx_id].sliders;
+  int slot = 0;
+  while (*p && slot < 8) {
+    const char* sep = strchr(p, '|');
+    if (!sep) {
+      out[slot] = p;
+      break;
+    }
+    out[slot].assign(p, sep - p);
+    p = sep + 1;
+    slot++;
+  }
+}
 
 // ── Widget helpers ────────────────────────────────────────────────────────────
 
@@ -110,33 +153,46 @@ void configurePageScroll(lv_obj_t* page, bool enabled) {
   }
 }
 
-lv_obj_t* createSlider(lv_obj_t* parent,
-                       int min,
-                       int max,
-                       int value,
-                       lv_event_cb_t cb,
-                       lv_obj_t** value_label) {
+lv_obj_t* createLabeledSlider(lv_obj_t* parent,
+                              const char* name,
+                              int min,
+                              int max,
+                              int value,
+                              lv_event_cb_t cb,
+                              lv_obj_t** value_label,
+                              void* user_data = nullptr) {
   lv_obj_t* row = lv_obj_create(parent);
   lv_obj_remove_style_all(row);
   lv_obj_set_width(row, LV_PCT(100));
   lv_obj_set_height(row, 38);
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_left(row, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_column(row, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(row, name ? 0 : 10, LV_PART_MAIN);
   lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  if (name) {
+    lv_obj_t* name_label = lv_label_create(row);
+    lv_obj_set_width(name_label, 72);
+    lv_label_set_long_mode(name_label, LV_LABEL_LONG_DOT);
+    lv_obj_add_style(name_label, &style_label_muted, LV_PART_MAIN);
+    lv_label_set_text(name_label, name);
+  }
 
   lv_obj_t* slider = lv_slider_create(row);
   lv_slider_set_range(slider, min, max);
   lv_slider_set_value(slider, value, LV_ANIM_OFF);
-  lv_obj_set_size(slider, 190, 12);
+  lv_obj_set_size(slider, name ? 150 : 190, 12);
+  lv_obj_set_flex_grow(slider, 1);
   lv_obj_add_flag(slider, LV_OBJ_FLAG_PRESS_LOCK);
   lv_obj_clear_flag(slider, LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
   lv_obj_add_style(slider, &style_slider, LV_PART_MAIN);
   lv_obj_add_style(slider, &style_slider_indicator, LV_PART_INDICATOR);
   lv_obj_add_style(slider, &style_knob, LV_PART_KNOB);
-  lv_obj_add_event_cb(slider, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(slider, cb, LV_EVENT_VALUE_CHANGED, user_data);
+  lv_obj_add_event_cb(slider, cb, LV_EVENT_RELEASED, user_data);
+  lv_obj_add_event_cb(slider, cb, LV_EVENT_PRESS_LOST, user_data);
 
   *value_label = lv_label_create(row);
   lv_obj_set_width(*value_label, 34);
@@ -145,6 +201,16 @@ lv_obj_t* createSlider(lv_obj_t* parent,
   lv_obj_set_style_text_align(*value_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
 
   return slider;
+}
+
+// Rate-limits slider commands while dragging; the release always goes through
+// so the final value is never lost.
+bool shouldSendSliderValue(lv_event_code_t code, uint32_t& last_send_ms) {
+  if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) return true;
+  const uint32_t now = millis();
+  if (now - last_send_ms < kSliderSendIntervalMs) return false;
+  last_send_ms = now;
+  return true;
 }
 
 uint8_t colorByte(uint32_t color, uint8_t shift) {
@@ -203,6 +269,34 @@ void rgbToHsv(uint32_t color, uint16_t& h, uint8_t& s, uint8_t& v) {
   }
 }
 
+void wheelSampleRgb(float dx, float dy, float radius, float bg_r, float bg_g, float bg_b,
+                    float& r, float& g, float& b) {
+  const float dist = std::sqrt(dx * dx + dy * dy);
+  if (dist > radius) {
+    r = bg_r;
+    g = bg_g;
+    b = bg_b;
+    return;
+  }
+
+  float hue = (std::atan2(dy, dx) + float(M_PI) / 2.0f) * (180.0f / float(M_PI));
+  if (hue < 0.0f) hue += 360.0f;
+  const float sat = std::min(1.0f, dist / radius);
+
+  const float hp = hue / 60.0f;
+  const float x = 1.0f - std::fabs(std::fmod(hp, 2.0f) - 1.0f);
+  float pr = 0, pg = 0, pb = 0;
+  if (hp < 1)      { pr = 1; pg = x; }
+  else if (hp < 2) { pr = x; pg = 1; }
+  else if (hp < 3) { pg = 1; pb = x; }
+  else if (hp < 4) { pg = x; pb = 1; }
+  else if (hp < 5) { pr = x; pb = 1; }
+  else             { pr = 1; pb = x; }
+  r = (1.0f - sat + sat * pr) * 255.0f;
+  g = (1.0f - sat + sat * pg) * 255.0f;
+  b = (1.0f - sat + sat * pb) * 255.0f;
+}
+
 void generateColorWheelImage() {
   static bool generated = false;
   if (generated) return;
@@ -214,27 +308,34 @@ void generateColorWheelImage() {
   }
   generated = true;
 
+  // 2x2 supersampling anti-aliases the rim; ordered dithering hides the RGB565
+  // banding that made the gradients look stepped. Blends into the panel surface
+  // colour the wheel actually sits on.
+  static const uint8_t kBayer[4][4] = {
+      {0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
   const float center = (kColorWheelSize - 1) / 2.0f;
-  const float radius = center - 1.0f;
-  const uint32_t bg = kColorBg;
+  const float radius = center - 1.5f;
+  const float bg_r = float((kColorSurface >> 16) & 0xFF);
+  const float bg_g = float((kColorSurface >> 8) & 0xFF);
+  const float bg_b = float(kColorSurface & 0xFF);
+
   for (lv_coord_t y = 0; y < kColorWheelSize; ++y) {
     for (lv_coord_t x = 0; x < kColorWheelSize; ++x) {
-      const float dx = x - center;
-      const float dy = y - center;
-      const float dist = std::sqrt(dx * dx + dy * dy);
-      uint32_t color = bg;
-      if (dist <= radius + 1.0f) {
-        float hue = (std::atan2(dy, dx) + float(M_PI) / 2.0f) * 180.0f / float(M_PI);
-        if (hue < 0) hue += 360.0f;
-        if (hue >= 360.0f) hue -= 360.0f;
-        const uint8_t sat = uint8_t(std::min(1.0f, dist / radius) * 255.0f);
-        color = hsvToRgb(uint16_t(hue), sat, 255);
-        if (dist > radius) {
-          const uint8_t edge = uint8_t(std::min(1.0f, dist - radius) * 255.0f);
-          color = blendRgb(color, bg, edge);
-        }
+      float r_sum = 0, g_sum = 0, b_sum = 0;
+      for (int sub = 0; sub < 4; ++sub) {
+        const float sx = (sub & 1) ? 0.75f : 0.25f;
+        const float sy = (sub & 2) ? 0.75f : 0.25f;
+        float r, g, b;
+        wheelSampleRgb(x + sx - center, y + sy - center, radius, bg_r, bg_g, bg_b, r, g, b);
+        r_sum += r;
+        g_sum += g;
+        b_sum += b;
       }
-      color_wheel_pixels[y * kColorWheelSize + x] = lv_color_hex(color);
+      const float dither = kBayer[y & 3][x & 3] / 16.0f - 0.46875f;
+      const int r = std::min(255, std::max(0, int(r_sum / 4.0f + dither * 8.0f + 0.5f)));
+      const int g = std::min(255, std::max(0, int(g_sum / 4.0f + dither * 4.0f + 0.5f)));
+      const int b = std::min(255, std::max(0, int(b_sum / 4.0f + dither * 8.0f + 0.5f)));
+      color_wheel_pixels[y * kColorWheelSize + x] = lv_color_make(r, g, b);
     }
   }
 }
@@ -255,17 +356,21 @@ void setColorControls(uint32_t color) {
     uint16_t h = 0;
     uint8_t s = 0, v = 0;
     rgbToHsv(color, h, s, v);
-    const float rad = ((kColorWheelSize - 1) / 2.0f - 1.0f) * (float(s) / 255.0f);
+    const float rad = ((kColorWheelSize - 1) / 2.0f - 1.5f) * (float(s) / 255.0f);
     const float theta = float(h) * float(M_PI) / 180.0f;
     const lv_coord_t x = lv_coord_t(kColorWheelSize / 2 + std::sin(theta) * rad - kColorSelectorSize / 2);
     const lv_coord_t y = lv_coord_t(kColorWheelSize / 2 - std::cos(theta) * rad - kColorSelectorSize / 2);
     lv_obj_set_pos(color_selector, x, y);
+    lv_obj_set_style_bg_color(color_selector, lv_color_hex(color), LV_PART_MAIN);
   }
   updateColorPreview(color);
   color_syncing = false;
 }
 
-bool colorFromWheelPoint(lv_obj_t* wheel, uint32_t& color) {
+// clamp=false requires the touch to start on the wheel; clamp=true (while a drag is
+// being tracked) projects any point onto the wheel so the finger can wander past the
+// rim without the selection jumping or going dead.
+bool colorFromWheelPoint(lv_obj_t* wheel, uint32_t& color, bool clamp) {
   lv_indev_t* indev = lv_indev_get_act();
   if (!indev || !wheel) return false;
 
@@ -276,11 +381,12 @@ bool colorFromWheelPoint(lv_obj_t* wheel, uint32_t& color) {
   const float local_x = point.x - area.x1;
   const float local_y = point.y - area.y1;
   const float center = (kColorWheelSize - 1) / 2.0f;
-  const float radius = center - 1.0f;
+  const float radius = center - 1.5f;
   const float dx = local_x - center;
   const float dy = local_y - center;
-  const float dist = std::sqrt(dx * dx + dy * dy);
-  if (dist > radius + 12.0f) return false;
+  float dist = std::sqrt(dx * dx + dy * dy);
+  if (!clamp && dist > radius + 12.0f) return false;
+  if (dist > radius) dist = radius;
 
   float hue = (std::atan2(dy, dx) + float(M_PI) / 2.0f) * 180.0f / float(M_PI);
   if (hue < 0) hue += 360.0f;
@@ -292,11 +398,17 @@ bool colorFromWheelPoint(lv_obj_t* wheel, uint32_t& color) {
 
 void onColorWheel(lv_event_t* event) {
   if (color_syncing) return;
+  static uint32_t last_send_ms = 0;
+  static bool tracking = false;
   const lv_event_code_t code = lv_event_get_code(event);
+
+  if (code == LV_EVENT_PRESSED) tracking = false;
   uint32_t color = wled::model().color;
-  if (!colorFromWheelPoint(lv_event_get_target(event), color)) return;
+  if (!colorFromWheelPoint(lv_event_get_target(event), color, tracking)) return;
+  tracking = code != LV_EVENT_RELEASED && code != LV_EVENT_PRESS_LOST;
+
   setColorControls(color);
-  if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+  if (shouldSendSliderValue(code, last_send_ms)) {
     wled::setColor(colorByte(color, 16), colorByte(color, 8), colorByte(color, 0));
   }
 }
@@ -307,7 +419,7 @@ void onColorSwatch(lv_event_t* event) {
   wled::setColor((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
 }
 
-void createColorSwatches(lv_obj_t* parent) {
+void createColorWheelEditor(lv_obj_t* parent) {
   const uint32_t current = wled::model().color;
   generateColorWheelImage();
 
@@ -324,7 +436,9 @@ void createColorSwatches(lv_obj_t* parent) {
     lv_obj_remove_style_all(color_wheel);
     lv_obj_set_size(color_wheel, kColorWheelSize, kColorWheelSize);
     lv_obj_add_flag(color_wheel, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
-    lv_obj_clear_flag(color_wheel, LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
+    // no scroll chaining in either direction: a swipe on the wheel picks a colour,
+    // it must never scroll the page underneath (that made the wheel clip and jump)
+    lv_obj_clear_flag(color_wheel, LV_OBJ_FLAG_SCROLL_CHAIN | LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(color_wheel, onColorWheel, LV_EVENT_PRESSED, nullptr);
     lv_obj_add_event_cb(color_wheel, onColorWheel, LV_EVENT_PRESSING, nullptr);
     lv_obj_add_event_cb(color_wheel, onColorWheel, LV_EVENT_RELEASED, nullptr);
@@ -340,7 +454,7 @@ void createColorSwatches(lv_obj_t* parent) {
     lv_obj_set_size(color_selector, kColorSelectorSize, kColorSelectorSize);
     lv_obj_set_style_radius(color_selector, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(color_selector, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(color_selector, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(color_selector, LV_OPA_COVER, LV_PART_MAIN);  // filled with the picked colour
     lv_obj_set_style_border_color(color_selector, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_border_width(color_selector, 3, LV_PART_MAIN);
     lv_obj_set_style_outline_color(color_selector, lv_color_hex(kColorBg), LV_PART_MAIN);
@@ -372,14 +486,17 @@ void createColorSwatches(lv_obj_t* parent) {
   lv_obj_set_style_text_color(color_hex_label, lv_color_hex(kColorAccent), LV_PART_MAIN);
 
   setColorControls(current);
+}
 
+void createColorSwatchGrid(lv_obj_t* parent) {
   lv_obj_t* swatches = lv_obj_create(parent);
   lv_obj_remove_style_all(swatches);
-  lv_obj_set_size(swatches, LV_PCT(100), 160);
+  lv_obj_set_size(swatches, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(swatches, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_flex_align(swatches, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(swatches, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_column(swatches, 8, LV_PART_MAIN);
+  lv_obj_clear_flag(swatches, LV_OBJ_FLAG_SCROLLABLE);
 
   for (const ColorSwatch& swatch : kColorSwatches) {
     lv_obj_t* btn = lv_btn_create(swatches);
@@ -404,20 +521,19 @@ void createColorSwatches(lv_obj_t* parent) {
 
 // ── Dialog helpers ────────────────────────────────────────────────────────────
 
-void resetPaletteChooserState() {
-  palette_table_order.clear();
-  palette_chooser_selected = -1;
-  palette_list_container = nullptr;
-  palette_scroll_spacer = nullptr;
-  for (PaletteVisibleRow& row : palette_visible_rows) {
-    row = PaletteVisibleRow();
-  }
-}
-
 void onHelpDialogDeleted(lv_event_t*) {
   help_dialog = nullptr;
   help_dialog_deleting = false;
-  resetPaletteChooserState();
+  fx_speed_slider = nullptr;
+  fx_speed_value = nullptr;
+  fx_intensity_slider = nullptr;
+  fx_intensity_value = nullptr;
+  for (int i = 0; i < 3; ++i) {
+    fx_custom_slider[i] = nullptr;
+    fx_custom_value[i] = nullptr;
+  }
+  fx_palette_button = nullptr;
+  fx_palette_label = nullptr;
 }
 
 void closeHelpDialogTimer(lv_timer_t*) {
@@ -433,20 +549,18 @@ void closeHelpDialog(lv_event_t*) {
   lv_timer_set_repeat_count(timer, 1);
 }
 
-lv_obj_t* beginInfoModal(const char* title_text) {
-  if (help_dialog_deleting) return nullptr;
+// Full-screen overlay with a title header and close button; content goes below
+// the header.
+lv_obj_t* createDialogShell(const char* title_text, lv_event_cb_t on_close) {
+  lv_obj_t* dialog = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(dialog);
+  lv_obj_set_size(dialog, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(dialog, lv_color_hex(kColorBg), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(dialog, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(dialog, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(dialog, LV_OBJ_FLAG_CLICKABLE);
 
-  help_dialog_deleting = false;
-  help_dialog = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(help_dialog);
-  lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(help_dialog, lv_color_hex(kColorBg), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(help_dialog, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(help_dialog, onHelpDialogDeleted, LV_EVENT_DELETE, nullptr);
-
-  lv_obj_t* header = lv_obj_create(help_dialog);
+  lv_obj_t* header = lv_obj_create(dialog);
   lv_obj_remove_style_all(header);
   lv_obj_set_size(header, LV_PCT(100), 40);
   lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
@@ -469,10 +583,20 @@ lv_obj_t* beginInfoModal(const char* title_text) {
   lv_obj_t* close = lv_btn_create(header);
   styleButton(close);
   lv_obj_set_size(close, 40, 30);
-  lv_obj_add_event_cb(close, closeHelpDialog, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(close, on_close, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* close_label = lv_label_create(close);
   lv_label_set_text(close_label, LV_SYMBOL_CLOSE);
   lv_obj_center(close_label);
+
+  return dialog;
+}
+
+lv_obj_t* beginInfoModal(const char* title_text) {
+  if (help_dialog_deleting) return nullptr;
+
+  help_dialog_deleting = false;
+  help_dialog = createDialogShell(title_text, closeHelpDialog);
+  lv_obj_add_event_cb(help_dialog, onHelpDialogDeleted, LV_EVENT_DELETE, nullptr);
 
   lv_obj_t* content = lv_obj_create(help_dialog);
   lv_obj_remove_style_all(content);
@@ -538,11 +662,32 @@ void openHelpDialog(lv_event_t*) {
 
 
 void onFxSpeed(lv_event_t* event) {
-  wled::setEffectParams(lv_slider_get_value(lv_event_get_target(event)), -1);
+  static uint32_t last_send_ms = 0;
+  const int value = lv_slider_get_value(lv_event_get_target(event));
+  if (fx_speed_value) lv_label_set_text_fmt(fx_speed_value, "%d", value);
+  if (shouldSendSliderValue(lv_event_get_code(event), last_send_ms)) {
+    wled::setEffectParams(value, -1);
+  }
 }
 
 void onFxIntensity(lv_event_t* event) {
-  wled::setEffectParams(-1, lv_slider_get_value(lv_event_get_target(event)));
+  static uint32_t last_send_ms = 0;
+  const int value = lv_slider_get_value(lv_event_get_target(event));
+  if (fx_intensity_value) lv_label_set_text_fmt(fx_intensity_value, "%d", value);
+  if (shouldSendSliderValue(lv_event_get_code(event), last_send_ms)) {
+    wled::setEffectParams(-1, value);
+  }
+}
+
+void onFxCustom(lv_event_t* event) {
+  static uint32_t last_send_ms = 0;
+  const uintptr_t idx = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));  // 1-3
+  if (idx < 1 || idx > 3) return;
+  const int value = lv_slider_get_value(lv_event_get_target(event));
+  if (fx_custom_value[idx - 1]) lv_label_set_text_fmt(fx_custom_value[idx - 1], "%d", value);
+  if (shouldSendSliderValue(lv_event_get_code(event), last_send_ms)) {
+    wled::setCustomParam(static_cast<uint8_t>(idx), static_cast<uint8_t>(value));
+  }
 }
 
 void openFxControls();
@@ -557,122 +702,50 @@ uint32_t gradientColor(const uint32_t* stops, size_t count, uint8_t pos) {
   return blendRgb(stops[left], stops[right], scaled % 255);
 }
 
+// Preview colours come from generated/wled_catalog.h (sampled from the actual WLED
+// palette data); ids 0-5 derive from the current segment colours at runtime.
 uint32_t palettePreviewColor(uint16_t palette, uint8_t pos) {
   const uint32_t c1 = wled::model().color;
-  const uint32_t c2 = 0x0066FF;
+  const uint32_t c2 = 0x0066FF;  // stand-ins: the remote only tracks the primary colour
   const uint32_t c3 = 0xFFFFFF;
 
-  static const uint32_t kParty[] = {
-      0x9B00D5, 0xBD00B8, 0xDA0092, 0xF3005C, 0xF45500, 0xDC8F00, 0xD5B400, 0xD5D500,
-      0xD59B00, 0xEF6600, 0xF90044, 0xE10086, 0xC400B0, 0xA300CF, 0x7600E8, 0x0032FC};
-  static const uint32_t kRainbow[] = {
-      0xFF0000, 0xEB7000, 0xD59B00, 0xD5BA00, 0xD5D500, 0x9CEB00, 0x00FF00, 0x00EB70,
-      0x00D59B, 0x009CD4, 0x0000FF, 0x7000EB, 0x9B00D5, 0xBA00BB, 0xD5009B, 0xEB0072};
-  static const uint32_t kRainbowStripe[] = {
-      0xFF0000, 0x050505, 0xD59B00, 0x050505, 0xD5D500, 0x050505, 0x00FF00, 0x050505,
-      0x00D59B, 0x050505, 0x0000FF, 0x050505, 0x9B00D5, 0x050505, 0xD5009B, 0x050505};
-  static const uint32_t kCloud[] = {0x1E2A66, 0x6076B8, 0xDDE8FF, 0xFFFFFF, 0x879BE1, 0x2C397D};
-  static const uint32_t kLava[] = {0x050000, 0x3A0000, 0x940000, 0xFF3A00, 0xFFB000, 0xFFFFFF};
-  static const uint32_t kOcean[] = {0x001030, 0x003C7A, 0x007EA7, 0x00C2C7, 0xB4FFF4};
-  static const uint32_t kForest[] = {0x001A00, 0x064B16, 0x16882B, 0x6BBF3A, 0xD9F99D};
-  static const uint32_t kSunset[] = {0x22001E, 0x71115A, 0xE04447, 0xFF8A00, 0xFFD166};
-  static const uint32_t kRivendell[] = {0x001A24, 0x0B5C63, 0x7CBF9E, 0xE8E8C6, 0x5B7C99};
-  static const uint32_t kBreeze[] = {0x00283C, 0x0F7890, 0x6BE7D8, 0xD7FFF7, 0x4EA3FF};
-  static const uint32_t kRedBlue[] = {0xFF0000, 0x150018, 0x001DFF, 0x110021, 0xFF0040};
-  static const uint32_t kAnalogous[] = {0x2B00FF, 0x7C00FF, 0xD000B8, 0xFF005A, 0xFF1A1A};
-  static const uint32_t kSplash[] = {0x001020, 0x00D7FF, 0x0040FF, 0xF000FF, 0xFF3D81};
-  static const uint32_t kPastel[] = {0xFFB7C5, 0xFFD6A5, 0xFDFFB6, 0xCAFFBF, 0x9BF6FF, 0xBDB2FF};
-  static const uint32_t kVintage[] = {0x2C1608, 0x6B2E16, 0xB85C38, 0xF4D58D, 0x7D5A50};
-  static const uint32_t kDeparture[] = {0x000B2E, 0x00296B, 0x00B4D8, 0x90E0EF, 0xF72585};
-  static const uint32_t kLandscape[] = {0x02111B, 0x064635, 0x519259, 0xF0BB62, 0xC84B31};
-  static const uint32_t kSherbet[] = {0xFF006E, 0xFB5607, 0xFFBE0B, 0x3A86FF, 0x8338EC};
-  static const uint32_t kFire[] = {0x000000, 0x440000, 0xB00000, 0xFF6A00, 0xFFF000};
-  static const uint32_t kIce[] = {0x000018, 0x003B78, 0x00C2FF, 0xD7FFFF, 0xFFFFFF};
-  static const uint32_t kApril[] = {0x001024, 0x00B8C8, 0x001024, 0x2CE43A, 0x101040, 0xFFB02E, 0x1A0B2E, 0xFF3E74};
-  static const uint32_t kAurora[] = {0x003833, 0x006B22, 0x00E436, 0x25BEBE, 0x004466};
-  static const uint32_t kAtlantica[] = {0x0037A6, 0x0080FF, 0x00C2A8, 0x00A85A, 0x2ED06E};
-  static const uint32_t kAquaFlash[] = {0x102B2B, 0x5BE7E7, 0xC7FFE8, 0xFFFF7A, 0xC7FFE8, 0x5BE7E7, 0x102B2B};
-  static const uint32_t kPinkCandy[] = {0x32002F, 0xFF4FB8, 0xFFFFFF, 0xFF9EE2, 0x7A1FA2};
-  static const uint32_t kTraffic[] = {0xFF0000, 0xFF0000, 0xFFD000, 0xFFD000, 0x00CC33, 0x00CC33};
-
   switch (palette) {
-    case 0:
-    case 6: return gradientColor(kParty, sizeof(kParty) / sizeof(kParty[0]), pos);
-    case 1: return hsvToRgb(pos * 360 / 255, 210, 255);
+    case 1: return hsvToRgb(pos * 360 / 255, 210, 255);  // * Random Cycle
     case 2: return c1;
     case 3: { const uint32_t stops[] = {c1, c1, c2, c2}; return gradientColor(stops, 4, pos); }
     case 4: { const uint32_t stops[] = {c3, c2, c1}; return gradientColor(stops, 3, pos); }
     case 5: { const uint32_t stops[] = {c1, c1, c1, c2, c2, c2, c3, c3, c3, c1}; return gradientColor(stops, 10, pos); }
-    case 7: return gradientColor(kCloud, sizeof(kCloud) / sizeof(kCloud[0]), pos);
-    case 8: return gradientColor(kLava, sizeof(kLava) / sizeof(kLava[0]), pos);
-    case 9: return gradientColor(kOcean, sizeof(kOcean) / sizeof(kOcean[0]), pos);
-    case 10: return gradientColor(kForest, sizeof(kForest) / sizeof(kForest[0]), pos);
-    case 11: return gradientColor(kRainbow, sizeof(kRainbow) / sizeof(kRainbow[0]), pos);
-    case 12: return gradientColor(kRainbowStripe, sizeof(kRainbowStripe) / sizeof(kRainbowStripe[0]), pos);
-    case 13:
-    case 21: return gradientColor(kSunset, sizeof(kSunset) / sizeof(kSunset[0]), pos);
-    case 14: return gradientColor(kRivendell, sizeof(kRivendell) / sizeof(kRivendell[0]), pos);
-    case 15: return gradientColor(kBreeze, sizeof(kBreeze) / sizeof(kBreeze[0]), pos);
-    case 16: return gradientColor(kRedBlue, sizeof(kRedBlue) / sizeof(kRedBlue[0]), pos);
-    case 18: return gradientColor(kAnalogous, sizeof(kAnalogous) / sizeof(kAnalogous[0]), pos);
-    case 19: return gradientColor(kSplash, sizeof(kSplash) / sizeof(kSplash[0]), pos);
-    case 20: return gradientColor(kPastel, sizeof(kPastel) / sizeof(kPastel[0]), pos);
-    case 23:
-    case 32: return gradientColor(kVintage, sizeof(kVintage) / sizeof(kVintage[0]), pos);
-    case 24: return gradientColor(kDeparture, sizeof(kDeparture) / sizeof(kDeparture[0]), pos);
-    case 25:
-    case 26: return gradientColor(kLandscape, sizeof(kLandscape) / sizeof(kLandscape[0]), pos);
-    case 27:
-    case 57:
-    case 70: return gradientColor(kSherbet, sizeof(kSherbet) / sizeof(kSherbet[0]), pos);
-    case 35:
-    case 39:
-    case 66:
-    case 67:
-    case 68:
-    case 69: return gradientColor(kFire, sizeof(kFire) / sizeof(kFire[0]), pos);
-    case 36:
-    case 37:
-    case 43:
-    case 54:
-    case 60:
-    case 64:
-    case 65: return gradientColor(kIce, sizeof(kIce) / sizeof(kIce[0]), pos);
-    case 46: return gradientColor(kApril, sizeof(kApril) / sizeof(kApril[0]), pos);
-    case 50:
-    case 55: return gradientColor(kAurora, sizeof(kAurora) / sizeof(kAurora[0]), pos);
-    case 51: return gradientColor(kAtlantica, sizeof(kAtlantica) / sizeof(kAtlantica[0]), pos);
-    case 63: return gradientColor(kAquaFlash, sizeof(kAquaFlash) / sizeof(kAquaFlash[0]), pos);
-    case 61: return gradientColor(kPinkCandy, sizeof(kPinkCandy) / sizeof(kPinkCandy[0]), pos);
-    case 71: return gradientColor(kTraffic, sizeof(kTraffic) / sizeof(kTraffic[0]), pos);
-    default:
-      return hsvToRgb((uint16_t(pos) + palette * 23) % 360, 210, 240);
+    default: break;
   }
+
+  size_t idx = palette < kWledPaletteDynamicCount ? 0  // Default renders like Party
+                                                  : palette - kWledPaletteDynamicCount;
+  if (idx >= kWledPaletteStopsCount) return hsvToRgb((uint16_t(pos) + palette * 23) % 360, 210, 240);
+
+  uint32_t stops[8];
+  for (int i = 0; i < 8; ++i) {
+    stops[i] = makeRgb(kWledPaletteStops[idx][i][0], kWledPaletteStops[idx][i][1],
+                       kWledPaletteStops[idx][i][2]);
+  }
+  return gradientColor(stops, 8, pos);
 }
 
-bool paletteNameLess(const std::vector<std::string>& palettes, size_t left, size_t right) {
-  return palettes[left] < palettes[right];
-}
-
-std::vector<size_t> paletteDisplayOrder(const std::vector<std::string>& palettes) {
+// "Default" stays pinned first; everything else alphabetical by baked name.
+std::vector<size_t> paletteDisplayOrder() {
   std::vector<size_t> order;
-  order.reserve(palettes.size());
-  if (!palettes.empty()) {
-    order.push_back(0);
-  }
-  for (size_t i = 1; i < palettes.size(); ++i) {
+  order.reserve(kWledPaletteCount);
+  for (size_t i = 0; i < kWledPaletteCount; ++i) {
     order.push_back(i);
   }
-  std::sort(order.begin() + (order.empty() ? 0 : 1), order.end(),
-            [&palettes](size_t left, size_t right) {
-              return paletteNameLess(palettes, left, right);
-            });
+  std::sort(order.begin() + 1, order.end(), [](size_t left, size_t right) {
+    return strcasecmp(kWledPaletteNames[left], kWledPaletteNames[right]) < 0;
+  });
   return order;
 }
 
-const char* paletteNameOrFallback(const std::vector<std::string>& palettes, size_t id) {
-  if (id < palettes.size() && !palettes[id].empty()) {
-    return palettes[id].c_str();
+const char* paletteNameOrFallback(size_t id) {
+  if (id < kWledPaletteCount && kWledPaletteNames[id][0]) {
+    return kWledPaletteNames[id];
   }
   return "Palette";
 }
@@ -684,7 +757,11 @@ void drawPalettePreview(lv_event_t* event) {
   if (!draw_ctx) return;
 
   lv_obj_t* strip = lv_event_get_target(event);
-  const uintptr_t palette = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+  uintptr_t palette = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+  if (palette == kPaletteCurrent) {
+    const int current = wled::model().palette;
+    palette = current > 0 ? static_cast<uintptr_t>(current) : 0;
+  }
   lv_area_t coords;
   lv_obj_get_coords(strip, &coords);
   drawPalettePreviewArea(draw_ctx, coords, static_cast<uint16_t>(palette));
@@ -726,230 +803,157 @@ lv_obj_t* createPalettePreview(lv_obj_t* parent, uint16_t palette, lv_coord_t he
   return strip;
 }
 
-constexpr lv_coord_t paletteRowPitch() {
-  return kPaletteChooserRowHeight + kPaletteChooserRowGap;
+constexpr lv_coord_t paletteRowHeight() {
+  return 16 + kPaletteRowPadTop + kPaletteRowPadBottom;  // montserrat_14 line + cell pads
 }
 
-void updatePaletteVisibleRows();
-
-void drawPalettePreviewForVisibleRow(lv_event_t* event) {
-  lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(event);
-  PaletteVisibleRow* row = static_cast<PaletteVisibleRow*>(lv_event_get_user_data(event));
-  if (!draw_ctx || !row) return;
-
-  lv_area_t coords;
-  lv_obj_get_coords(lv_event_get_target(event), &coords);
-  drawPalettePreviewArea(draw_ctx, coords, row->palette_id);
+void onPaletteDialogDeleted(lv_event_t*) {
+  palette_dialog = nullptr;
+  palette_table = nullptr;
 }
 
-void onPaletteRowClicked(lv_event_t* event) {
-  PaletteVisibleRow* row = static_cast<PaletteVisibleRow*>(lv_event_get_user_data(event));
-  if (!row || row->palette_id > 255) return;
+void closePaletteDialog(lv_event_t*) {
+  if (!palette_dialog) return;
+  lv_obj_t* dialog = palette_dialog;
+  palette_dialog = nullptr;
+  palette_table = nullptr;
+  lv_obj_del_async(dialog);
+}
 
-  palette_chooser_selected = row->palette_id;
-  wled::setPalette(static_cast<uint8_t>(row->palette_id));
+void onPaletteTableClicked(lv_event_t* event) {
+  lv_obj_t* table = lv_event_get_target(event);
+  uint16_t row = LV_TABLE_CELL_NONE;
+  uint16_t col = LV_TABLE_CELL_NONE;
+  lv_table_get_selected_cell(table, &row, &col);
+  if (row == LV_TABLE_CELL_NONE || row >= palette_table_order.size()) return;
 
-  for (PaletteVisibleRow& visible_row : palette_visible_rows) {
-    if (visible_row.button) {
-      lv_obj_clear_state(visible_row.button, LV_STATE_CHECKED);
-    }
+  const size_t id = palette_table_order[row];
+  if (id > 255) return;
+  palette_chooser_selected = static_cast<int>(id);
+  wled::setPalette(static_cast<uint8_t>(id));
+  if (palette_table) lv_obj_invalidate(palette_table);
+  if (palette_list_table) lv_obj_invalidate(palette_list_table);
+  if (fx_palette_label) {
+    lv_label_set_text(fx_palette_label, paletteNameOrFallback(id));
   }
-  lv_obj_add_state(lv_event_get_target(event), LV_STATE_CHECKED);
-}
-
-void onPaletteListScrolled(lv_event_t*) {
-  updatePaletteVisibleRows();
-}
-
-void updatePaletteVisibleRows() {
-  if (!palette_list_container) return;
-
-  const wled::Model& m = wled::model();
-  const lv_coord_t pitch = paletteRowPitch();
-  lv_coord_t scroll_y = lv_obj_get_scroll_y(palette_list_container);
-  if (scroll_y < 0) scroll_y = 0;
-  const size_t first = static_cast<size_t>(scroll_y / pitch);
-
-  for (size_t slot = 0; slot < kPaletteChooserVisibleRows; ++slot) {
-    PaletteVisibleRow& row = palette_visible_rows[slot];
-    if (!row.button || !row.label || !row.preview) continue;
-
-    const size_t order_index = first + slot;
-    if (order_index >= palette_table_order.size()) {
-      row.order_index = kPaletteChooserNoRow;
-      lv_obj_add_flag(row.button, LV_OBJ_FLAG_HIDDEN);
-      continue;
-    }
-
-    const size_t id = palette_table_order[order_index];
-    const bool row_changed = row.order_index != order_index;
-    row.order_index = order_index;
-    lv_obj_clear_flag(row.button, LV_OBJ_FLAG_HIDDEN);
-    if (row_changed) {
-      row.palette_id = id > 255 ? 0 : static_cast<uint16_t>(id);
-      lv_obj_set_pos(row.button, 0, static_cast<lv_coord_t>(order_index) * pitch);
-      lv_label_set_text(row.label, paletteNameOrFallback(m.palettes, id));
-      lv_obj_invalidate(row.preview);
-    }
-
-    const bool selected = static_cast<int>(id) == palette_chooser_selected;
-    if (selected) {
-      lv_obj_add_state(row.button, LV_STATE_CHECKED);
-    } else {
-      lv_obj_clear_state(row.button, LV_STATE_CHECKED);
-    }
+  if (fx_palette_button) {
+    lv_obj_invalidate(fx_palette_button);
   }
 }
 
-lv_obj_t* beginPaletteModal(const char* title_text) {
-  if (help_dialog_deleting) return nullptr;
-
-  help_dialog_deleting = false;
-  if (help_dialog) {
-    lv_obj_clean(help_dialog);
-    palette_list_container = nullptr;
-    palette_scroll_spacer = nullptr;
-    for (PaletteVisibleRow& row : palette_visible_rows) {
-      row = PaletteVisibleRow();
-    }
-  } else {
-    help_dialog = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(help_dialog);
-    lv_obj_set_size(help_dialog, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(help_dialog, lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(help_dialog, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_clear_flag(help_dialog, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(help_dialog, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(help_dialog, onHelpDialogDeleted, LV_EVENT_DELETE, nullptr);
+void onPaletteTableDrawPart(lv_event_t* event) {
+  lv_obj_draw_part_dsc_t* dsc = lv_event_get_draw_part_dsc(event);
+  if (!dsc || !lv_obj_draw_part_check_type(dsc, &lv_table_class, LV_TABLE_DRAW_PART_CELL)) {
+    return;
   }
-
-  lv_obj_t* header = lv_obj_create(help_dialog);
-  lv_obj_remove_style_all(header);
-  lv_obj_set_size(header, LV_PCT(100), 40);
-  lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_pad_left(header, 14, LV_PART_MAIN);
-  lv_obj_set_style_pad_right(header, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(header, lv_color_hex(kColorBorder), LV_PART_MAIN);
-  lv_obj_set_style_border_width(header, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
-  lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-
-  lv_obj_t* title = lv_label_create(header);
-  lv_label_set_text(title, title_text);
-  lv_obj_set_width(title, 224);
-  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(kColorAccent), LV_PART_MAIN);
-
-  lv_obj_t* close = lv_btn_create(header);
-  styleButton(close);
-  lv_obj_set_size(close, 40, 30);
-  lv_obj_add_event_cb(close, closeHelpDialog, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* close_label = lv_label_create(close);
-  lv_label_set_text(close_label, LV_SYMBOL_CLOSE);
-  lv_obj_center(close_label);
-
-  lv_obj_t* content = lv_obj_create(help_dialog);
-  lv_obj_remove_style_all(content);
-  lv_obj_set_size(content, 304, 190);
-  lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, -5);
-  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(content, 8, LV_PART_MAIN);
-  lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM |
-                             LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_CHAIN_HOR |
-                             LV_OBJ_FLAG_GESTURE_BUBBLE);
-  return content;
-}
-
-// Temporary: log free heap + largest contiguous block to test whether the palette
-// freeze is heap exhaustion/fragmentation (an LVGL malloc-fail assert). Remove with
-// the lv_conf.h diagnostics block once the freeze is identified.
-void logPaletteHeap(const char* where) {
-#if !WLED_TOUCH_SIMULATOR
-  printf("[palette][heap] %s free=%u largest=%u\n", where,
-         static_cast<unsigned>(esp_get_free_heap_size()),
-         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
-#else
-  (void)where;
-#endif
-}
-
-void openPaletteChooser() {
-  if (help_dialog_deleting) return;
-  logPaletteHeap("open-enter");
-
-  const wled::Model& m = wled::model();
-  palette_table_order = paletteDisplayOrder(m.palettes);
-  palette_chooser_selected = m.palette;
-
-  lv_obj_t* content = beginPaletteModal("Choose Palette");
-  if (!content) return;
-  if (m.palettes.empty()) {
-    lv_obj_t* hint = lv_label_create(content);
-    lv_obj_set_width(hint, LV_PCT(100));
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(hint, "Palette list not loaded yet.");
-    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_add_style(hint, &style_label_muted, LV_PART_MAIN);
+  const uint16_t row = dsc->id;
+  if (row >= palette_table_order.size()) {
     return;
   }
 
-  palette_list_container = lv_obj_create(content);
-  lv_obj_remove_style_all(palette_list_container);
-  lv_obj_set_size(palette_list_container, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_scroll_dir(palette_list_container, LV_DIR_VER);
-  lv_obj_set_scrollbar_mode(palette_list_container, LV_SCROLLBAR_MODE_AUTO);
-  lv_obj_add_flag(palette_list_container, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_clear_flag(palette_list_container, LV_OBJ_FLAG_SCROLL_ELASTIC |
-                                            LV_OBJ_FLAG_SCROLL_MOMENTUM |
-                                            LV_OBJ_FLAG_SCROLL_CHAIN_HOR |
-                                            LV_OBJ_FLAG_GESTURE_BUBBLE);
-  lv_obj_set_style_bg_color(palette_list_container, lv_color_hex(kColorBg), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(palette_list_container, LV_OPA_TRANSP, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(palette_list_container, lv_color_hex(kColorAccent), LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_opa(palette_list_container, LV_OPA_50, LV_PART_SCROLLBAR);
-  lv_obj_set_style_width(palette_list_container, 4, LV_PART_SCROLLBAR);
-  lv_obj_set_style_radius(palette_list_container, 2, LV_PART_SCROLLBAR);
-  lv_obj_add_event_cb(palette_list_container, onPaletteListScrolled, LV_EVENT_SCROLL, nullptr);
-
-  palette_scroll_spacer = lv_obj_create(palette_list_container);
-  lv_obj_remove_style_all(palette_scroll_spacer);
-  lv_obj_set_size(palette_scroll_spacer, 1,
-                  static_cast<lv_coord_t>(palette_table_order.size()) * paletteRowPitch());
-  lv_obj_set_pos(palette_scroll_spacer, 0, 0);
-  lv_obj_clear_flag(palette_scroll_spacer, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-
-  for (size_t slot = 0; slot < kPaletteChooserVisibleRows; ++slot) {
-    PaletteVisibleRow& row = palette_visible_rows[slot];
-    row.button = lv_btn_create(palette_list_container);
-    styleButton(row.button, true);
-    lv_obj_set_size(row.button, LV_PCT(100), kPaletteChooserRowHeight);
-    lv_obj_clear_flag(row.button, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN_HOR |
-                                  LV_OBJ_FLAG_GESTURE_BUBBLE | LV_OBJ_FLAG_SCROLL_MOMENTUM |
-                                  LV_OBJ_FLAG_SCROLL_ELASTIC);
-    lv_obj_add_event_cb(row.button, onPaletteRowClicked, LV_EVENT_CLICKED, &row);
-
-    row.label = lv_label_create(row.button);
-    lv_obj_set_width(row.label, LV_PCT(88));
-    lv_label_set_long_mode(row.label, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_align(row.label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(row.label, LV_ALIGN_CENTER, 0, -6);
-
-    row.preview = lv_obj_create(row.button);
-    lv_obj_remove_style_all(row.preview);
-    lv_obj_set_size(row.preview, LV_PCT(100), 8);
-    lv_obj_set_style_radius(row.preview, 4, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(row.preview, lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(row.preview, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_clip_corner(row.preview, true, LV_PART_MAIN);
-    lv_obj_clear_flag(row.preview, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(row.preview, drawPalettePreviewForVisibleRow, LV_EVENT_DRAW_MAIN_END, &row);
-    lv_obj_align(row.preview, LV_ALIGN_BOTTOM_MID, 0, 0);
+  const bool selected = static_cast<int>(palette_table_order[row]) == palette_chooser_selected;
+  if (dsc->rect_dsc) {
+    dsc->rect_dsc->radius = 8;
+    dsc->rect_dsc->border_width = 0;
+    if (selected) {
+      dsc->rect_dsc->bg_color = lv_color_hex(kColorSelected);
+    } else if (row % 2) {
+      dsc->rect_dsc->bg_color = lv_color_hex(kColorSurfaceRaised);
+    } else {
+      dsc->rect_dsc->bg_color = lv_color_hex(kColorSurface);
+    }
   }
+  if (dsc->label_dsc) {
+    dsc->label_dsc->align = LV_TEXT_ALIGN_CENTER;
+    dsc->label_dsc->color = lv_color_hex(kColorText);
+  }
+}
+
+void onPaletteTableDrawEnd(lv_event_t* event) {
+  lv_obj_draw_part_dsc_t* dsc = lv_event_get_draw_part_dsc(event);
+  if (!dsc || !lv_obj_draw_part_check_type(dsc, &lv_table_class, LV_TABLE_DRAW_PART_CELL)) {
+    return;
+  }
+  const uint16_t row = dsc->id;
+  if (row >= palette_table_order.size() || !dsc->draw_area || !dsc->draw_ctx) {
+    return;
+  }
+
+  lv_area_t strip = *dsc->draw_area;
+  strip.x1 += 14;
+  strip.x2 -= 14;
+  strip.y2 -= 8;
+  strip.y1 = strip.y2 - 7;
+  if (strip.x2 <= strip.x1 || strip.y2 <= strip.y1) return;
+  drawPalettePreviewArea(dsc->draw_ctx, strip, static_cast<uint16_t>(palette_table_order[row]));
+}
+
+// Builds the palette list table (name + preview strip rows). self_scroll=true gives the
+// table its own viewport (chooser dialog); false sizes it to content so the parent page
+// scrolls instead (Colors tab).
+lv_obj_t* buildPaletteTable(lv_obj_t* parent, lv_coord_t col_width, bool self_scroll) {
+  if (palette_table_order.empty()) palette_table_order = paletteDisplayOrder();
+
+  lv_obj_t* table = lv_table_create(parent);
+  lv_table_set_col_cnt(table, 1);
+  lv_table_set_row_cnt(table, palette_table_order.size());
+  lv_table_set_col_width(table, 0, col_width);
+  if (self_scroll) {
+    lv_obj_set_size(table, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_scroll_dir(table, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(table, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(table, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE |
+                           LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_clear_flag(table, LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
+  } else {
+    lv_obj_set_size(table, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_scrollbar_mode(table, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(table, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM |
+                             LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_add_flag(table, LV_OBJ_FLAG_CLICKABLE);
+  }
+  lv_obj_set_style_bg_opa(table, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(table, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(table, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(table, lv_color_hex(kColorAccent), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(table, LV_OPA_50, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(table, 4, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(table, 2, LV_PART_SCROLLBAR);
+  lv_obj_set_style_pad_left(table, 10, LV_PART_ITEMS);
+  lv_obj_set_style_pad_right(table, 10, LV_PART_ITEMS);
+  lv_obj_set_style_pad_top(table, kPaletteRowPadTop, LV_PART_ITEMS);
+  lv_obj_set_style_pad_bottom(table, kPaletteRowPadBottom, LV_PART_ITEMS);
+  lv_obj_set_style_bg_opa(table, LV_OPA_COVER, LV_PART_ITEMS);
+  lv_obj_set_style_text_color(table, lv_color_hex(kColorText), LV_PART_ITEMS);
+  lv_obj_set_style_border_width(table, 0, LV_PART_ITEMS);
+
+  for (size_t i = 0; i < palette_table_order.size(); ++i) {
+    lv_table_set_cell_value(table, i, 0, paletteNameOrFallback(palette_table_order[i]));
+    lv_table_add_cell_ctrl(table, i, 0, LV_TABLE_CELL_CTRL_TEXT_CROP);
+  }
+  lv_obj_add_event_cb(table, onPaletteTableClicked, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(table, onPaletteTableDrawPart, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+  lv_obj_add_event_cb(table, onPaletteTableDrawEnd, LV_EVENT_DRAW_PART_END, nullptr);
+  return table;
+}
+
+void openPaletteChooser() {
+  if (palette_dialog) return;
+
+  const wled::Model& m = wled::model();
+  palette_table_order = paletteDisplayOrder();
+  palette_chooser_selected = m.palette;
+
+  palette_dialog = createDialogShell("Palette", closePaletteDialog);
+  lv_obj_add_event_cb(palette_dialog, onPaletteDialogDeleted, LV_EVENT_DELETE, nullptr);
+
+  lv_obj_t* content = lv_obj_create(palette_dialog);
+  lv_obj_remove_style_all(content);
+  lv_obj_set_size(content, 308, 194);
+  lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, -3);
+  lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+
+  palette_table = buildPaletteTable(content, 302, true);
 
   size_t selected_index = 0;
   for (size_t row = 0; row < palette_table_order.size(); ++row) {
@@ -958,24 +962,14 @@ void openPaletteChooser() {
       break;
     }
   }
-  lv_obj_update_layout(palette_list_container);
-  lv_obj_scroll_to_y(palette_list_container,
-                     static_cast<lv_coord_t>(selected_index) * paletteRowPitch(),
-                     LV_ANIM_OFF);
-  updatePaletteVisibleRows();
-  logPaletteHeap("open-done");
+  lv_obj_update_layout(palette_table);
+  lv_coord_t target = static_cast<lv_coord_t>(selected_index) * paletteRowHeight() - 72;
+  if (target < 0) target = 0;
+  lv_obj_scroll_to_y(palette_table, target, LV_ANIM_OFF);
 }
 
-void openPaletteChooserTimer(lv_timer_t*) {
-  palette_chooser_pending = false;
+void onOpenPaletteChooser(lv_event_t*) {
   openPaletteChooser();
-}
-
-void schedulePaletteChooserOpen(lv_event_t*) {
-  if (palette_chooser_pending) return;
-  palette_chooser_pending = true;
-  lv_timer_t* timer = lv_timer_create(openPaletteChooserTimer, 40, nullptr);
-  lv_timer_set_repeat_count(timer, 1);
 }
 
 void openFxControlsAsync(void*) {
@@ -989,51 +983,71 @@ void scheduleFxControlsOpen() {
   lv_async_call(openFxControlsAsync, nullptr);
 }
 
-// Generic per-effect controls (speed, intensity, palette) that apply to any effect over the
-// API, replacing the old remote.json button-mapped controls.
+// Per-effect controls driven by the baked catalog: only the sliders this effect
+// actually uses, with its own labels, plus the palette chooser when it supports one.
 void openFxControls() {
   if (help_dialog) {
     return;
   }
 
-  lv_obj_t* content = beginInfoModal("FX Controls");
+  const wled::Model& m = wled::model();
+  const char* title = "Effect";
+  if (selected_effect_id < kWledFxCount && kWledFx[selected_effect_id].name) {
+    title = kWledFx[selected_effect_id].name;
+  }
+  std::string labels[8];
+  fxSliderLabels(selected_effect_id, labels);
+  const uint8_t flags = selected_effect_id < kWledFxCount ? kWledFx[selected_effect_id].flags : 0xFF;
+
+  lv_obj_t* content = beginInfoModal(title);
   if (!content) return;
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(content, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(content, 10, LV_PART_MAIN);
   lv_obj_clear_flag(content, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-  configurePageScroll(content, true);
+  lv_obj_set_scroll_dir(content, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM);
 
-  const wled::Model& m = wled::model();
-  lv_obj_t* value_label = nullptr;
-
-  addLabel(content, "Speed");
-  createSlider(content, 0, 255, m.speed, onFxSpeed, &value_label);
-  addLabel(content, "Intensity");
-  createSlider(content, 0, 255, m.intensity, onFxIntensity, &value_label);
-
-  addLabel(content, "Palette");
-  lv_obj_t* palette_btn = lv_btn_create(content);
-  styleButton(palette_btn, m.palette >= 0);
-  lv_obj_set_size(palette_btn, LV_PCT(100), 48);
-  lv_obj_add_event_cb(palette_btn, schedulePaletteChooserOpen, LV_EVENT_CLICKED, nullptr);
-  if (m.palette >= 0) {
-    lv_obj_add_state(palette_btn, LV_STATE_CHECKED);
+  if (!labels[0].empty()) {
+    const char* name = labels[0] == "Effect speed" ? "Speed" : labels[0].c_str();
+    fx_speed_slider = createLabeledSlider(content, name, 0, 255, m.speed, onFxSpeed, &fx_speed_value);
+  }
+  if (!labels[1].empty()) {
+    const char* name = labels[1] == "Effect intensity" ? "Intensity" : labels[1].c_str();
+    fx_intensity_slider =
+        createLabeledSlider(content, name, 0, 255, m.intensity, onFxIntensity, &fx_intensity_value);
+  }
+  const uint8_t custom_values[3] = {m.custom1, m.custom2, m.custom3};
+  for (uintptr_t i = 0; i < 3; ++i) {
+    if (labels[2 + i].empty()) continue;
+    fx_custom_slider[i] = createLabeledSlider(content, labels[2 + i].c_str(), 0, 255,
+                                              custom_values[i], onFxCustom, &fx_custom_value[i],
+                                              reinterpret_cast<void*>(i + 1));
   }
 
-  lv_obj_t* palette_label = lv_label_create(palette_btn);
-  lv_obj_set_width(palette_label, LV_PCT(88));
-  lv_label_set_long_mode(palette_label, LV_LABEL_LONG_DOT);
-  if (m.palette >= 0 && static_cast<size_t>(m.palette) < m.palettes.size()) {
-    lv_label_set_text(palette_label, paletteNameOrFallback(m.palettes, static_cast<size_t>(m.palette)));
-  } else {
-    lv_label_set_text(palette_label, "Choose Palette");
-  }
-  lv_obj_align(palette_label, LV_ALIGN_CENTER, 0, -6);
+  if (flags & kFxFlagPalette) {
+    addLabel(content, "Palette");
+    fx_palette_button = lv_btn_create(content);
+    styleButton(fx_palette_button, true);
+    lv_obj_add_state(fx_palette_button, LV_STATE_CHECKED);
+    lv_obj_set_size(fx_palette_button, LV_PCT(100), 48);
+    lv_obj_add_event_cb(fx_palette_button, onOpenPaletteChooser, LV_EVENT_CLICKED, nullptr);
 
-  const uint16_t preview_id = m.palette >= 0 ? static_cast<uint16_t>(m.palette) : 0;
-  lv_obj_t* preview = createPalettePreview(palette_btn, preview_id, 8);
-  lv_obj_align(preview, LV_ALIGN_BOTTOM_MID, 0, 0);
+    fx_palette_label = lv_label_create(fx_palette_button);
+    lv_obj_set_width(fx_palette_label, LV_PCT(88));
+    lv_label_set_long_mode(fx_palette_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(fx_palette_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    if (m.palette >= 0 && static_cast<size_t>(m.palette) < kWledPaletteCount) {
+      lv_label_set_text(fx_palette_label, paletteNameOrFallback(static_cast<size_t>(m.palette)));
+    } else {
+      lv_label_set_text(fx_palette_label, "Choose palette");
+    }
+    lv_obj_align(fx_palette_label, LV_ALIGN_CENTER, 0, -6);
+
+    lv_obj_t* preview = createPalettePreview(fx_palette_button, kPaletteCurrent, 8);
+    lv_obj_align(preview, LV_ALIGN_BOTTOM_MID, 0, 0);
+  }
 }
 
 void onEffectTableClicked(lv_event_t* event) {
@@ -1041,15 +1055,15 @@ void onEffectTableClicked(lv_event_t* event) {
   uint16_t row = LV_TABLE_CELL_NONE;
   uint16_t col = LV_TABLE_CELL_NONE;
   lv_table_get_selected_cell(table, &row, &col);
-  const size_t count = wled::model().effects.size();
-  if (row == LV_TABLE_CELL_NONE || col == LV_TABLE_CELL_NONE || row >= count) {
+  if (row == LV_TABLE_CELL_NONE || col == LV_TABLE_CELL_NONE || row >= fx_table_order.size()) {
     return;
   }
 
-  if (col == 1 && row == selected_effect_id) {
+  const uint16_t fx_id = fx_table_order[row];
+  if (col == 1 && fx_id == selected_effect_id) {
     scheduleFxControlsOpen();
   } else {
-    activateEffectId(static_cast<uint8_t>(row));
+    activateEffectId(static_cast<uint8_t>(fx_id));
     lv_obj_invalidate(table);
   }
 }
@@ -1062,11 +1076,11 @@ void onEffectTableDrawPart(lv_event_t* event) {
 
   const uint16_t row = dsc->id / 2;
   const uint16_t col = dsc->id % 2;
-  if (row >= wled::model().effects.size()) {
+  if (row >= fx_table_order.size()) {
     return;
   }
 
-  const bool selected = row == selected_effect_id;
+  const bool selected = fx_table_order[row] == selected_effect_id;
 
   if (dsc->rect_dsc) {
     dsc->rect_dsc->radius = 6;
@@ -1181,14 +1195,14 @@ void createLiveTab(lv_obj_t* tab) {
   configurePageScroll(tab, false);
 
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), 158);
+  lv_obj_set_size(panel, LV_PCT(100), kTabCardHeight);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
 
   power_button = lv_btn_create(panel);
   styleButton(power_button, true);
-  lv_obj_set_size(power_button, LV_PCT(100), 54);
+  lv_obj_set_size(power_button, LV_PCT(100), 58);
   lv_obj_add_flag(power_button, LV_OBJ_FLAG_CHECKABLE);
   lv_obj_add_event_cb(power_button, onPower, LV_EVENT_CLICKED, nullptr);
 
@@ -1204,95 +1218,74 @@ void createLiveTab(lv_obj_t* tab) {
   lv_obj_set_style_text_font(power_button_label, &lv_font_montserrat_20, LV_PART_MAIN);
   lv_obj_center(power_button_label);
 
-  addLabel(panel, "Brightness");
-  brightness_slider = createSlider(panel, 1, 255, state.brightness, onBrightness, &brightness_label);
+  brightness_slider =
+      createLabeledSlider(panel, "Brightness", 1, 255, state.brightness, onBrightness, &brightness_label);
 
-  lv_obj_t* peek_panel = createPanel(tab);
-  lv_obj_set_size(peek_panel, LV_PCT(100), 70);
-  lv_obj_set_flex_flow(peek_panel, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_all(peek_panel, 12, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(peek_panel, 8, LV_PART_MAIN);
-  lv_obj_t* peek_header = lv_obj_create(peek_panel);
-  lv_obj_remove_style_all(peek_header);
-  lv_obj_set_size(peek_header, LV_PCT(100), 18);
-  lv_obj_set_flex_flow(peek_header, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(peek_header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_clear_flag(peek_header, LV_OBJ_FLAG_SCROLLABLE);
-
-  addLabel(peek_header, "Live");
-  peek_status_label = lv_label_create(peek_header);
-  lv_obj_set_width(peek_status_label, 148);
-  lv_label_set_long_mode(peek_status_label, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_align(peek_status_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-  lv_obj_set_style_text_font(peek_status_label, &lv_font_montserrat_12, LV_PART_MAIN);
-  lv_obj_add_style(peek_status_label, &style_label_muted, LV_PART_MAIN);
-  lv_label_set_text(peek_status_label, "Waiting");
-
-  lv_obj_t* strip = lv_obj_create(peek_panel);
-  lv_obj_remove_style_all(strip);
-  lv_obj_set_size(strip, LV_PCT(100), 18);
-  lv_obj_set_style_bg_color(strip, lv_color_hex(kColorBg), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_radius(strip, 4, LV_PART_MAIN);
-  lv_obj_set_style_clip_corner(strip, true, LV_PART_MAIN);
-  lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_ROW);
-  lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE);
-  for (size_t i = 0; i < kPeekCellCount; ++i) {
-    peek_cells[i] = lv_obj_create(strip);
-    lv_obj_remove_style_all(peek_cells[i]);
-    lv_obj_set_width(peek_cells[i], 0);
-    lv_obj_set_flex_grow(peek_cells[i], 1);
-    lv_obj_set_height(peek_cells[i], LV_PCT(100));
-    lv_obj_set_style_bg_opa(peek_cells[i], LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(peek_cells[i], lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_clear_flag(peek_cells[i], LV_OBJ_FLAG_SCROLLABLE);
-  }
-}
-
-void updatePeekStrip() {
-  if (!peek_cells[0]) return;
-  static uint32_t seen = UINT32_MAX;
-  static bool seen_fresh = false;
-  static bool seen_online = false;
-  const uint32_t rev = wled::liveRevision();
-  const uint32_t age = wled::liveFrameAgeMs(millis());
-  const bool fresh = age != UINT32_MAX && age <= kPeekFreshMs;
-  const bool online = wled::online();
-  if (rev == seen && fresh == seen_fresh && online == seen_online) return;
-  seen = rev;
-  seen_fresh = fresh;
-  seen_online = online;
-
-  uint16_t count = 0, w = 0, h = 0;
-  const uint8_t* leds = wled::liveLeds(count, w, h);
-  if (peek_status_label) {
-    if (!online) {
-      lv_label_set_text(peek_status_label, "Searching");
-    } else if (!wled::livePeekEnabled()) {
-      lv_label_set_text(peek_status_label, "Paused");
-    } else if (!fresh || !leds || !count) {
-      lv_label_set_text(peek_status_label, "Waiting");
-    } else {
-      lv_label_set_text(peek_status_label, "Live");
-    }
-  }
-  for (size_t i = 0; i < kPeekCellCount; ++i) {
-    uint32_t color = kColorBg;
-    if (fresh && leds && count) {
-      const size_t idx = i * count / kPeekCellCount;
-      const uint8_t* p = leds + idx * 3;
-      color = (uint32_t(p[0]) << 16) | (uint32_t(p[1]) << 8) | p[2];
-    }
-    lv_obj_set_style_bg_color(peek_cells[i], lv_color_hex(color), LV_PART_MAIN);
-  }
+  now_playing_label = lv_label_create(panel);
+  lv_obj_set_width(now_playing_label, LV_PCT(100));
+  lv_label_set_long_mode(now_playing_label, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(now_playing_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_add_style(now_playing_label, &style_label_muted, LV_PART_MAIN);
+  lv_obj_set_style_text_color(now_playing_label, lv_color_hex(kColorTextMuted), LV_PART_MAIN);
+  lv_label_set_text(now_playing_label, "");
 }
 
 void updateColorControlsFromModel() {
   if (!color_preview) return;
+  if (color_wheel && lv_obj_has_state(color_wheel, LV_STATE_PRESSED)) return;
   setColorControls(wled::model().color);
 }
 
-void createLooksTab(lv_obj_t* tab) {
+// Reflects state pushes onto the open dialogs and the now-playing line, so
+// changes made in the WLED web UI appear immediately wherever they are visible.
+void updateStatusFromModel() {
+  const wled::Model& m = wled::model();
+
+  if (now_playing_label) {
+    const char* effect = m.effect >= 0 && static_cast<size_t>(m.effect) < kWledFxCount &&
+                                 kWledFx[m.effect].name
+                             ? kWledFx[m.effect].name
+                             : "";
+    const char* palette = m.palette >= 0 && static_cast<size_t>(m.palette) < kWledPaletteCount
+                              ? kWledPaletteNames[m.palette]
+                              : "";
+    if (effect[0] && palette[0]) {
+      lv_label_set_text_fmt(now_playing_label, "%s  •  %s", effect, palette);
+    } else if (effect[0]) {
+      lv_label_set_text(now_playing_label, effect);
+    } else {
+      lv_label_set_text(now_playing_label, m.online ? "" : "Searching for WLED...");
+    }
+  }
+
+  if (fx_speed_slider && !lv_obj_has_state(fx_speed_slider, LV_STATE_PRESSED)) {
+    lv_slider_set_value(fx_speed_slider, m.speed, LV_ANIM_OFF);
+    if (fx_speed_value) lv_label_set_text_fmt(fx_speed_value, "%u", m.speed);
+  }
+  if (fx_intensity_slider && !lv_obj_has_state(fx_intensity_slider, LV_STATE_PRESSED)) {
+    lv_slider_set_value(fx_intensity_slider, m.intensity, LV_ANIM_OFF);
+    if (fx_intensity_value) lv_label_set_text_fmt(fx_intensity_value, "%u", m.intensity);
+  }
+  const uint8_t custom_values[3] = {m.custom1, m.custom2, m.custom3};
+  for (int i = 0; i < 3; ++i) {
+    if (!fx_custom_slider[i] || lv_obj_has_state(fx_custom_slider[i], LV_STATE_PRESSED)) continue;
+    lv_slider_set_value(fx_custom_slider[i], custom_values[i], LV_ANIM_OFF);
+    if (fx_custom_value[i]) lv_label_set_text_fmt(fx_custom_value[i], "%u", custom_values[i]);
+  }
+  if (fx_palette_label && m.palette >= 0 && static_cast<size_t>(m.palette) < kWledPaletteCount) {
+    lv_label_set_text(fx_palette_label, paletteNameOrFallback(static_cast<size_t>(m.palette)));
+  }
+  if (fx_palette_button) {
+    lv_obj_invalidate(fx_palette_button);
+  }
+  if (palette_chooser_selected != m.palette) {
+    palette_chooser_selected = m.palette;
+    if (palette_table) lv_obj_invalidate(palette_table);
+    if (palette_list_table) lv_obj_invalidate(palette_list_table);
+  }
+}
+
+void createPresetsTab(lv_obj_t* tab) {
   for (lv_obj_t*& preset_button : preset_buttons) {
     preset_button = nullptr;
   }
@@ -1305,7 +1298,7 @@ void createLooksTab(lv_obj_t* tab) {
   const std::vector<wled::PresetInfo>& presets = wled::model().presets;
 
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), 540);
+  lv_obj_set_size(panel, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
@@ -1316,7 +1309,7 @@ void createLooksTab(lv_obj_t* tab) {
     lv_obj_t* hint = lv_label_create(panel);
     lv_obj_set_width(hint, LV_PCT(100));
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(hint, "Waiting for WLED. Add this remote's MAC in WLED, then tap Ping on the Info tab.");
+    lv_label_set_text(hint, "Waiting for WLED. Add this remote's MAC in WLED, then tap Ping in Settings.");
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_add_style(hint, &style_label_muted, LV_PART_MAIN);
   } else {
@@ -1352,9 +1345,42 @@ void createLooksTab(lv_obj_t* tab) {
       lv_obj_center(label);
     }
   }
+}
 
-  addLabel(panel, "Colors");
-  createColorSwatches(panel);
+void createColorsTab(lv_obj_t* tab) {
+  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
+  configurePageScroll(tab, true);
+
+  lv_obj_t* wheel_panel = createPanel(tab);
+  lv_obj_set_size(wheel_panel, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(wheel_panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(wheel_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(wheel_panel, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(wheel_panel, 8, LV_PART_MAIN);
+  createColorWheelEditor(wheel_panel);
+
+  lv_obj_t* swatch_panel = createPanel(tab);
+  lv_obj_set_size(swatch_panel, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(swatch_panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(swatch_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_all(swatch_panel, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(swatch_panel, 10, LV_PART_MAIN);
+  addLabel(swatch_panel, "Quick colors");
+  createColorSwatchGrid(swatch_panel);
+
+  // full palette browser, baked in from the WLED sources; the page scrolls, not the table
+  lv_obj_t* palette_panel = createPanel(tab);
+  lv_obj_set_size(palette_panel, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(palette_panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(palette_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_all(palette_panel, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(palette_panel, 10, LV_PART_MAIN);
+  addLabel(palette_panel, "Palettes");
+  palette_table_order = paletteDisplayOrder();
+  palette_chooser_selected = wled::model().palette;
+  palette_list_table = buildPaletteTable(palette_panel, 268, false);
 }
 
 void rebuildPresetTab() {
@@ -1362,7 +1388,30 @@ void rebuildPresetTab() {
     return;
   }
   lv_obj_clean(presets_tab);
-  createLooksTab(presets_tab);
+  createPresetsTab(presets_tab);
+}
+
+void rebuildFxTabAsync(void*) {
+  fx_rebuild_pending = false;
+  rebuildFxTab();
+}
+
+void scheduleFxTabRebuild() {
+  if (fx_rebuild_pending) return;
+  fx_rebuild_pending = true;
+  lv_async_call(rebuildFxTabAsync, nullptr);
+}
+
+void onFxFilterChip(lv_event_t* event) {
+  const uintptr_t value = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+  const FxFilter filter = static_cast<FxFilter>(value);
+  if (filter == fx_filter) {
+    // keep the active chip checked even when re-tapped
+    lv_obj_add_state(lv_event_get_target(event), LV_STATE_CHECKED);
+    return;
+  }
+  fx_filter = filter;
+  scheduleFxTabRebuild();  // rebuilding now would delete the chip mid-event
 }
 
 void createFxTab(lv_obj_t* tab) {
@@ -1371,38 +1420,37 @@ void createFxTab(lv_obj_t* tab) {
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
   configurePageScroll(tab, false);
 
-  const std::vector<std::string>& effects = wled::model().effects;
-  if (effects.empty()) {
-    lv_obj_t* panel = createPanel(tab);
-    lv_obj_set_size(panel, LV_PCT(100), kTabCardHeight);
-    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(panel, 6, LV_PART_MAIN);
-
-    lv_obj_t* title = lv_label_create(panel);
-    lv_label_set_text(title, "Effects loading");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
-
-    lv_obj_t* hint = lv_label_create(panel);
-    lv_label_set_text(hint, "Add this remote's MAC in WLED, then tap Ping on the Info tab.");
-    lv_obj_set_width(hint, LV_PCT(100));
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_add_style(hint, &style_label_muted, LV_PART_MAIN);
-    return;
-  }
+  buildFxTableOrder();
 
   lv_obj_t* fx_panel = createPanel(tab);
   lv_obj_set_size(fx_panel, LV_PCT(100), kTabCardHeight);
   lv_obj_set_flex_flow(fx_panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(fx_panel, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(fx_panel, 8, LV_PART_MAIN);
+
+  static const char* kChipNames[] = {"All", "1D", "2D", "Sound"};
+  lv_obj_t* chips = lv_obj_create(fx_panel);
+  lv_obj_remove_style_all(chips);
+  lv_obj_set_size(chips, LV_PCT(100), 30);
+  lv_obj_set_flex_flow(chips, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(chips, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(chips, LV_OBJ_FLAG_SCROLLABLE);
+  for (uintptr_t i = 0; i < 4; ++i) {
+    lv_obj_t* chip = lv_btn_create(chips);
+    styleButton(chip, true);
+    lv_obj_set_size(chip, 66, 28);
+    if (static_cast<FxFilter>(i) == fx_filter) lv_obj_add_state(chip, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(chip, onFxFilterChip, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
+    lv_obj_t* label = lv_label_create(chip);
+    lv_label_set_text(label, kChipNames[i]);
+    lv_obj_center(label);
+  }
 
   lv_obj_t* table = lv_table_create(fx_panel);
   lv_obj_set_width(table, LV_PCT(100));
   lv_obj_set_flex_grow(table, 1);
   lv_table_set_col_cnt(table, 2);
-  lv_table_set_row_cnt(table, effects.size());
+  lv_table_set_row_cnt(table, fx_table_order.size());
   lv_table_set_col_width(table, 0, 232);
   lv_table_set_col_width(table, 1, 38);
   lv_obj_set_scroll_dir(table, LV_DIR_VER);
@@ -1426,13 +1474,23 @@ void createFxTab(lv_obj_t* tab) {
   lv_obj_set_style_border_width(table, 0, LV_PART_ITEMS);
   lv_obj_set_style_border_color(table, lv_color_hex(kColorBorder), LV_PART_ITEMS);
 
-  for (size_t i = 0; i < effects.size(); ++i) {
-    lv_table_set_cell_value(table, i, 0, effects[i].c_str());
+  for (size_t i = 0; i < fx_table_order.size(); ++i) {
+    lv_table_set_cell_value(table, i, 0, kWledFx[fx_table_order[i]].name);
     lv_table_add_cell_ctrl(table, i, 0, LV_TABLE_CELL_CTRL_TEXT_CROP);
     lv_table_set_cell_value(table, i, 1, LV_SYMBOL_SETTINGS);
   }
   lv_obj_add_event_cb(table, onEffectTableClicked, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(table, onEffectTableDrawPart, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+
+  for (size_t row = 0; row < fx_table_order.size(); ++row) {
+    if (fx_table_order[row] != selected_effect_id) continue;
+    lv_obj_update_layout(table);
+    const lv_coord_t row_height = 16 + 16;  // montserrat_14 line + item pads
+    lv_coord_t target = static_cast<lv_coord_t>(row) * row_height - 48;
+    if (target < 0) target = 0;
+    lv_obj_scroll_to_y(table, target, LV_ANIM_OFF);
+    break;
+  }
 }
 
 void rebuildFxTab() {
@@ -1443,14 +1501,9 @@ void rebuildFxTab() {
   createFxTab(fx_tab);
 }
 
-void createInfoTab(lv_obj_t* tab) {
-  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  configurePageScroll(tab, false);
-
+void createConnectionPanel(lv_obj_t* tab) {
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), 156);
+  lv_obj_set_size(panel, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
@@ -1525,10 +1578,12 @@ void createSettingsTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  configurePageScroll(tab, false);
+  configurePageScroll(tab, true);
+
+  createConnectionPanel(tab);
 
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), 156);
+  lv_obj_set_size(panel, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 8, LV_PART_MAIN);
@@ -1545,6 +1600,16 @@ void createSettingsTab(lv_obj_t* tab) {
   }
   updateModeLabel();
 }
+
+#if WLED_TOUCH_SIMULATOR
+void simulatorOpenFxControls() {
+  openFxControls();
+}
+
+void simulatorOpenPaletteChooser() {
+  openPaletteChooser();
+}
+#endif
 
 #if WLED_CYD_ENABLE_BATTERY
 void createBatteryIndicator(lv_obj_t* parent) {

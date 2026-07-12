@@ -512,6 +512,8 @@ extern LGFX gfx;
 
 #if WLED_TOUCH_SIMULATOR
 extern uint16_t sim_framebuffer[kScreenWidth * kScreenHeight];
+// Overrides SDL mouse input with a scripted touch state (for automated tests).
+void simulatorSetTouch(bool down, int16_t x, int16_t y);
 #endif
 
 // ── Display functions ─────────────────────────────────────────────────────────

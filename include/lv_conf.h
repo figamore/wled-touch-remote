@@ -20,14 +20,8 @@
 #define LV_DEF_REFR_PERIOD 16
 #define LV_INDEV_DEF_READ_PERIOD 16
 
-// ── Diagnostics (temporary): surface LVGL asserts instead of silently halting ──
-// LVGL's default LV_ASSERT_HANDLER is `while(1);`, so a tripped assert freezes the
-// UI with no output at all. Enable logging + a backtrace-printing handler so a
-// reproduction dumps the exact assert (NULL vs out-of-memory) and the call stack
-// over serial. Revert this block once the palette-menu freeze is pinned down.
-#define LV_USE_LOG 1
-#define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
-#define LV_LOG_PRINTF 1
+// LVGL's default assert handler is a bare `while(1)` that freezes the UI with no
+// output; print a backtrace first so field freezes are diagnosable over serial.
 #if WLED_TOUCH_SIMULATOR
 #  define LV_ASSERT_HANDLER_INCLUDE <stdlib.h>
 #  define LV_ASSERT_HANDLER abort();

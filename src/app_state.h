@@ -1,7 +1,6 @@
 #pragma once
 
 #include "app_config.h"
-#include "generated/wled_effects.h"
 #include <cstdint>
 #include <lvgl.h>
 
@@ -26,7 +25,7 @@ constexpr uint8_t kBasicPresetCount = 7;
 constexpr uint8_t kExtendedPresetCount = 20;
 constexpr uint8_t kRemoteActionFirst = 36;
 constexpr uint8_t kRemoteColorFirst = 51;
-constexpr uint8_t kInfoTabIndex = 3;
+constexpr uint8_t kInfoTabIndex = 4;
 constexpr uint8_t kSettingsTabIndex = 4;
 constexpr uint8_t kBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
@@ -166,7 +165,6 @@ extern lv_obj_t* orientation_label;
 extern lv_obj_t* idle_label;
 extern lv_obj_t* mode_label;
 extern lv_obj_t* help_dialog;
-extern lv_obj_t* effect_preview;
 
 #if WLED_CYD_ENABLE_BATTERY
 extern lv_obj_t* battery_indicator;

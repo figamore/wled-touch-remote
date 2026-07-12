@@ -25,10 +25,13 @@ struct Model {
   int preset = -1;          // current preset id, -1 = none
   uint8_t speed = 128;
   uint8_t intensity = 128;
+  uint8_t custom1 = 128;    // per-effect custom sliders (seg c1/c2/c3)
+  uint8_t custom2 = 128;
+  uint8_t custom3 = 16;
   uint32_t color = 0xFFFFFF; // primary colour of the first segment, 0xRRGGBB
   std::string name;          // WLED instance name (info.name)
-  std::vector<std::string> effects;
-  std::vector<std::string> palettes;
+  // Effect and palette catalogs are baked in (generated/wled_catalog.h); only presets,
+  // which are per-instance, are fetched over the API.
   std::vector<PresetInfo> presets;
 };
 
@@ -59,6 +62,7 @@ void setEffect(uint8_t fxId);
 void setPalette(uint8_t palId);
 void setColor(uint8_t r, uint8_t g, uint8_t b);
 void setEffectParams(int speed, int intensity); // -1 leaves a field unchanged
+void setCustomParam(uint8_t index, uint8_t value); // seg c1/c2/c3 (index 1-3)
 void sendRaw(const char* json);
 void setLivePeek(bool on);
 

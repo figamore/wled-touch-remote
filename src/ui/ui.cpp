@@ -6,6 +6,7 @@
 #include "../BatteryMonitor.h"
 #include "../wled_api.h"
 #include <Arduino.h>
+#include <algorithm>
 #include "generated/wled_logo_png.h"
 
 namespace {
@@ -16,15 +17,12 @@ const lv_img_dsc_t kHeaderLogoImage = {
     reinterpret_cast<const uint8_t*>(kWledLogoHeaderPixels),
 };
 
-constexpr size_t kEffectPreviewDisplayCells = kWledEffectPreviewColors < 32 ? 32 : kWledEffectPreviewColors;
+constexpr uint32_t kPeekFreshMs = 1200;
 #if WLED_CYD_ENABLE_SHUTDOWN
 constexpr uint8_t kShutdownCountdownSteps = 10;
 #endif
 
-lv_obj_t* effect_preview_cells[kEffectPreviewDisplayCells] = {};
-const WledEffectInfo* active_preview_effect = nullptr;
-uint16_t effect_preview_frame = 0;
-lv_timer_t* effect_preview_timer = nullptr;
+lv_obj_t* peek_bar = nullptr;
 #if WLED_CYD_ENABLE_SHUTDOWN
 lv_obj_t* shutdown_overlay = nullptr;
 lv_obj_t* shutdown_countdown_label = nullptr;
@@ -36,51 +34,9 @@ uint32_t shutdown_last_press_edge_ms = 0;
 uint32_t shutdown_last_debug_status_ms = 0;
 #endif
 
-void clearEffectPreview();
 #if WLED_CYD_ENABLE_SHUTDOWN
 void startShutdownUi();
 #endif
-
-const WledEffectInfo* findEffectById(uint8_t effect_id) {
-  for (const WledEffectInfo& effect : kWledEffects) {
-    if (effect.id == effect_id) {
-      return &effect;
-    }
-  }
-  return nullptr;
-}
-
-uint8_t colorChannel(uint32_t color, uint8_t shift) {
-  return static_cast<uint8_t>((color >> shift) & 0xFF);
-}
-
-uint32_t makeColor(uint8_t red, uint8_t green, uint8_t blue) {
-  return (static_cast<uint32_t>(red) << 16) | (static_cast<uint32_t>(green) << 8) | blue;
-}
-
-uint32_t rgb565ToRgb888(uint16_t color) {
-  const uint8_t red5 = (color >> 11) & 0x1F;
-  const uint8_t green6 = (color >> 5) & 0x3F;
-  const uint8_t blue5 = color & 0x1F;
-  const uint8_t red = (red5 << 3) | (red5 >> 2);
-  const uint8_t green = (green6 << 2) | (green6 >> 4);
-  const uint8_t blue = (blue5 << 3) | (blue5 >> 2);
-  return makeColor(red, green, blue);
-}
-
-uint8_t boostPreviewChannel(uint8_t value) {
-  if (value == 0) {
-    return 0;
-  }
-  const uint16_t boosted = (static_cast<uint16_t>(value) * 4 / 3) + 10;
-  return boosted > 255 ? 255 : boosted;
-}
-
-uint32_t boostPreviewColor(uint32_t color) {
-  return makeColor(boostPreviewChannel(colorChannel(color, 16)),
-                   boostPreviewChannel(colorChannel(color, 8)),
-                   boostPreviewChannel(colorChannel(color, 0)));
-}
 
 #if WLED_CYD_ENABLE_SHUTDOWN && WLED_CYD_SHUTDOWN_DEBUG
 const char* shutdownLevelName(bool pressed) {
@@ -220,7 +176,6 @@ void startShutdownUi() {
     return;
   }
 
-  clearEffectPreview();
   shutdown_started_ms = millis();
   holdShutdownKey();
 
@@ -262,67 +217,42 @@ void startShutdownUi() {
 #endif
 }
 
-uint32_t blendColor(uint32_t left, uint32_t right, uint8_t amount) {
-  const uint8_t inverse = 255 - amount;
-  return makeColor(
-      (colorChannel(left, 16) * inverse + colorChannel(right, 16) * amount) / 255,
-      (colorChannel(left, 8) * inverse + colorChannel(right, 8) * amount) / 255,
-      (colorChannel(left, 0) * inverse + colorChannel(right, 0) * amount) / 255);
-}
+// Live peek: renders the latest LED frame streamed from WLED into the top bar,
+// the same way the web UI's Peek strip works.
+void drawPeekBar(lv_event_t* event) {
+  lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(event);
+  if (!draw_ctx) return;
 
-uint32_t previewColorAt(const WledEffectInfo& effect, uint16_t frame, size_t display_index) {
-  if (kEffectPreviewDisplayCells == kWledEffectPreviewColors) {
-    return boostPreviewColor(rgb565ToRgb888(effect.preview[frame][display_index]));
+  uint16_t count = 0, width = 0, height = 0;
+  const uint8_t* leds = wled::liveLeds(count, width, height);
+  if (!leds || !count) return;
+
+  lv_area_t coords;
+  lv_obj_get_coords(lv_event_get_target(event), &coords);
+  coords.x1 += 3;
+  coords.x2 -= 3;
+  coords.y1 += 3;
+  coords.y2 -= 3;
+  const lv_coord_t strip_width = lv_area_get_width(&coords);
+  if (strip_width <= 0) return;
+
+  const lv_coord_t segments = std::min<lv_coord_t>(strip_width, std::min<uint16_t>(count, 64));
+  lv_draw_rect_dsc_t rect;
+  lv_draw_rect_dsc_init(&rect);
+  rect.bg_opa = LV_OPA_COVER;
+  rect.border_width = 0;
+  rect.radius = 0;
+
+  for (lv_coord_t i = 0; i < segments; ++i) {
+    const size_t led = size_t(i) * count / segments;
+    const uint8_t* p = leds + led * 3;
+    rect.bg_color = lv_color_make(p[0], p[1], p[2]);
+    lv_area_t seg = coords;
+    seg.x1 = coords.x1 + (int32_t(i) * strip_width) / segments;
+    seg.x2 = coords.x1 + (int32_t(i + 1) * strip_width) / segments - 1;
+    if (i == segments - 1) seg.x2 = coords.x2;
+    lv_draw_rect(draw_ctx, &rect, &seg);
   }
-
-  const uint16_t scaled = display_index * (kWledEffectPreviewColors - 1) * 256 /
-                          (kEffectPreviewDisplayCells - 1);
-  const size_t left_index = scaled / 256;
-  const size_t right_index = left_index + 1 < kWledEffectPreviewColors ? left_index + 1 : left_index;
-  const uint8_t amount = scaled & 0xFF;
-  const uint32_t left = rgb565ToRgb888(effect.preview[frame][left_index]);
-  const uint32_t right = rgb565ToRgb888(effect.preview[frame][right_index]);
-  return boostPreviewColor(blendColor(left, right, amount));
-}
-
-void drawEffectPreviewFrame() {
-  if (!effect_preview) {
-    return;
-  }
-
-  if (!active_preview_effect) {
-    lv_obj_add_flag(effect_preview, LV_OBJ_FLAG_HIDDEN);
-    return;
-  }
-
-  lv_obj_clear_flag(effect_preview, LV_OBJ_FLAG_HIDDEN);
-  const uint16_t frame = effect_preview_frame % kWledEffectPreviewFrames;
-
-  for (size_t i = 0; i < kEffectPreviewDisplayCells; ++i) {
-    if (effect_preview_cells[i]) {
-      const uint32_t color = previewColorAt(*active_preview_effect, frame, i);
-      lv_obj_set_style_bg_color(effect_preview_cells[i], lv_color_hex(color), LV_PART_MAIN);
-    }
-  }
-}
-
-void updateEffectPreviewTimer(lv_timer_t*) {
-  if (!active_preview_effect) {
-    return;
-  }
-
-  ++effect_preview_frame;
-  drawEffectPreviewFrame();
-}
-
-void setEffectPreview(const WledEffectInfo* effect) {
-  active_preview_effect = effect;
-  effect_preview_frame = 0;
-  drawEffectPreviewFrame();
-}
-
-void clearEffectPreview() {
-  setEffectPreview(nullptr);
 }
 
 void setPowerUi(bool power) {
@@ -359,7 +289,6 @@ void setSelectedPreset(uint8_t preset) {
 
 void setSelectedEffect(uint8_t effect_id) {
   selected_effect_id = effect_id;
-  clearEffectPreview();
 }
 
 void initStyles() {
@@ -476,8 +405,8 @@ void uiSyncFromModel() {
   const uint32_t crev = wled::catalogRevision();
   if (crev != seen_catalog) {
     seen_catalog = crev;
-    rebuildPresetTab();
-    rebuildFxTab();
+    rebuildPresetTab();  // effect/palette catalogs are baked in; only presets arrive at runtime
+    updateStatusFromModel();
   }
 
   static uint32_t seen_state = UINT32_MAX;
@@ -490,7 +419,8 @@ void uiSyncFromModel() {
   const wled::Model& m = wled::model();
   if (state.power != m.power) setPowerUi(m.power);
 
-  if (state.brightness != m.brightness) {
+  if (state.brightness != m.brightness &&
+      !(brightness_slider && lv_obj_has_state(brightness_slider, LV_STATE_PRESSED))) {
     state.brightness = m.brightness;
     if (brightness_slider) lv_slider_set_value(brightness_slider, m.brightness, LV_ANIM_OFF);
     if (brightness_label) lv_label_set_text_fmt(brightness_label, "%u", m.brightness);
@@ -500,9 +430,11 @@ void uiSyncFromModel() {
 
   if (m.effect >= 0 && static_cast<uint8_t>(m.effect) != selected_effect_id) {
     setSelectedEffect(static_cast<uint8_t>(m.effect));
+    if (fx_tab) lv_obj_invalidate(fx_tab);
   }
 
   setSelectedPreset(m.preset > 0 ? static_cast<uint8_t>(m.preset) : 0);
+  updateStatusFromModel();
 }
 
 // ── Event handlers ────────────────────────────────────────────────────────────
@@ -513,11 +445,17 @@ void onPower(lv_event_t*) {
 }
 
 void onBrightness(lv_event_t* event) {
+  static uint32_t last_send_ms = 0;
   state.brightness = lv_slider_get_value(lv_event_get_target(event));
   if (brightness_label) {
     lv_label_set_text_fmt(brightness_label, "%u", state.brightness);
   }
-  wled::setBrightness(state.brightness);
+  const lv_event_code_t code = lv_event_get_code(event);
+  const uint32_t now = millis();
+  if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST || now - last_send_ms >= 150) {
+    last_send_ms = now;
+    wled::setBrightness(state.brightness);
+  }
 }
 
 void onPreset(lv_event_t* event) {
@@ -525,15 +463,6 @@ void onPreset(lv_event_t* event) {
   const uint8_t preset_number = static_cast<uint8_t>(preset);
   setSelectedPreset(preset_number);
   wled::applyPreset(preset_number);
-}
-
-void activateEffect(const WledEffectInfo* effect) {
-  if (!effect) {
-    return;
-  }
-
-  setSelectedEffect(effect->id);
-  wled::setEffect(effect->id);
 }
 
 void activateEffectId(uint8_t effect_id) {
@@ -607,9 +536,6 @@ void onShutdown(lv_event_t*) {
 
 void onRemoteAction(lv_event_t* event) {
   const uintptr_t button = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
-  if (button >= kRemoteColorFirst && button < kWledEffectFirstButton) {
-    clearEffectPreview();
-  }
   sendWledTouchButton(static_cast<uint8_t>(button));
 }
 
@@ -637,9 +563,6 @@ void onToggleIdleAction(lv_event_t*) {
 
 void onToggleControlMode(lv_event_t* event) {
   extended_mode = !extended_mode;
-  if (!extended_mode) {
-    clearEffectPreview();
-  }
   saveSettings();
   updateModeLabel();
   lv_obj_t* target = lv_event_get_target(event);
@@ -658,12 +581,31 @@ void onToggleControlMode(lv_event_t* event) {
 // ── UI entry point ────────────────────────────────────────────────────────────
 
 void syncLivePeekSubscription() {
-  if (!main_tabs) return;
-  wled::setLivePeek(lv_tabview_get_tab_act(main_tabs) == 0);  // stream peek only on the Power tab
+  wled::setLivePeek(true);
 }
 
-static void onTabChanged(lv_event_t*) {
-  syncLivePeekSubscription();
+void updatePeekStrip() {
+  if (!peek_bar) return;
+  static uint32_t seen_rev = UINT32_MAX;
+  static bool seen_visible = false;
+
+  const uint32_t age = wled::liveFrameAgeMs(millis());
+  const bool visible = wled::online() && age != UINT32_MAX && age <= kPeekFreshMs;
+  if (visible != seen_visible) {
+    seen_visible = visible;
+    if (visible) {
+      lv_obj_clear_flag(peek_bar, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(peek_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  if (!visible) return;
+
+  const uint32_t rev = wled::liveRevision();
+  if (rev != seen_rev) {
+    seen_rev = rev;
+    lv_obj_invalidate(peek_bar);
+  }
 }
 
 void createUi() {
@@ -690,31 +632,18 @@ void createUi() {
   lv_img_set_src(title, &kHeaderLogoImage);
   lv_obj_set_size(title, kWledLogoHeaderWidth, kWledLogoHeaderHeight);
 
-  effect_preview = lv_obj_create(topbar);
-  lv_obj_remove_style_all(effect_preview);
-  lv_obj_set_size(effect_preview, 166, 12);
-  lv_obj_set_style_bg_color(effect_preview, lv_color_hex(kColorBg), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(effect_preview, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(effect_preview, lv_color_hex(kColorBorder), LV_PART_MAIN);
-  lv_obj_set_style_border_width(effect_preview, 1, LV_PART_MAIN);
-  lv_obj_set_style_radius(effect_preview, 5, LV_PART_MAIN);
-  lv_obj_set_style_pad_all(effect_preview, 1, LV_PART_MAIN);
-  lv_obj_set_style_pad_column(effect_preview, 0, LV_PART_MAIN);
-  lv_obj_set_flex_flow(effect_preview, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(effect_preview, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_clear_flag(effect_preview, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(effect_preview, LV_OBJ_FLAG_HIDDEN);
-  for (size_t i = 0; i < kEffectPreviewDisplayCells; ++i) {
-    effect_preview_cells[i] = lv_obj_create(effect_preview);
-    lv_obj_remove_style_all(effect_preview_cells[i]);
-    lv_obj_set_width(effect_preview_cells[i], 0);
-    lv_obj_set_flex_grow(effect_preview_cells[i], 1);
-    lv_obj_set_height(effect_preview_cells[i], LV_PCT(100));
-    lv_obj_set_style_bg_opa(effect_preview_cells[i], LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(effect_preview_cells[i], lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_clear_flag(effect_preview_cells[i], LV_OBJ_FLAG_SCROLLABLE);
-  }
-  effect_preview_timer = lv_timer_create(updateEffectPreviewTimer, 90, nullptr);
+  peek_bar = lv_obj_create(topbar);
+  lv_obj_remove_style_all(peek_bar);
+  lv_obj_set_size(peek_bar, 170, 14);
+  lv_obj_set_style_bg_color(peek_bar, lv_color_hex(kColorBg), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(peek_bar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(peek_bar, lv_color_hex(kColorBorder), LV_PART_MAIN);
+  lv_obj_set_style_border_width(peek_bar, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(peek_bar, 5, LV_PART_MAIN);
+  lv_obj_set_style_clip_corner(peek_bar, true, LV_PART_MAIN);
+  lv_obj_clear_flag(peek_bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(peek_bar, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_event_cb(peek_bar, drawPeekBar, LV_EVENT_DRAW_MAIN_END, nullptr);
 
   lv_obj_t* status = lv_obj_create(topbar);
   lv_obj_remove_style_all(status);
@@ -750,16 +679,14 @@ void createUi() {
   lv_obj_t* live = lv_tabview_add_tab(main_tabs, "Power");
   presets_tab = lv_tabview_add_tab(main_tabs, "Presets");
   fx_tab = lv_tabview_add_tab(main_tabs, "FX");
-  lv_obj_t* info = lv_tabview_add_tab(main_tabs, "Info");
-  lv_obj_t* settings = lv_tabview_add_tab(main_tabs, "Settings");
+  lv_obj_t* colors = lv_tabview_add_tab(main_tabs, "Colors");
+  lv_obj_t* settings = lv_tabview_add_tab(main_tabs, LV_SYMBOL_SETTINGS);
 
   createLiveTab(live);
-  createLooksTab(presets_tab);
+  createPresetsTab(presets_tab);
   createFxTab(fx_tab);
-  createInfoTab(info);
+  createColorsTab(colors);
   createSettingsTab(settings);
-
-  lv_obj_add_event_cb(main_tabs, onTabChanged, LV_EVENT_VALUE_CHANGED, nullptr);
 
   if (show_info_on_first_boot) {
     lv_tabview_set_act(main_tabs, kInfoTabIndex, LV_ANIM_OFF);

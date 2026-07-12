@@ -11,6 +11,7 @@ void pollShutdownControl();
 // Reflect WLED state/catalogs received over the API onto the widgets. Called each loop.
 void uiSyncFromModel();
 void syncLivePeekSubscription();
+void updatePeekStrip();
 
 // ── Label updaters (also called from simulator) ───────────────────────────────
 
@@ -24,7 +25,6 @@ void updateConnLabel();
 void onPower(lv_event_t* event);
 void onBrightness(lv_event_t* event);
 void onPreset(lv_event_t* event);
-void activateEffect(const WledEffectInfo* effect);
 void activateEffectId(uint8_t effect_id);
 void onPing(lv_event_t* event);
 void onRestart(lv_event_t* event);
