@@ -22,6 +22,7 @@ constexpr uint8_t kShutdownCountdownSteps = 10;
 #endif
 
 lv_obj_t* peek_bar = nullptr;
+constexpr uint8_t kFxTabIndex = 2;
 #if WLED_CYD_ENABLE_SHUTDOWN
 lv_obj_t* shutdown_overlay = nullptr;
 lv_obj_t* shutdown_countdown_label = nullptr;
@@ -32,6 +33,16 @@ uint32_t shutdown_last_tap_ms = 0;
 uint32_t shutdown_last_press_edge_ms = 0;
 uint32_t shutdown_last_debug_status_ms = 0;
 #endif
+
+
+// Re-centers the FX list whenever the user navigates back to the FX tab.
+void onMainTabChanged(lv_event_t* event) {
+  if (main_tabs && lv_event_get_target(event) == main_tabs &&
+      lv_tabview_get_tab_act(main_tabs) == kFxTabIndex) {
+    revealSelectedEffect(true);
+  }
+}
+
 
 #if WLED_CYD_ENABLE_SHUTDOWN
 void startShutdownUi();
@@ -430,6 +441,7 @@ void uiSyncFromModel() {
   if (m.effect >= 0 && static_cast<uint8_t>(m.effect) != selected_effect_id) {
     setSelectedEffect(static_cast<uint8_t>(m.effect));
     if (fx_tab) lv_obj_invalidate(fx_tab);
+    revealSelectedEffect(true);
   }
 
   setSelectedPreset(m.preset > 0 ? static_cast<uint8_t>(m.preset) : 0);
@@ -661,6 +673,7 @@ void createUi() {
 #endif
 
   main_tabs = lv_tabview_create(root, LV_DIR_TOP, kTabButtonHeight);
+  lv_obj_add_event_cb(main_tabs, onMainTabChanged, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_set_size(main_tabs, LV_PCT(100), kScreenHeight - kTopBarHeight);
   lv_obj_set_style_bg_color(main_tabs, lv_color_hex(kColorBg), LV_PART_MAIN);
   lv_obj_set_style_border_width(main_tabs, 0, LV_PART_MAIN);

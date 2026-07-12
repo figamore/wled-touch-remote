@@ -11,6 +11,7 @@ void updateColorControlsFromModel();
 void updateStatusFromModel();
 void rebuildPresetTab();
 void rebuildFxTab();
+void revealSelectedEffect(bool animated, bool showAllIfFiltered = true);
 
 #if WLED_CYD_ENABLE_BATTERY
 void createBatteryIndicator(lv_obj_t* parent);

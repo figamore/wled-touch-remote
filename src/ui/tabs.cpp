@@ -63,6 +63,7 @@ lv_obj_t* fx_custom_value[3] = {nullptr, nullptr, nullptr};
 lv_obj_t* fx_palette_button = nullptr;
 lv_obj_t* fx_palette_label = nullptr;
 lv_obj_t* now_playing_label = nullptr;
+lv_obj_t* fx_table = nullptr;
 
 // FX tab category filter: effects are tagged 1D/2D/audio in the baked catalog.
 enum class FxFilter : uint8_t { kAll, k1D, k2D, kSound };
@@ -1447,6 +1448,7 @@ void createFxTab(lv_obj_t* tab) {
   }
 
   lv_obj_t* table = lv_table_create(fx_panel);
+  fx_table = table;
   lv_obj_set_width(table, LV_PCT(100));
   lv_obj_set_flex_grow(table, 1);
   lv_table_set_col_cnt(table, 2);
@@ -1482,24 +1484,39 @@ void createFxTab(lv_obj_t* tab) {
   lv_obj_add_event_cb(table, onEffectTableClicked, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(table, onEffectTableDrawPart, LV_EVENT_DRAW_PART_BEGIN, nullptr);
 
-  for (size_t row = 0; row < fx_table_order.size(); ++row) {
-    if (fx_table_order[row] != selected_effect_id) continue;
-    lv_obj_update_layout(table);
-    const lv_coord_t row_height = 16 + 16;  // montserrat_14 line + item pads
-    lv_coord_t target = static_cast<lv_coord_t>(row) * row_height - 48;
-    if (target < 0) target = 0;
-    lv_obj_scroll_to_y(table, target, LV_ANIM_OFF);
-    break;
-  }
+  revealSelectedEffect(false, false);
 }
 
 void rebuildFxTab() {
   if (!fx_tab) {
     return;
   }
+  fx_table = nullptr;
   lv_obj_clean(fx_tab);
   createFxTab(fx_tab);
 }
+
+
+// Keeps the active effect visible after remote state changes and tab navigation.
+void revealSelectedEffect(bool animated, bool showAllIfFiltered) {
+  if (!fx_table) return;
+
+  auto selected = std::find(fx_table_order.begin(), fx_table_order.end(), selected_effect_id);
+  if (selected == fx_table_order.end()) {
+    if (!showAllIfFiltered || fx_filter == FxFilter::kAll) return;
+    fx_filter = FxFilter::kAll;
+    rebuildFxTab();
+    return;
+  }
+
+  lv_obj_update_layout(fx_table);
+  const lv_coord_t rowHeight = 16 + 16;  // montserrat_14 line + item pads
+  const size_t row = static_cast<size_t>(selected - fx_table_order.begin());
+  lv_coord_t target = static_cast<lv_coord_t>(row) * rowHeight - 48;
+  if (target < 0) target = 0;
+  lv_obj_scroll_to_y(fx_table, target, animated ? LV_ANIM_ON : LV_ANIM_OFF);
+}
+
 
 void createConnectionPanel(lv_obj_t* tab) {
   lv_obj_t* panel = createPanel(tab);
