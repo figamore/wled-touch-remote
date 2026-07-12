@@ -21,5 +21,4 @@ void createBatteryIndicator(lv_obj_t* parent);
 // Test hooks: open the modals directly so automated sim tests don't depend on
 // tap coordinates.
 void simulatorOpenFxControls();
-void simulatorOpenPaletteChooser();
 #endif

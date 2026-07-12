@@ -17,7 +17,6 @@ extern void simulatorRunFrames(uint16_t frames);
 extern bool simulatorSaveBmp(const char* path);
 extern void simulatorSetTouch(bool down, int16_t x, int16_t y);
 extern void simulatorOpenFxControls();
-extern void simulatorOpenPaletteChooser();
 
 void initBatteryMonitor() {}
 
@@ -168,35 +167,12 @@ int runSelfTest() {
   expectTrue(waitUntil([] { return simWledSnapshot().bri == 127; }, 3000),
              "rapid brightness updates coalesced to latest");
 
-  // FX controls modal + palette chooser (the freeze reproduction path).
+  // FX controls modal.
   simulatorSetTab(2);
   simulatorRunFrames(30);
   simulatorOpenFxControls();
   simulatorRunFrames(30);
   simulatorSaveBmp("screenshots/selftest-fx-controls.bmp");
-  simulatorOpenPaletteChooser();
-  simulatorRunFrames(30);
-  simulatorSaveBmp("screenshots/selftest-palette-chooser.bmp");
-
-  // Stress: aggressive scrolling with flings in both directions.
-  for (int i = 0; i < 10; ++i) {
-    dragVertical(160, 200, 60, 6);
-    dragVertical(160, 200, 55, 2);  // fast fling
-  }
-  for (int i = 0; i < 10; ++i) {
-    dragVertical(160, 60, 200, 6);
-    dragVertical(160, 55, 200, 2);
-  }
-  expectTrue(true, "palette list scroll stress survived");
-  simulatorSaveBmp("screenshots/selftest-palette-scrolled.bmp");
-
-  // Select a palette row and confirm the command reached WLED.
-  const uint8_t palette_before = simWledSnapshot().pal;
-  tapAt(160, 110);
-  expectTrue(waitUntil([palette_before] { return simWledSnapshot().pal != palette_before; }, 600),
-             "palette tap sent to WLED");
-  expectTrue(waitUntil([] { return wled::model().palette == int(simWledSnapshot().pal); }, 600),
-             "palette selection echoed to model");
 
   // Close the dialog (X button in the modal header).
   tapAt(292, 20);
