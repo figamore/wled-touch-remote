@@ -24,7 +24,6 @@ constexpr uint8_t kWledTouchButtonOne = 16;
 constexpr uint8_t kBasicPresetCount = 7;
 constexpr uint8_t kExtendedPresetCount = 20;
 constexpr uint8_t kRemoteActionFirst = 36;
-constexpr uint8_t kRemoteColorFirst = 51;
 constexpr uint8_t kInfoTabIndex = 4;
 constexpr uint8_t kSettingsTabIndex = 4;
 constexpr uint8_t kBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -98,13 +97,6 @@ struct RemoteState {
   uint8_t brightness = 255;
 };
 
-struct ColorSwatch {
-  const char* label;
-  uint8_t button;
-  uint32_t color;
-  bool dark_text;
-};
-
 enum class IdleMode : uint8_t {
   kDim,
   kOff,
@@ -125,19 +117,6 @@ enum class StatusCode : uint8_t {
 };
 
 // ── Data tables ─────────────────────────────────────────────────────────────
-
-constexpr ColorSwatch kColorSwatches[] = {
-    {"Warm", kRemoteColorFirst, 0xFFB45A, false},
-    {"White", static_cast<uint8_t>(kRemoteColorFirst + 1), 0xFFFFFF, true},
-    {"Red", static_cast<uint8_t>(kRemoteColorFirst + 2), 0xFF2020, false},
-    {"Orange", static_cast<uint8_t>(kRemoteColorFirst + 3), 0xFF6000, false},
-    {"Yellow", static_cast<uint8_t>(kRemoteColorFirst + 4), 0xFFD600, true},
-    {"Green", static_cast<uint8_t>(kRemoteColorFirst + 5), 0x00BE50, false},
-    {"Cyan", static_cast<uint8_t>(kRemoteColorFirst + 6), 0x00D2FF, true},
-    {"Blue", static_cast<uint8_t>(kRemoteColorFirst + 7), 0x0058FF, false},
-    {"Purple", static_cast<uint8_t>(kRemoteColorFirst + 8), 0x8040FF, false},
-    {"Pink", static_cast<uint8_t>(kRemoteColorFirst + 9), 0xFF30A0, false},
-};
 
 // ── Shared mutable state ─────────────────────────────────────────────────────
 

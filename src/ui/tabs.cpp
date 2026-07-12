@@ -407,12 +407,6 @@ void onColorWheel(lv_event_t* event) {
   }
 }
 
-void onColorSwatch(lv_event_t* event) {
-  const uint32_t c = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(event)));
-  setColorControls(c);
-  wled::setColor((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
-}
-
 void createColorWheelEditor(lv_obj_t* parent) {
   const uint32_t current = wled::model().color;
   generateColorWheelImage();
@@ -480,37 +474,6 @@ void createColorWheelEditor(lv_obj_t* parent) {
   lv_obj_set_style_text_color(color_hex_label, lv_color_hex(kColorAccent), LV_PART_MAIN);
 
   setColorControls(current);
-}
-
-void createColorSwatchGrid(lv_obj_t* parent) {
-  lv_obj_t* swatches = lv_obj_create(parent);
-  lv_obj_remove_style_all(swatches);
-  lv_obj_set_size(swatches, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(swatches, LV_FLEX_FLOW_ROW_WRAP);
-  lv_obj_set_flex_align(swatches, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(swatches, 8, LV_PART_MAIN);
-  lv_obj_set_style_pad_column(swatches, 8, LV_PART_MAIN);
-  lv_obj_clear_flag(swatches, LV_OBJ_FLAG_SCROLLABLE);
-
-  for (const ColorSwatch& swatch : kColorSwatches) {
-    lv_obj_t* btn = lv_btn_create(swatches);
-    styleButton(btn);
-    lv_obj_set_size(btn, 132, 48);
-    lv_obj_add_event_cb(btn, onColorSwatch, LV_EVENT_CLICKED,
-                        reinterpret_cast<void*>(static_cast<uintptr_t>(swatch.color)));
-    lv_obj_t* label = lv_label_create(btn);
-    lv_label_set_text(label, swatch.label);
-    lv_obj_center(label);
-
-    const lv_color_t color = lv_color_hex(swatch.color);
-    lv_obj_set_style_bg_color(btn, color, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, lv_color_darken(color, LV_OPA_30),
-                              LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(btn, 10, LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_border_opa(btn, LV_OPA_20, LV_PART_MAIN);
-    lv_obj_set_style_text_color(btn, lv_color_hex(swatch.dark_text ? kColorBg : 0xFFFFFF), LV_PART_MAIN);
-  }
 }
 
 // ── Dialog helpers ────────────────────────────────────────────────────────────
@@ -1210,39 +1173,50 @@ void createPresetsTab(lv_obj_t* tab) {
 }
 
 void createColorsTab(lv_obj_t* tab) {
-  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  configurePageScroll(tab, true);
+  lv_obj_set_style_pad_all(tab, 0, LV_PART_MAIN);
+  configurePageScroll(tab, false);
 
-  lv_obj_t* wheel_panel = createPanel(tab);
+  
+  // Palettes is first so it is the default view; each child owns its vertical scrolling.
+  lv_obj_t* color_tabs = lv_tabview_create(tab, LV_DIR_TOP, kTabButtonHeight);
+  lv_obj_set_size(color_tabs, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(color_tabs, lv_color_hex(kColorBg), LV_PART_MAIN);
+  lv_obj_set_style_border_width(color_tabs, 0, LV_PART_MAIN);
+
+  lv_obj_t* tab_buttons = lv_tabview_get_tab_btns(color_tabs);
+  lv_obj_set_style_bg_color(tab_buttons, lv_color_hex(kColorSurface), LV_PART_MAIN);
+  lv_obj_set_style_border_width(tab_buttons, 0, LV_PART_MAIN);
+  lv_obj_set_style_text_color(tab_buttons, lv_color_hex(kColorTextMuted), LV_PART_MAIN);
+  lv_obj_set_style_text_color(tab_buttons, lv_color_hex(kColorAccent), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_border_color(tab_buttons, lv_color_hex(kColorAccent), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_border_width(tab_buttons, 2, LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_border_side(tab_buttons, LV_BORDER_SIDE_BOTTOM, LV_PART_ITEMS | LV_STATE_CHECKED);
+
+  lv_obj_t* palettes_page = lv_tabview_add_tab(color_tabs, "Palettes");
+  lv_obj_set_style_pad_all(palettes_page, 8, LV_PART_MAIN);
+  configurePageScroll(palettes_page, true);
+
+  lv_obj_t* palette_panel = createPanel(palettes_page);
+  lv_obj_set_size(palette_panel, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(palette_panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(palette_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_all(palette_panel, 12, LV_PART_MAIN);
+  palette_table_order = paletteDisplayOrder();
+  palette_chooser_selected = wled::model().palette;
+  palette_list_table = buildPaletteTable(palette_panel, 268);
+
+  lv_obj_t* wheel_page = lv_tabview_add_tab(color_tabs, "Color Wheel");
+  lv_obj_set_style_pad_all(wheel_page, 8, LV_PART_MAIN);
+  configurePageScroll(wheel_page, true);
+
+  lv_obj_t* wheel_panel = createPanel(wheel_page);
   lv_obj_set_size(wheel_panel, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(wheel_panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(wheel_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(wheel_panel, 12, LV_PART_MAIN);
   lv_obj_set_style_pad_row(wheel_panel, 8, LV_PART_MAIN);
   createColorWheelEditor(wheel_panel);
-
-  lv_obj_t* swatch_panel = createPanel(tab);
-  lv_obj_set_size(swatch_panel, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(swatch_panel, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(swatch_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_all(swatch_panel, 12, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(swatch_panel, 10, LV_PART_MAIN);
-  addLabel(swatch_panel, "Quick colors");
-  createColorSwatchGrid(swatch_panel);
-
-  // full palette browser, baked in from the WLED sources; the page scrolls, not the table
-  lv_obj_t* palette_panel = createPanel(tab);
-  lv_obj_set_size(palette_panel, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(palette_panel, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(palette_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_all(palette_panel, 12, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(palette_panel, 10, LV_PART_MAIN);
-  addLabel(palette_panel, "Palettes");
-  palette_table_order = paletteDisplayOrder();
-  palette_chooser_selected = wled::model().palette;
-  palette_list_table = buildPaletteTable(palette_panel, 268);
+  
 }
 
 void rebuildPresetTab() {
