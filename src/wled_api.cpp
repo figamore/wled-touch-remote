@@ -93,6 +93,7 @@ bool g_peerRegistered = false;
 uint32_t g_lastHeartbeat = 0;
 uint32_t g_lastPoll = 0;
 uint32_t g_lastCatalog = 0;
+uint32_t g_presetCatalogRefreshAt = 0;
 uint8_t g_catalogTries = 0;
 bool g_presetsLoaded = false;
 
@@ -100,9 +101,11 @@ enum class RequestKey : uint8_t {
   None,
   Poll,
   Catalog,
+  CatalogRefresh,
   Power,
   Brightness,
   Preset,
+  PresetSave,
   Effect,
   Palette,
   Color,
@@ -144,9 +147,11 @@ const char* requestKeyName(RequestKey key) {
   switch (key) {
     case RequestKey::Poll:         return "poll";
     case RequestKey::Catalog:      return "catalog";
+    case RequestKey::CatalogRefresh: return "catalogRefresh";
     case RequestKey::Power:        return "power";
     case RequestKey::Brightness:   return "brightness";
     case RequestKey::Preset:       return "preset";
+    case RequestKey::PresetSave:   return "presetSave";
     case RequestKey::Effect:       return "effect";
     case RequestKey::Palette:      return "palette";
     case RequestKey::Color:        return "color";
@@ -380,6 +385,9 @@ void completeRequest() {
   if (g_framesDeferredForResponse) {
     Serial.printf("[ESPNOW] request complete key=%s id=%u deferredFrames=%lu\n",
                   requestKeyName(g_request.key), g_request.id, g_framesDeferredForResponse);
+  }
+  if (g_request.key == RequestKey::PresetSave) {
+    g_presetCatalogRefreshAt = millis() + 750;
   }
   g_framesDeferredForResponse = 0;
   g_request = ActiveRequest{};
@@ -652,6 +660,7 @@ void loop(uint32_t now_ms) {
     g_hasPeer = false;
     g_peerRegistered = false;
     g_presetsLoaded = false;
+    g_presetCatalogRefreshAt = 0;
     clearRequests();
     resetReasm();
   }
@@ -660,6 +669,11 @@ void loop(uint32_t now_ms) {
   }
 
   if (g_channelLocked) {
+    if (g_presetCatalogRefreshAt && int32_t(now_ms - g_presetCatalogRefreshAt) >= 0) {
+      g_presetCatalogRefreshAt = 0;
+      g_lastCatalog = now_ms;
+      queueRequest("{\"get\":\"ps\"}", RequestKey::CatalogRefresh);
+    }
     if (!g_request.active && !g_requestCount && now_ms - g_lastLinkRx > kHeartbeatMs &&
         now_ms - g_lastHeartbeat > kHeartbeatMs) {
       sendFrameTo(g_peerMac, kMsgHello, g_msgId++, nullptr, 0);
@@ -725,6 +739,24 @@ void applyPreset(uint8_t id) {
   snprintf(buf, sizeof(buf), "{\"ps\":%u,\"v\":true}", id);
   queueRequest(buf, RequestKey::Preset);
 }
+
+
+// Saves WLED's current state to a preset and refreshes the instance-specific preset catalog.
+void savePreset(uint8_t id, const char* name) {
+  if (id < 1 || id > 250 || !name || !name[0]) return;
+
+  JsonDocument doc;
+  doc["psave"] = id;
+  doc["n"] = name;
+  doc["ib"] = true;
+  doc["sb"] = true;
+  char buf[kMaxRequestLength];
+  const size_t len = serializeJson(doc, buf, sizeof(buf));
+  if (!len || len >= sizeof(buf)) return;
+
+  queueRequest(buf, RequestKey::PresetSave);
+}
+
 
 void setEffect(uint8_t fxId) {
   g_model.effect = fxId; // optimistic model update prevents unrelated revisions restoring stale state

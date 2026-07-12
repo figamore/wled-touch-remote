@@ -60,7 +60,7 @@
 #define LV_USE_SLIDER 1
 #define LV_USE_SWITCH 1
 #define LV_USE_TABVIEW 1
-#define LV_USE_TEXTAREA 0
+#define LV_USE_TEXTAREA 1
 #define LV_USE_TABLE 1
 
 #define LV_USE_ANIMIMG 0
@@ -68,7 +68,7 @@
 #define LV_USE_CHART 0
 #define LV_USE_COLORWHEEL 1
 #define LV_USE_IMGBTN 0
-#define LV_USE_KEYBOARD 0
+#define LV_USE_KEYBOARD 1
 #define LV_USE_LED 0
 #define LV_USE_LIST 0
 #define LV_USE_MENU 0

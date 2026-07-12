@@ -78,10 +78,10 @@ const char* kPaletteNames[] = {
 
 struct PresetEntry {
   uint8_t id;
-  const char* name;
+  std::string name;
 };
 
-const PresetEntry kPresets[] = {
+std::vector<PresetEntry> gPresets = {
     {1, "Sunset Glow"}, {2, "Party Mix"},   {3, "Ocean Waves"}, {4, "Fireplace"},
     {5, "Movie Night"}, {6, "Reading"},     {7, "Rainbow Flow"}, {8, "Night Light"},
 };
@@ -206,8 +206,8 @@ void queueCatalog(const char* what, uint8_t id) {
     }
   } else if (!strcmp(what, "ps")) {
     JsonObject presets = doc["presets"].to<JsonObject>();
-    for (const PresetEntry& preset : kPresets) {
-      presets[std::to_string(preset.id)] = preset.name;
+    for (const PresetEntry& preset : gPresets) {
+      presets[std::to_string(preset.id)] = preset.name.c_str();
     }
   } else {
     doc["error"] = 9;
@@ -232,6 +232,18 @@ bool applyRequest(JsonObjectConst request) {
     g_state.fx = (g_state.ps * 13) % 100;
     g_state.pal = (g_state.ps * 7) % 60;
     changed = true;
+  }
+  if (request["psave"].is<int>() && request["n"].is<const char*>()) {
+    const uint8_t id = request["psave"].as<uint8_t>();
+    const char* name = request["n"].as<const char*>();
+    auto preset = std::find_if(gPresets.begin(), gPresets.end(), [id](const PresetEntry& entry) {
+      return entry.id == id;
+    });
+    if (preset == gPresets.end()) {
+      gPresets.push_back({id, name});
+    } else {
+      preset->name = name;
+    }
   }
   JsonArrayConst segs = request["seg"].as<JsonArrayConst>();
   if (!segs.isNull() && segs.size() > 0) {

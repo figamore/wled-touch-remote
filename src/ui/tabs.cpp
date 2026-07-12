@@ -34,6 +34,7 @@ constexpr uint32_t kSliderSendIntervalMs = 150;
 
 lv_obj_t* color_wheel = nullptr;
 lv_obj_t* color_selector = nullptr;
+lv_obj_t* solid_color_button = nullptr;
 bool color_syncing = false;
 lv_color_t* color_wheel_pixels = nullptr;
 lv_img_dsc_t color_wheel_image = {
@@ -46,6 +47,8 @@ bool fx_rebuild_pending = false;
 std::vector<size_t> palette_table_order;
 int palette_chooser_selected = -1;
 bool help_dialog_deleting = false;
+lv_obj_t* preset_name_dialog = nullptr;
+lv_obj_t* preset_name_input = nullptr;
 lv_obj_t* palette_list_table = nullptr;  // table embedded in the Colors tab
 lv_obj_t* fx_speed_slider = nullptr;
 lv_obj_t* fx_speed_value = nullptr;
@@ -394,6 +397,14 @@ void onColorWheel(lv_event_t* event) {
   }
 }
 
+
+// Switches to WLED's Solid effect without changing the color selected on the wheel.
+void onSolidColor(lv_event_t* event) {
+  activateEffectId(0);
+  lv_obj_add_state(lv_event_get_target(event), LV_STATE_CHECKED);
+}
+
+
 void createColorWheelEditor(lv_obj_t* parent) {
   const uint32_t current = wled::model().color;
   generateColorWheelImage();
@@ -401,8 +412,9 @@ void createColorWheelEditor(lv_obj_t* parent) {
   lv_obj_t* editor = lv_obj_create(parent);
   lv_obj_remove_style_all(editor);
   lv_obj_set_size(editor, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_flex_flow(editor, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_flow(editor, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(editor, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(editor, 18, LV_PART_MAIN);
   lv_obj_clear_flag(editor, LV_OBJ_FLAG_SCROLLABLE);
 
   if (color_wheel_image.data) {
@@ -436,6 +448,18 @@ void createColorWheelEditor(lv_obj_t* parent) {
     lv_obj_set_style_outline_opa(color_selector, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(color_selector, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   }
+
+  
+  solid_color_button = lv_btn_create(editor);
+  styleButton(solid_color_button, true);
+  lv_obj_set_size(solid_color_button, 88, 44);
+  lv_obj_add_event_cb(solid_color_button, onSolidColor, LV_EVENT_CLICKED, nullptr);
+  if (wled::model().effect == 0) lv_obj_add_state(solid_color_button, LV_STATE_CHECKED);
+
+  lv_obj_t* solid_label = lv_label_create(solid_color_button);
+  lv_label_set_text(solid_label, "Solid");
+  lv_obj_center(solid_label);
+  
 
   setColorControls(current);
 }
@@ -529,6 +553,68 @@ lv_obj_t* beginInfoModal(const char* title_text, bool preserveTopBar = false) {
   lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
   return content;
 }
+
+
+// Returns the first preset slot represented by the remote, or zero when all are occupied.
+uint8_t firstFreePresetSlot() {
+  const std::vector<wled::PresetInfo>& presets = wled::model().presets;
+  for (uint8_t id = 1; id <= kExtendedPresetCount; ++id) {
+    const bool used = std::any_of(presets.begin(), presets.end(), [id](const wled::PresetInfo& preset) {
+      return preset.id == id;
+    });
+    if (!used) return id;
+  }
+  return 0;
+}
+
+void onPresetNameDialogDeleted(lv_event_t*) {
+  preset_name_dialog = nullptr;
+  preset_name_input = nullptr;
+}
+
+void closePresetNameDialog(lv_event_t*) {
+  if (preset_name_dialog) lv_obj_del_async(preset_name_dialog);
+}
+
+// Saves the current WLED state when the keyboard confirms a non-empty preset name.
+void onPresetNameInput(lv_event_t* event) {
+  const lv_event_code_t code = lv_event_get_code(event);
+  if (code == LV_EVENT_CANCEL) {
+    closePresetNameDialog(nullptr);
+    return;
+  }
+  if (code != LV_EVENT_READY || !preset_name_input) return;
+
+  const char* name = lv_textarea_get_text(preset_name_input);
+  const uint8_t id = firstFreePresetSlot();
+  if (!id || !name || !name[0]) return;
+  wled::savePreset(id, name);
+  closePresetNameDialog(nullptr);
+}
+
+// Opens a compact text-entry dialog; the keyboard's checkmark saves the current state.
+void openPresetNameDialog(lv_event_t*) {
+  if (preset_name_dialog || !firstFreePresetSlot()) return;
+
+  preset_name_dialog = createDialogShell("Add preset", closePresetNameDialog);
+  lv_obj_add_event_cb(preset_name_dialog, onPresetNameDialogDeleted, LV_EVENT_DELETE, nullptr);
+
+  preset_name_input = lv_textarea_create(preset_name_dialog);
+  lv_obj_set_size(preset_name_input, 296, 40);
+  lv_obj_align(preset_name_input, LV_ALIGN_TOP_MID, 0, 46);
+  lv_textarea_set_one_line(preset_name_input, true);
+  lv_textarea_set_max_length(preset_name_input, 32);
+  lv_textarea_set_placeholder_text(preset_name_input, "Preset name");
+  lv_obj_add_event_cb(preset_name_input, onPresetNameInput, LV_EVENT_READY, nullptr);
+  lv_obj_add_event_cb(preset_name_input, onPresetNameInput, LV_EVENT_CANCEL, nullptr);
+
+  lv_obj_t* keyboard = lv_keyboard_create(preset_name_dialog);
+  lv_obj_set_size(keyboard, LV_PCT(100), 146);
+  lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_keyboard_set_textarea(keyboard, preset_name_input);
+  lv_obj_add_state(preset_name_input, LV_STATE_FOCUSED);
+}
+
 
 void addQrCode(lv_obj_t* parent, const lv_img_dsc_t* src, lv_coord_t w, lv_coord_t h) {
   lv_obj_t* qr = lv_img_create(parent);
@@ -1041,6 +1127,14 @@ void updateColorControlsFromModel() {
 void updateStatusFromModel() {
   const wled::Model& m = wled::model();
 
+  if (solid_color_button) {
+    if (m.effect == 0) {
+      lv_obj_add_state(solid_color_button, LV_STATE_CHECKED);
+    } else {
+      lv_obj_clear_state(solid_color_button, LV_STATE_CHECKED);
+    }
+  }
+
   if (now_playing_label) {
     const char* effect = m.effect >= 0 && static_cast<size_t>(m.effect) < kWledFxCount &&
                                  kWledFx[m.effect].name
@@ -1097,7 +1191,18 @@ void createPresetsTab(lv_obj_t* tab) {
   lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
 
-  addLabel(panel, "Presets");
+  
+  lv_obj_t* addPreset = lv_btn_create(panel);
+  styleButton(addPreset);
+  lv_obj_set_size(addPreset, LV_PCT(100), 38);
+  lv_obj_add_event_cb(addPreset, openPresetNameDialog, LV_EVENT_CLICKED, nullptr);
+  if (!firstFreePresetSlot()) lv_obj_add_state(addPreset, LV_STATE_DISABLED);
+
+  lv_obj_t* addPresetLabel = lv_label_create(addPreset);
+  lv_label_set_text(addPresetLabel, LV_SYMBOL_PLUS "  Add preset");
+  lv_obj_center(addPresetLabel);
+  
+
   if (presets.empty()) {
     lv_obj_t* hint = lv_label_create(panel);
     lv_obj_set_width(hint, LV_PCT(100));

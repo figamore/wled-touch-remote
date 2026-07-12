@@ -59,6 +59,7 @@ void setPower(bool on);
 void togglePower();
 void setBrightness(uint8_t bri);
 void applyPreset(uint8_t id);
+void savePreset(uint8_t id, const char* name);
 void setEffect(uint8_t fxId);
 void setPalette(uint8_t palId);
 void setColor(uint8_t r, uint8_t g, uint8_t b);
