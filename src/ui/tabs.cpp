@@ -26,7 +26,7 @@ const lv_img_dsc_t kHelpQrImage = {
 };
 
 
-constexpr lv_coord_t kColorWheelSize = 168;
+constexpr lv_coord_t kColorWheelSize = 138;
 constexpr lv_coord_t kColorSelectorSize = 18;
 constexpr lv_coord_t kPaletteRowPadTop = 7;
 constexpr lv_coord_t kPaletteRowPadBottom = 21;
@@ -34,8 +34,6 @@ constexpr uint32_t kSliderSendIntervalMs = 150;
 
 lv_obj_t* color_wheel = nullptr;
 lv_obj_t* color_selector = nullptr;
-lv_obj_t* color_preview = nullptr;
-lv_obj_t* color_hex_label = nullptr;
 bool color_syncing = false;
 lv_color_t* color_wheel_pixels = nullptr;
 lv_img_dsc_t color_wheel_image = {
@@ -334,16 +332,6 @@ void generateColorWheelImage() {
   }
 }
 
-void updateColorPreview(uint32_t color) {
-  if (color_preview) {
-    lv_obj_set_style_bg_color(color_preview, lv_color_hex(color), LV_PART_MAIN);
-  }
-  if (color_hex_label) {
-    lv_label_set_text_fmt(color_hex_label, "#%02X%02X%02X",
-                          colorByte(color, 16), colorByte(color, 8), colorByte(color, 0));
-  }
-}
-
 void setColorControls(uint32_t color) {
   color_syncing = true;
   if (color_selector) {
@@ -357,7 +345,6 @@ void setColorControls(uint32_t color) {
     lv_obj_set_pos(color_selector, x, y);
     lv_obj_set_style_bg_color(color_selector, lv_color_hex(color), LV_PART_MAIN);
   }
-  updateColorPreview(color);
   color_syncing = false;
 }
 
@@ -413,10 +400,9 @@ void createColorWheelEditor(lv_obj_t* parent) {
 
   lv_obj_t* editor = lv_obj_create(parent);
   lv_obj_remove_style_all(editor);
-  lv_obj_set_size(editor, LV_PCT(100), 214);
+  lv_obj_set_size(editor, LV_PCT(100), LV_PCT(100));
   lv_obj_set_flex_flow(editor, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(editor, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(editor, 8, LV_PART_MAIN);
+  lv_obj_set_flex_align(editor, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(editor, LV_OBJ_FLAG_SCROLLABLE);
 
   if (color_wheel_image.data) {
@@ -451,28 +437,6 @@ void createColorWheelEditor(lv_obj_t* parent) {
     lv_obj_clear_flag(color_selector, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   }
 
-  lv_obj_t* chip_row = lv_obj_create(editor);
-  lv_obj_remove_style_all(chip_row);
-  lv_obj_set_size(chip_row, LV_PCT(100), 36);
-  lv_obj_set_flex_flow(chip_row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(chip_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(chip_row, 10, LV_PART_MAIN);
-  lv_obj_clear_flag(chip_row, LV_OBJ_FLAG_SCROLLABLE);
-
-  color_preview = lv_obj_create(chip_row);
-  lv_obj_remove_style_all(color_preview);
-  lv_obj_set_size(color_preview, 54, 30);
-  lv_obj_set_style_bg_opa(color_preview, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_radius(color_preview, 6, LV_PART_MAIN);
-  lv_obj_set_style_border_width(color_preview, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_color(color_preview, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-  lv_obj_set_style_border_opa(color_preview, LV_OPA_30, LV_PART_MAIN);
-
-  color_hex_label = lv_label_create(chip_row);
-  lv_obj_set_width(color_hex_label, 100);
-  lv_obj_set_style_text_font(color_hex_label, &lv_font_montserrat_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(color_hex_label, lv_color_hex(kColorAccent), LV_PART_MAIN);
-
   setColorControls(current);
 }
 
@@ -504,12 +468,12 @@ void closeHelpDialog(lv_event_t*) {
   lv_timer_set_repeat_count(timer, 1);
 }
 
-// Full-screen overlay with a title header and close button; content goes below
-// the header.
-lv_obj_t* createDialogShell(const char* title_text, lv_event_cb_t on_close) {
+// Overlay with a title header and close button; content goes below the header.
+lv_obj_t* createDialogShell(const char* title_text, lv_event_cb_t on_close, lv_coord_t topInset = 0) {
   lv_obj_t* dialog = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(dialog);
-  lv_obj_set_size(dialog, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_size(dialog, LV_PCT(100), kScreenHeight - topInset);
+  lv_obj_align(dialog, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_set_style_bg_color(dialog, lv_color_hex(kColorBg), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(dialog, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(dialog, LV_OBJ_FLAG_SCROLLABLE);
@@ -546,16 +510,17 @@ lv_obj_t* createDialogShell(const char* title_text, lv_event_cb_t on_close) {
   return dialog;
 }
 
-lv_obj_t* beginInfoModal(const char* title_text) {
+lv_obj_t* beginInfoModal(const char* title_text, bool preserveTopBar = false) {
   if (help_dialog_deleting) return nullptr;
 
   help_dialog_deleting = false;
-  help_dialog = createDialogShell(title_text, closeHelpDialog);
+  const lv_coord_t topInset = preserveTopBar ? kTopBarHeight : 0;
+  help_dialog = createDialogShell(title_text, closeHelpDialog, topInset);
   lv_obj_add_event_cb(help_dialog, onHelpDialogDeleted, LV_EVENT_DELETE, nullptr);
 
   lv_obj_t* content = lv_obj_create(help_dialog);
   lv_obj_remove_style_all(content);
-  lv_obj_set_size(content, 296, 184);
+  lv_obj_set_size(content, 296, preserveTopBar ? 154 : 184);
   lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, -8);
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -853,7 +818,10 @@ void openFxControls() {
   std::string labels[8];
   fxSliderLabels(selected_effect_id, labels);
 
-  lv_obj_t* content = beginInfoModal(title);
+  
+  // Leave the application top bar exposed so live Peek remains visible while editing.
+  lv_obj_t* content = beginInfoModal(title, true);
+  
   if (!content) return;
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
@@ -1063,7 +1031,7 @@ void createLiveTab(lv_obj_t* tab) {
 }
 
 void updateColorControlsFromModel() {
-  if (!color_preview) return;
+  if (!color_wheel) return;
   if (color_wheel && lv_obj_has_state(color_wheel, LV_STATE_PRESSED)) return;
   setColorControls(wled::model().color);
 }
@@ -1206,15 +1174,14 @@ void createColorsTab(lv_obj_t* tab) {
   palette_list_table = buildPaletteTable(palette_panel, 268);
 
   lv_obj_t* wheel_page = lv_tabview_add_tab(color_tabs, "Color Wheel");
-  lv_obj_set_style_pad_all(wheel_page, 8, LV_PART_MAIN);
-  configurePageScroll(wheel_page, true);
+  lv_obj_set_style_pad_all(wheel_page, 2, LV_PART_MAIN);
+  configurePageScroll(wheel_page, false);
 
   lv_obj_t* wheel_panel = createPanel(wheel_page);
-  lv_obj_set_size(wheel_panel, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_size(wheel_panel, LV_PCT(100), LV_PCT(100));
   lv_obj_set_flex_flow(wheel_panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(wheel_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(wheel_panel, 12, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(wheel_panel, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(wheel_panel, 2, LV_PART_MAIN);
   createColorWheelEditor(wheel_panel);
   
 }
