@@ -153,6 +153,21 @@ int runSelfTest() {
   expectTrue(m.brightness == simWledSnapshot().bri, "boot state pull: brightness");
   expectTrue(m.color == simWledSnapshot().color, "boot state pull: color");
 
+  // Lose a direct response after WLED applies the request. The remote must retry the same
+  // idempotent command, receive its matching response, then release the next queued command.
+  simWledDropNextResponse();
+  wled::setBrightness(91);
+  wled::setEffect(42);
+  expectTrue(waitUntil([] { return simWledSnapshot().fx == 42; }, 5000),
+             "lost response retried; queued command released");
+
+  // Rapid UI updates are coalesced to the newest queued value instead of filling radio queues.
+  wled::setBrightness(31);
+  wled::setBrightness(63);
+  wled::setBrightness(127);
+  expectTrue(waitUntil([] { return simWledSnapshot().bri == 127; }, 3000),
+             "rapid brightness updates coalesced to latest");
+
   // FX controls modal + palette chooser (the freeze reproduction path).
   simulatorSetTab(2);
   simulatorRunFrames(30);

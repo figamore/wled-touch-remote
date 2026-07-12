@@ -60,6 +60,10 @@ inline esp_err_t esp_now_add_peer(const esp_now_peer_info_t*) {
   return ESP_OK;
 }
 
+inline esp_err_t esp_now_del_peer(const uint8_t*) {
+  return ESP_OK;
+}
+
 // Implemented by src/sim_wled.cpp: a fake WLED that answers the JSON API.
 void simWledOnOutgoingFrame(const uint8_t* mac, const uint8_t* data, size_t len);
 

@@ -32,4 +32,7 @@ struct SimWledSnapshot {
 
 SimWledSnapshot simWledSnapshot();
 
+// Drop one direct RESPONSE after applying its request, exercising remote timeout/retry logic.
+void simWledDropNextResponse();
+
 #endif

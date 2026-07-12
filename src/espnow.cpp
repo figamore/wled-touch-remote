@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include "wled_api.h"
 
 namespace {
 
@@ -94,15 +95,22 @@ esp_err_t sendWledTouchButtonRaw(uint8_t button_code) {
   };
 
   esp_err_t last_result = ESP_OK;
+  const uint8_t apiChannel = wled::radioChannel();
 
 #if WLED_TOUCH_SCAN_CHANNELS
-  for (uint8_t channel = 1; channel <= 13; channel++) {
-    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  if (apiChannel) {
+    esp_wifi_set_channel(apiChannel, WIFI_SECOND_CHAN_NONE);
     last_result = esp_now_send(kBroadcastMac, reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
-    delay(3);
+  } else {
+    for (uint8_t channel = 1; channel <= 13; channel++) {
+      esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+      last_result = esp_now_send(kBroadcastMac, reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
+      delay(3);
+    }
+    esp_wifi_set_channel(WLED_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
   }
-  esp_wifi_set_channel(WLED_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
 #else
+  (void)apiChannel;
   last_result = esp_now_send(kBroadcastMac, reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
 #endif
 

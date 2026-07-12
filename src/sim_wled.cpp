@@ -52,11 +52,13 @@ uint32_t g_lastLvKeepalive = 0;
 bool g_liveActive = false;
 uint32_t g_lastLiveFrame = 0;
 float g_livePhase = 0.0f;
+bool g_dropNextResponse = false;
 
 // Outgoing messages are queued and delivered one per tick so the remote's
 // single-message inbox is never clobbered by back-to-back replies.
 struct PendingMessage {
   uint8_t type;
+  uint8_t id;
   std::vector<uint8_t> payload;
 };
 
@@ -104,25 +106,29 @@ std::vector<std::string> effectNames() {
 
 // ── Frame delivery back into the remote ─────────────────────────────────────
 
-void queueMessage(uint8_t type, const uint8_t* payload, size_t len) {
+void queueMessage(uint8_t type, uint8_t id, const uint8_t* payload, size_t len) {
   PendingMessage message;
   message.type = type;
+  message.id = id;
   message.payload.assign(payload, payload + len);
   g_outbox.push_back(std::move(message));
 }
 
-void queueJson(uint8_t type, const JsonDocument& doc) {
+void queueJson(uint8_t type, uint8_t id, const JsonDocument& doc) {
+  if (type == kMsgResponse && g_dropNextResponse) {
+    g_dropNextResponse = false;
+    return;
+  }
   std::string out;
   serializeJson(doc, out);
-  queueMessage(type, reinterpret_cast<const uint8_t*>(out.data()), out.size());
+  queueMessage(type, id, reinterpret_cast<const uint8_t*>(out.data()), out.size());
 }
 
 void deliverMessage(const PendingMessage& message) {
   esp_now_recv_cb_t callback = simEspNowRecvCallback();
   if (!callback) return;
 
-  static uint8_t msgId = 1;
-  const uint8_t id = msgId++;
+  const uint8_t id = message.id;
   const size_t len = message.payload.size();
   const size_t total = len ? (len + kFragSize - 1) / kFragSize : 1;
   uint8_t frame[kHeaderSize + kFragSize];
@@ -166,14 +172,14 @@ void buildStateInfo(JsonDocument& doc) {
   info["ver"] = "0.16.0-sim";
 }
 
-void queueStateResponse(uint8_t type) {
+void queueStateResponse(uint8_t type, uint8_t id) {
   JsonDocument doc;
   buildStateInfo(doc);
-  queueJson(type, doc);
+  queueJson(type, id, doc);
 }
 
 void queueStatePush() {
-  queueStateResponse(kMsgPush);
+  queueStateResponse(kMsgPush, g_pushId++);
 }
 
 void queueHello() {
@@ -183,10 +189,10 @@ void queueHello() {
   hello["mac"] = "aabbcc112233";
   hello["ver"] = 2607000;
   hello["ch"] = 6;
-  queueJson(kMsgHello, doc);
+  queueJson(kMsgHello, 0, doc);
 }
 
-void queueCatalog(const char* what) {
+void queueCatalog(const char* what, uint8_t id) {
   JsonDocument doc;
   if (!strcmp(what, "fx")) {
     JsonArray effects = doc["effects"].to<JsonArray>();
@@ -206,7 +212,7 @@ void queueCatalog(const char* what) {
   } else {
     doc["error"] = 9;
   }
-  queueJson(kMsgResponse, doc);
+  queueJson(kMsgResponse, id, doc);
 }
 
 // Returns true when the request changed state (triggers a PUSH like real WLED).
@@ -248,17 +254,17 @@ bool applyRequest(JsonObjectConst request) {
   return changed;
 }
 
-void handleRequest(const uint8_t* payload, size_t len) {
+void handleRequest(uint8_t id, const uint8_t* payload, size_t len) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, len)) {
     JsonDocument error;
     error["error"] = 9;
-    queueJson(kMsgResponse, error);
+    queueJson(kMsgResponse, id, error);
     return;
   }
 
   if (doc["get"].is<const char*>()) {
-    queueCatalog(doc["get"].as<const char*>());
+    queueCatalog(doc["get"].as<const char*>(), id);
     return;
   }
 
@@ -267,17 +273,17 @@ void handleRequest(const uint8_t* payload, size_t len) {
     g_lastLvKeepalive = millis();
     JsonDocument ok;
     ok["success"] = true;
-    queueJson(kMsgResponse, ok);
+    queueJson(kMsgResponse, id, ok);
     return;
   }
 
   const bool changed = applyRequest(doc.as<JsonObjectConst>());
   if (doc["v"].as<bool>()) {
-    queueStateResponse(kMsgResponse);
+    queueStateResponse(kMsgResponse, id);
   } else {
     JsonDocument ok;
     ok["success"] = true;
-    queueJson(kMsgResponse, ok);
+    queueJson(kMsgResponse, id, ok);
   }
   if (changed) {
     queueStatePush();
@@ -326,7 +332,7 @@ void queueLiveFrame() {
     payload[2 + i * 3 + 1] = g;
     payload[2 + i * 3 + 2] = b;
   }
-  queueMessage(kMsgLive, payload, sizeof(payload));
+  queueMessage(kMsgLive, g_pushId++, payload, sizeof(payload));
 }
 
 }  // namespace
@@ -337,6 +343,7 @@ void simWledOnOutgoingFrame(const uint8_t*, const uint8_t* data, size_t len) {
   }
 
   const uint8_t type = data[2];
+  const uint8_t id = data[3];
   const uint8_t index = data[4];
   const uint8_t total = data[5];
   if (index != 0 || total != 1) {
@@ -349,7 +356,7 @@ void simWledOnOutgoingFrame(const uint8_t*, const uint8_t* data, size_t len) {
   if (type == kMsgHello) {
     queueHello();
   } else if (type == kMsgRequest) {
-    handleRequest(payload, payloadLen);
+    handleRequest(id, payload, payloadLen);
   }
 }
 
@@ -380,6 +387,10 @@ SimWledSnapshot simWledSnapshot() {
   snapshot.ix = g_state.ix;
   snapshot.color = (uint32_t(g_state.col[0]) << 16) | (uint32_t(g_state.col[1]) << 8) | g_state.col[2];
   return snapshot;
+}
+
+void simWledDropNextResponse() {
+  g_dropNextResponse = true;
 }
 
 void simWledExternalChange(int kind) {

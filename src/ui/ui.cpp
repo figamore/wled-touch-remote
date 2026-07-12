@@ -17,7 +17,6 @@ const lv_img_dsc_t kHeaderLogoImage = {
     reinterpret_cast<const uint8_t*>(kWledLogoHeaderPixels),
 };
 
-constexpr uint32_t kPeekFreshMs = 1200;
 #if WLED_CYD_ENABLE_SHUTDOWN
 constexpr uint8_t kShutdownCountdownSteps = 10;
 #endif
@@ -588,9 +587,11 @@ void updatePeekStrip() {
   if (!peek_bar) return;
   static uint32_t seen_rev = UINT32_MAX;
   static bool seen_visible = false;
+  static bool received_frame = false;
 
-  const uint32_t age = wled::liveFrameAgeMs(millis());
-  const bool visible = wled::online() && age != UINT32_MAX && age <= kPeekFreshMs;
+  if (wled::liveFrameAgeMs(millis()) != UINT32_MAX) received_frame = true;
+  if (!wled::livePeekEnabled()) received_frame = false;
+  const bool visible = wled::online() && wled::livePeekEnabled() && received_frame;
   if (visible != seen_visible) {
     seen_visible = visible;
     if (visible) {

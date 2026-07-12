@@ -40,6 +40,7 @@ void loop(uint32_t now_ms);
 
 const Model& model();
 bool online();
+uint8_t radioChannel(); // discovered WLED channel, or 0 while searching
 
 // Monotonic counters; UI compares against its last-seen value to know when to refresh.
 uint32_t stateRevision();
