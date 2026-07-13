@@ -7,21 +7,16 @@
 #include "../wled_api.h"
 #include <Arduino.h>
 #include <algorithm>
-#include "generated/wled_logo_png.h"
 
 namespace {
-
-const lv_img_dsc_t kHeaderLogoImage = {
-    {LV_IMG_CF_TRUE_COLOR, 0, 0, kWledLogoHeaderWidth, kWledLogoHeaderHeight},
-    kWledLogoHeaderPixelCount * sizeof(kWledLogoHeaderPixels[0]),
-    reinterpret_cast<const uint8_t*>(kWledLogoHeaderPixels),
-};
 
 #if WLED_CYD_ENABLE_SHUTDOWN
 constexpr uint8_t kShutdownCountdownSteps = 10;
 #endif
 
 lv_obj_t* peek_bar = nullptr;
+lv_obj_t* header_target_label = nullptr;
+lv_obj_t* header_connection_dot = nullptr;
 constexpr uint8_t kFxTabIndex = 2;
 #if WLED_CYD_ENABLE_SHUTDOWN
 lv_obj_t* shutdown_overlay = nullptr;
@@ -413,17 +408,45 @@ void updateConnLabel() {
 }
 
 
-// Shows the focused WLED or current multi-device target in the Settings target row.
-void updateTargetLabel() {
-  if (!target_label) return;
+// Updates the compact top-bar target name and summarizes connection health with a status dot.
+void updateHeaderTarget() {
+  if (!header_target_label || !header_connection_dot) return;
+
+  uint32_t dotColor = kColorDanger;
   if (!wled::deviceCount()) {
-    lv_label_set_text(target_label, "WLED");
+    lv_label_set_text(header_target_label, "Searching");
   } else if (wled::targetingAll()) {
-    lv_label_set_text_fmt(target_label, "All (%u)", unsigned(wled::activeDeviceCount()));
+    lv_label_set_text(header_target_label, "Multi");
+    const size_t online = wled::activeDeviceCount();
+    size_t expected = 0;
+    const uint8_t channel = wled::radioChannel();
+    for (size_t i = 0; i < wled::deviceCount(); ++i) {
+      if (channel && wled::deviceInfo(i).channel == channel) expected++;
+    }
+    if (online && online == expected) dotColor = kColorOk;
+    else if (online) dotColor = kColorWarn;
   } else {
     const wled::DeviceInfo device = wled::deviceInfo(wled::focusedDevice());
-    if (!device.name.empty()) lv_label_set_text(target_label, device.name.c_str());
-    else lv_label_set_text_fmt(target_label, "%02X%02X", device.mac[4], device.mac[5]);
+    if (!device.name.empty()) lv_label_set_text(header_target_label, device.name.c_str());
+    else lv_label_set_text(header_target_label, "WLED");
+    if (device.online) dotColor = kColorOk;
+  }
+  lv_obj_set_style_bg_color(header_connection_dot, lv_color_hex(dotColor), LV_PART_MAIN);
+}
+
+// Shows the focused WLED or current multi-device target in the Settings target row.
+void updateTargetLabel() {
+  updateHeaderTarget();
+  if (target_label) {
+    if (!wled::deviceCount()) {
+      lv_label_set_text(target_label, "WLED");
+    } else if (wled::targetingAll()) {
+      lv_label_set_text_fmt(target_label, "All (%u)", unsigned(wled::activeDeviceCount()));
+    } else {
+      const wled::DeviceInfo device = wled::deviceInfo(wled::focusedDevice());
+      if (!device.name.empty()) lv_label_set_text(target_label, device.name.c_str());
+      else lv_label_set_text_fmt(target_label, "%02X%02X", device.mac[4], device.mac[5]);
+    }
   }
 }
 
@@ -685,9 +708,31 @@ void createUi() {
   lv_obj_set_flex_align(topbar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_scrollbar_mode(topbar, LV_SCROLLBAR_MODE_OFF);
 
-  lv_obj_t* title = lv_img_create(topbar);
-  lv_img_set_src(title, &kHeaderLogoImage);
-  lv_obj_set_size(title, kWledLogoHeaderWidth, kWledLogoHeaderHeight);
+  
+  lv_obj_t* target = lv_obj_create(topbar);
+  lv_obj_remove_style_all(target);
+  lv_obj_set_size(target, 96, 30);
+  lv_obj_set_flex_flow(target, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(target, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(target, 6, LV_PART_MAIN);
+  lv_obj_clear_flag(target, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(target, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(target, openTargetDialog, LV_EVENT_CLICKED, nullptr);
+
+  header_connection_dot = lv_obj_create(target);
+  lv_obj_remove_style_all(header_connection_dot);
+  lv_obj_set_size(header_connection_dot, 9, 9);
+  lv_obj_set_style_radius(header_connection_dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(header_connection_dot, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(header_connection_dot, lv_color_hex(kColorDanger), LV_PART_MAIN);
+
+  header_target_label = lv_label_create(target);
+  lv_obj_set_width(header_target_label, 78);
+  lv_label_set_long_mode(header_target_label, LV_LABEL_LONG_DOT);
+  lv_label_set_text(header_target_label, "Searching");
+  lv_obj_set_style_text_font(header_target_label, &lv_font_montserrat_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(header_target_label, lv_color_hex(kColorText), LV_PART_MAIN);
+  
 
   peek_bar = lv_obj_create(topbar);
   lv_obj_remove_style_all(peek_bar);
