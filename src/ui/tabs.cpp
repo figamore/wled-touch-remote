@@ -636,7 +636,6 @@ void onTargetSelected(lv_event_t* event) {
 
 void onTargetScan(lv_event_t*) {
   wled::scanNow();
-  closeTargetDialog(nullptr);
 }
 
 // Presents every WLED found on the locked channel plus a reliable unicast "All" target.
@@ -692,13 +691,21 @@ void showTargetDialog() {
 
     char text[64];
     const char* name = device.name.empty() ? "WLED" : device.name.c_str();
-    snprintf(text, sizeof(text), "%s %s  %02X%02X", device.online ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE,
-             name, device.mac[4], device.mac[5]);
+    snprintf(text, sizeof(text), "%s  %02X%02X", name, device.mac[4], device.mac[5]);
     lv_obj_t* label = lv_label_create(button);
-    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_width(label, 116);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
     lv_label_set_text(label, text);
-    lv_obj_center(label);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
+
+    lv_obj_t* connection = lv_label_create(button);
+    lv_obj_set_width(connection, 58);
+    lv_label_set_long_mode(connection, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_align(connection, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_label_set_text(connection, device.online ? "Online" : "Offline");
+    lv_obj_set_style_text_color(connection,
+                                lv_color_hex(device.online ? kColorOk : kColorDanger), LV_PART_MAIN);
+    lv_obj_align(connection, LV_ALIGN_RIGHT_MID, 0, 0);
 
     lv_obj_t* rename = lv_btn_create(row);
     styleButton(rename);
