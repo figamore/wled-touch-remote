@@ -42,6 +42,15 @@ class Preferences {
     return static_cast<unsigned char>(std::strtoul(value.c_str(), nullptr, 10));
   }
 
+  size_t getString(const char* key, char* value, size_t max_len) {
+    if (!value || !max_len) return 0;
+    const std::string stored = readValue(key);
+    const size_t len = stored.size() < max_len - 1 ? stored.size() : max_len - 1;
+    std::memcpy(value, stored.data(), len);
+    value[len] = '\0';
+    return len;
+  }
+
   void putBool(const char* key, bool value) {
     writeValue(key, value ? "1" : "0");
   }
@@ -50,6 +59,17 @@ class Preferences {
     char buffer[8];
     std::snprintf(buffer, sizeof(buffer), "%u", static_cast<unsigned>(value));
     writeValue(key, buffer);
+  }
+
+  size_t putString(const char* key, const char* value) {
+    if (!value) return 0;
+    writeValue(key, value);
+    return std::strlen(value);
+  }
+
+  bool remove(const char* key) {
+    if (read_only_) return false;
+    return std::remove(pathFor(key).c_str()) == 0;
   }
 
  private:

@@ -30,8 +30,15 @@ The easiest way is the [web installer](https://figamore.github.io/wled-touch-rem
 1. Open your WLED controller in a browser.
 1. Go to `Config -> WiFi & Network`.
 1. Enable ESP-NOW remote control.
-1. copy the MAC from the `Info` tab into WLED's `Linked MACs` field.
+1. Copy the remote MAC from the `Info` tab into WLED's `Linked MACs` field. With the
+   bidirectional WLED firmware, it also appears as `Last device seen` while the remote is on.
 1. Save and reboot WLED if prompted.
+
+Repeat these steps for each WLED controller. Controllers on the same Wi-Fi channel are detected
+automatically within a few seconds; the remote does not need to be restarted. Open
+`Settings -> Control Target` to select one controller, rename it locally, or select
+`All controllers` for simultaneous control. Local names are saved by controller MAC and survive
+remote restarts.
 
 ![Info tab](screenshots/wled-touch-remote-info.png)
 
@@ -64,9 +71,12 @@ Extended mode adds more preset buttons, WLED effects, effect settings, palette c
 
 ## Communication Notes
 
-WLED's ESP-NOW remote protocol is one-way unless WLED itself is modified. The remote sends commands to WLED, but WLED does not send status, delivery confirmation, or live LED data back to the remote.
+The bidirectional ESP-NOW JSON firmware returns state, catalogs, command responses, and live LED
+peek data to the remote. Web UI changes therefore update the touchscreen automatically.
 
-Because of that, on-screen state is based on the last action sent from the remote. Effect peek/preview animations are local estimates intended to help identify effects; they are not live previews from the WLED controller.
+ESP-NOW devices must share a radio channel. Simultaneous multi-controller mode is intended for
+WLED instances on the same Wi-Fi network/channel. `All controllers` sends a reliable unicast to
+each online controller and then reconciles their state individually.
 
 ## Settings
 
@@ -75,6 +85,7 @@ The Settings tab lets you change:
 - Display orientation
 - Idle display behavior: dim, turn off, or always on
 - Basic or Extended mode
+- Controller selection, local names, and simultaneous control
 
 Settings are saved on the ESP32 and restored after reboot.
 

@@ -13,6 +13,7 @@ void rebuildPresetTab();
 void rebuildFxTab();
 void revealSelectedEffect(bool animated, bool showAllIfFiltered = true);
 void openTargetDialog(lv_event_t* event);
+void refreshTargetDialog();
 
 #if WLED_CYD_ENABLE_BATTERY
 void createBatteryIndicator(lv_obj_t* parent);

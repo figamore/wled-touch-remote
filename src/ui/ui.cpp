@@ -427,6 +427,16 @@ void updateTargetLabel() {
 // ── Live state reflection ─────────────────────────────────────────────────────
 
 void uiSyncFromModel() {
+  
+  static uint32_t seen_devices = UINT32_MAX;
+  const uint32_t drev = wled::deviceRevision();
+  if (drev != seen_devices) {
+    seen_devices = drev;
+    updateTargetLabel();
+    refreshTargetDialog();
+  }
+  
+
   static uint32_t seen_catalog = UINT32_MAX;
   const uint32_t crev = wled::catalogRevision();
   if (crev != seen_catalog) {

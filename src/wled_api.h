@@ -55,11 +55,13 @@ size_t focusedDevice();
 bool targetingAll();
 void selectDevice(size_t index);
 void selectAll();
+void renameDevice(size_t index, const char* name);
 
 // Monotonic counters; UI compares against its last-seen value to know when to refresh.
 uint32_t stateRevision();
 uint32_t catalogRevision();
 uint32_t liveRevision();
+uint32_t deviceRevision();
 
 // Latest live peek frame as RGB triples. Returns nullptr until a frame arrives.
 const uint8_t* liveLeds(uint16_t& ledCount, uint16_t& width, uint16_t& height);

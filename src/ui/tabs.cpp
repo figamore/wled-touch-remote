@@ -50,6 +50,9 @@ bool help_dialog_deleting = false;
 lv_obj_t* preset_name_dialog = nullptr;
 lv_obj_t* preset_name_input = nullptr;
 lv_obj_t* target_dialog = nullptr;
+lv_obj_t* controller_name_dialog = nullptr;
+lv_obj_t* controller_name_input = nullptr;
+size_t controller_name_index = 0;
 lv_obj_t* palette_list_table = nullptr;  // table embedded in the Colors tab
 lv_obj_t* fx_speed_slider = nullptr;
 lv_obj_t* fx_speed_value = nullptr;
@@ -564,6 +567,59 @@ void closeTargetDialog(lv_event_t*) {
   if (target_dialog) lv_obj_del_async(target_dialog);
 }
 
+void onControllerNameDialogDeleted(lv_event_t*) {
+  controller_name_dialog = nullptr;
+  controller_name_input = nullptr;
+}
+
+void closeControllerNameDialog(lv_event_t*) {
+  if (controller_name_dialog) lv_obj_del_async(controller_name_dialog);
+}
+
+// Stores a local alias when the keyboard confirms; clearing the field restores WLED's name.
+void onControllerNameInput(lv_event_t* event) {
+  const lv_event_code_t code = lv_event_get_code(event);
+  if (code == LV_EVENT_CANCEL) {
+    closeControllerNameDialog(nullptr);
+    return;
+  }
+  if (code != LV_EVENT_READY || !controller_name_input) return;
+  wled::renameDevice(controller_name_index, lv_textarea_get_text(controller_name_input));
+  updateTargetLabel();
+  closeControllerNameDialog(nullptr);
+}
+
+// Opens the same compact on-screen keyboard pattern used for preset names.
+void showControllerNameDialog(size_t index) {
+  if (controller_name_dialog || index >= wled::deviceCount()) return;
+  controller_name_index = index;
+  const wled::DeviceInfo device = wled::deviceInfo(index);
+  controller_name_dialog = createDialogShell("Rename controller", closeControllerNameDialog);
+  lv_obj_add_event_cb(controller_name_dialog, onControllerNameDialogDeleted, LV_EVENT_DELETE, nullptr);
+
+  controller_name_input = lv_textarea_create(controller_name_dialog);
+  lv_obj_set_size(controller_name_input, 296, 40);
+  lv_obj_align(controller_name_input, LV_ALIGN_TOP_MID, 0, 46);
+  lv_textarea_set_one_line(controller_name_input, true);
+  lv_textarea_set_max_length(controller_name_input, 32);
+  lv_textarea_set_placeholder_text(controller_name_input, "Controller name");
+  lv_textarea_set_text(controller_name_input, device.name.c_str());
+  lv_obj_add_event_cb(controller_name_input, onControllerNameInput, LV_EVENT_READY, nullptr);
+  lv_obj_add_event_cb(controller_name_input, onControllerNameInput, LV_EVENT_CANCEL, nullptr);
+
+  lv_obj_t* keyboard = lv_keyboard_create(controller_name_dialog);
+  lv_obj_set_size(keyboard, LV_PCT(100), 146);
+  lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_keyboard_set_textarea(keyboard, controller_name_input);
+  lv_obj_add_state(controller_name_input, LV_STATE_FOCUSED);
+}
+
+void onTargetRename(lv_event_t* event) {
+  const size_t index = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+  closeTargetDialog(nullptr);
+  showControllerNameDialog(index);
+}
+
 void onTargetSelected(lv_event_t* event) {
   const uintptr_t value = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
   if (value == 0) wled::selectAll();
@@ -587,22 +643,30 @@ void showTargetDialog() {
   lv_obj_set_style_pad_row(content, 6, LV_PART_MAIN);
   configurePageScroll(content, true);
 
-  if (wled::activeDeviceCount() > 1) {
+  if (wled::deviceCount() > 1) {
     lv_obj_t* allButton = lv_btn_create(content);
     styleButton(allButton, true);
     lv_obj_set_size(allButton, LV_PCT(100), 38);
     if (wled::targetingAll()) lv_obj_add_state(allButton, LV_STATE_CHECKED);
     lv_obj_add_event_cb(allButton, onTargetSelected, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* label = lv_label_create(allButton);
-    lv_label_set_text_fmt(label, "All devices (%u)", unsigned(wled::activeDeviceCount()));
+    lv_label_set_text_fmt(label, "All controllers (%u online)", unsigned(wled::activeDeviceCount()));
     lv_obj_center(label);
   }
 
   for (size_t i = 0; i < wled::deviceCount(); ++i) {
     const wled::DeviceInfo device = wled::deviceInfo(i);
-    lv_obj_t* button = lv_btn_create(content);
+    lv_obj_t* row = lv_obj_create(content);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), 38);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* button = lv_btn_create(row);
     styleButton(button, true);
-    lv_obj_set_size(button, LV_PCT(100), 38);
+    lv_obj_set_height(button, 38);
+    lv_obj_set_flex_grow(button, 1);
     if (device.channel != wled::radioChannel()) lv_obj_add_state(button, LV_STATE_DISABLED);
     if (!wled::targetingAll() && wled::focusedDevice() == i) lv_obj_add_state(button, LV_STATE_CHECKED);
     lv_obj_add_event_cb(button, onTargetSelected, LV_EVENT_CLICKED,
@@ -617,6 +681,15 @@ void showTargetDialog() {
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
     lv_label_set_text(label, text);
     lv_obj_center(label);
+
+    lv_obj_t* rename = lv_btn_create(row);
+    styleButton(rename);
+    lv_obj_set_size(rename, 42, 38);
+    lv_obj_add_event_cb(rename, onTargetRename, LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
+    lv_obj_t* renameLabel = lv_label_create(rename);
+    lv_label_set_text(renameLabel, LV_SYMBOL_EDIT);
+    lv_obj_center(renameLabel);
   }
 }
 
@@ -1142,6 +1215,13 @@ void updateBatteryTimer(lv_timer_t*) {
 // ── Public tab functions ──────────────────────────────────────────────────────
 
 void openTargetDialog(lv_event_t*) {
+  showTargetDialog();
+}
+
+void refreshTargetDialog() {
+  if (!target_dialog || controller_name_dialog) return;
+  lv_obj_del(target_dialog);
+  target_dialog = nullptr;
   showTargetDialog();
 }
 

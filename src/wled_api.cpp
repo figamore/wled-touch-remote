@@ -5,9 +5,11 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <utility>
 
 #include "app_state.h"  // kBroadcastMac
 #include "generated/wled_catalog.h"
@@ -46,6 +48,7 @@ constexpr size_t   kRequestQueueSize = 14;
 // escaped 32-character preset name while keeping every queue entry bounded.
 constexpr size_t   kMaxRequestLength = 192;
 constexpr size_t   kMaxDevices = 6;
+constexpr size_t   kMaxDeviceAliasLength = 32;
 constexpr uint32_t kDiscoveryCollectMs = 500;
 
 Model g_model;
@@ -54,6 +57,7 @@ struct DeviceSlot {
   uint8_t channel = 0;
   bool peerRegistered = false;
   uint32_t lastSeen = 0;
+  char alias[kMaxDeviceAliasLength + 1] = {};
   Model model;
 };
 DeviceSlot g_devices[kMaxDevices];
@@ -64,6 +68,7 @@ uint32_t g_discoveryFirstReply = 0;
 uint32_t g_stateRev = 0;
 uint32_t g_catalogRev = 0;
 uint32_t g_liveRev = 0;
+uint32_t g_deviceRev = 0;
 uint32_t g_lastRx = 0;
 uint32_t g_lastLinkRx = 0;
 uint32_t g_lastLiveRx = 0;
@@ -214,6 +219,36 @@ DeviceSlot* findDevice(const uint8_t* mac) {
   return nullptr;
 }
 
+
+// Builds a MAC-keyed NVS key that remains within ESP32 Preferences' 15-character limit.
+void deviceAliasKey(const uint8_t* mac, char* key, size_t keySize) {
+  if (!mac || !key || keySize < 14) return;
+  snprintf(key, keySize, "n%02x%02x%02x%02x%02x%02x",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+// Loads the controller's local display alias after its MAC is discovered.
+void loadDeviceAlias(DeviceSlot& device) {
+  char key[14] = {};
+  deviceAliasKey(device.mac, key, sizeof(key));
+  Preferences prefs;
+  if (!key[0] || !prefs.begin(kPrefsNamespace, true)) return;
+  prefs.getString(key, device.alias, sizeof(device.alias));
+  prefs.end();
+}
+
+// Persists or clears the local display alias without changing the WLED instance name.
+void saveDeviceAlias(const DeviceSlot& device) {
+  char key[14] = {};
+  deviceAliasKey(device.mac, key, sizeof(key));
+  Preferences prefs;
+  if (!key[0] || !prefs.begin(kPrefsNamespace, false)) return;
+  if (device.alias[0]) prefs.putString(key, device.alias);
+  else prefs.remove(key);
+  prefs.end();
+}
+
+
 DeviceSlot* rememberDevice(const uint8_t* mac, uint32_t now_ms) {
   if (!mac || isBroadcastMac(mac)) return nullptr;
   DeviceSlot* device = findDevice(mac);
@@ -222,7 +257,9 @@ DeviceSlot* rememberDevice(const uint8_t* mac, uint32_t now_ms) {
     device = &g_devices[g_deviceCount++];
     memcpy(device->mac, mac, sizeof(device->mac));
     device->channel = g_channel;
+    loadDeviceAlias(*device);
     g_stateRev++;
+    g_deviceRev++;
   }
   device->channel = g_channel;
   device->lastSeen = now_ms;
@@ -299,7 +336,7 @@ void processFrame(const RxFrame& frame, uint32_t now_ms) {
   const uint8_t plen = len - kHeaderSize;
   if (type != kMsgResponse && type != kMsgPush && type != kMsgHello && type != kMsgLive) return;
   if (!g_channelLocked && type != kMsgHello) return;
-  if (g_channelLocked && !findDevice(mac)) return;
+  if (g_channelLocked && type != kMsgHello && !findDevice(mac)) return;
   if (total < 1 || total > kMaxFrags || idx >= total || plen > kFragSize) return;
   if (idx < total - 1 && plen != kFragSize) return;
 
@@ -572,7 +609,10 @@ ParseResult parseInbox(DeviceSlot& device, const uint8_t* data, size_t len) {
     const bool changed = !device.model.online || (name && device.model.name != name);
     if (name) device.model.name = name;
     device.model.online = true;
-    if (changed) g_stateRev++;
+    if (changed) {
+      g_stateRev++;
+      g_deviceRev++;
+    }
     result.valid = true;
   } else if (doc["state"].is<JsonObject>()) {
     applyState(device.model, doc["state"].as<JsonObjectConst>(), doc["info"].as<JsonObjectConst>());
@@ -633,7 +673,14 @@ void loadFallbackPresets(DeviceSlot& device) {
 void handleCompleteMessage(uint8_t type, uint8_t id, const uint8_t* src,
                            const uint8_t* payload, size_t len, uint32_t now_ms) {
   DeviceSlot* device = findDevice(src);
-  if (type == kMsgHello && !device) device = rememberDevice(src, now_ms);
+  const bool newDevice = !device;
+  DeviceSlot discoveredDevice;
+  if (type == kMsgHello && !device) {
+    memcpy(discoveredDevice.mac, src, sizeof(discoveredDevice.mac));
+    discoveredDevice.channel = g_channel;
+    discoveredDevice.lastSeen = now_ms;
+    device = &discoveredDevice;
+  }
   if (!device) return;
   device->lastSeen = now_ms;
 
@@ -647,6 +694,20 @@ void handleCompleteMessage(uint8_t type, uint8_t id, const uint8_t* src,
 
   const ParseResult result = parseInbox(*device, payload, len);
   if (!result.valid) return;
+  if (newDevice) {
+    DeviceSlot* storedDevice = rememberDevice(src, now_ms);
+    if (!storedDevice) return;
+    storedDevice->model = std::move(device->model);
+    device = storedDevice;
+  }
+  if (type == kMsgHello && newDevice && g_channelLocked) {
+    if (ensurePeerRegistered(*device)) {
+      Serial.printf("[ESPNOW] discovered newly linked WLED %02x:%02x:%02x:%02x:%02x:%02x ch=%u devices=%u\n",
+                    device->mac[0], device->mac[1], device->mac[2], device->mac[3],
+                    device->mac[4], device->mac[5], g_channel, unsigned(g_deviceCount));
+      queueRequest("{\"v\":\"compact\"}", RequestKey::Poll, true, device->mac);
+    }
+  }
   g_lastRx = now_ms;
   if (device == &g_devices[g_focusDevice]) g_model = device->model;
   if (type == kMsgHello && !g_channelLocked) {
@@ -700,6 +761,7 @@ void loop(uint32_t now_ms) {
       device.model.online = false;
       if (i == g_focusDevice) g_model = device.model;
       g_stateRev++;
+      g_deviceRev++;
     }
   }
 
@@ -760,8 +822,7 @@ void loop(uint32_t now_ms) {
       queueRequest("{\"get\":\"ps\"}", RequestKey::CatalogRefresh, true,
                    g_presetCatalogRefreshMac);
     }
-    if (!g_request.active && !g_requestCount && now_ms - g_lastLinkRx > kHeartbeatMs &&
-        now_ms - g_lastHeartbeat > kHeartbeatMs) {
+    if (!g_request.active && !g_requestCount && now_ms - g_lastHeartbeat > kHeartbeatMs) {
       sendFrameTo(kBroadcastMac, kMsgHello, g_msgId++, nullptr, 0);
       g_lastHeartbeat = now_ms;
     }
@@ -800,7 +861,7 @@ DeviceInfo deviceInfo(size_t index) {
   memcpy(info.mac, device.mac, sizeof(info.mac));
   info.channel = device.channel;
   info.online = device.model.online;
-  info.name = device.model.name;
+  info.name = device.alias[0] ? device.alias : device.model.name;
   return info;
 }
 size_t focusedDevice() { return g_focusDevice; }
@@ -830,9 +891,23 @@ void selectAll() {
   g_targetAll = true;
   g_stateRev++;
 }
+
+// Assigns a persistent local controller name; an empty name restores WLED's own name.
+void renameDevice(size_t index, const char* name) {
+  if (index >= g_deviceCount || !name) return;
+  const size_t length = strnlen(name, kMaxDeviceAliasLength + 1);
+  if (length > kMaxDeviceAliasLength) return;
+  memcpy(g_devices[index].alias, name, length);
+  g_devices[index].alias[length] = '\0';
+  saveDeviceAlias(g_devices[index]);
+  g_stateRev++;
+  g_deviceRev++;
+}
+
 uint32_t stateRevision() { return g_stateRev; }
 uint32_t catalogRevision() { return g_catalogRev; }
 uint32_t liveRevision() { return g_liveRev; }
+uint32_t deviceRevision() { return g_deviceRev; }
 bool livePeekEnabled() { return g_liveWanted; }
 
 const uint8_t* liveLeds(uint16_t& ledCount, uint16_t& width, uint16_t& height) {
@@ -868,7 +943,7 @@ void setBrightness(uint8_t bri) {
 void applyPreset(uint8_t id) {
   char buf[40];
   snprintf(buf, sizeof(buf), "{\"ps\":%u,\"v\":true}", id);
-  queueRequest(buf, RequestKey::Preset);
+  queueForTargets(buf, RequestKey::Preset);
 }
 
 
