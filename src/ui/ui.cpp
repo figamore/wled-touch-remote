@@ -408,6 +408,22 @@ void updateConnLabel() {
   }
 }
 
+
+// Shows the focused WLED or current multi-device target in the Settings target row.
+void updateTargetLabel() {
+  if (!target_label) return;
+  if (!wled::deviceCount()) {
+    lv_label_set_text(target_label, "WLED");
+  } else if (wled::targetingAll()) {
+    lv_label_set_text_fmt(target_label, "All (%u)", unsigned(wled::activeDeviceCount()));
+  } else {
+    const wled::DeviceInfo device = wled::deviceInfo(wled::focusedDevice());
+    if (!device.name.empty()) lv_label_set_text(target_label, device.name.c_str());
+    else lv_label_set_text_fmt(target_label, "%02X%02X", device.mac[4], device.mac[5]);
+  }
+}
+
+
 // ── Live state reflection ─────────────────────────────────────────────────────
 
 void uiSyncFromModel() {
@@ -425,6 +441,7 @@ void uiSyncFromModel() {
   seen_state = rev;
 
   updateConnLabel();
+  updateTargetLabel();
 
   const wled::Model& m = wled::model();
   if (state.power != m.power) setPowerUi(m.power);

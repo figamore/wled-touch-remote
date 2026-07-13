@@ -140,6 +140,7 @@ extern lv_obj_t* brightness_label;
 extern lv_obj_t* brightness_slider;
 extern lv_obj_t* mac_label;
 extern lv_obj_t* conn_label;
+extern lv_obj_t* target_label;
 extern lv_obj_t* orientation_label;
 extern lv_obj_t* idle_label;
 extern lv_obj_t* mode_label;

@@ -49,6 +49,7 @@ int palette_chooser_selected = -1;
 bool help_dialog_deleting = false;
 lv_obj_t* preset_name_dialog = nullptr;
 lv_obj_t* preset_name_input = nullptr;
+lv_obj_t* target_dialog = nullptr;
 lv_obj_t* palette_list_table = nullptr;  // table embedded in the Colors tab
 lv_obj_t* fx_speed_slider = nullptr;
 lv_obj_t* fx_speed_value = nullptr;
@@ -553,6 +554,72 @@ lv_obj_t* beginInfoModal(const char* title_text, bool preserveTopBar = false) {
   lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
   return content;
 }
+
+
+void onTargetDialogDeleted(lv_event_t*) {
+  target_dialog = nullptr;
+}
+
+void closeTargetDialog(lv_event_t*) {
+  if (target_dialog) lv_obj_del_async(target_dialog);
+}
+
+void onTargetSelected(lv_event_t* event) {
+  const uintptr_t value = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+  if (value == 0) wled::selectAll();
+  else wled::selectDevice(value - 1);
+  updateTargetLabel();
+  updateConnLabel();
+  closeTargetDialog(nullptr);
+}
+
+// Presents every WLED found on the locked channel plus a reliable unicast "All" target.
+void showTargetDialog() {
+  if (target_dialog || !wled::deviceCount()) return;
+  target_dialog = createDialogShell("Control WLED", closeTargetDialog);
+  lv_obj_add_event_cb(target_dialog, onTargetDialogDeleted, LV_EVENT_DELETE, nullptr);
+
+  lv_obj_t* content = lv_obj_create(target_dialog);
+  lv_obj_remove_style_all(content);
+  lv_obj_set_size(content, 296, 184);
+  lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, -8);
+  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(content, 6, LV_PART_MAIN);
+  configurePageScroll(content, true);
+
+  if (wled::activeDeviceCount() > 1) {
+    lv_obj_t* allButton = lv_btn_create(content);
+    styleButton(allButton, true);
+    lv_obj_set_size(allButton, LV_PCT(100), 38);
+    if (wled::targetingAll()) lv_obj_add_state(allButton, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(allButton, onTargetSelected, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* label = lv_label_create(allButton);
+    lv_label_set_text_fmt(label, "All devices (%u)", unsigned(wled::activeDeviceCount()));
+    lv_obj_center(label);
+  }
+
+  for (size_t i = 0; i < wled::deviceCount(); ++i) {
+    const wled::DeviceInfo device = wled::deviceInfo(i);
+    lv_obj_t* button = lv_btn_create(content);
+    styleButton(button, true);
+    lv_obj_set_size(button, LV_PCT(100), 38);
+    if (device.channel != wled::radioChannel()) lv_obj_add_state(button, LV_STATE_DISABLED);
+    if (!wled::targetingAll() && wled::focusedDevice() == i) lv_obj_add_state(button, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(button, onTargetSelected, LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<uintptr_t>(i + 1)));
+
+    char text[64];
+    const char* name = device.name.empty() ? "WLED" : device.name.c_str();
+    snprintf(text, sizeof(text), "%s %s  %02X%02X", device.online ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE,
+             name, device.mac[4], device.mac[5]);
+    lv_obj_t* label = lv_label_create(button);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+  }
+}
+
 
 
 // Returns the first preset slot represented by the remote, or zero when all are occupied.
@@ -1074,6 +1141,10 @@ void updateBatteryTimer(lv_timer_t*) {
 
 // ── Public tab functions ──────────────────────────────────────────────────────
 
+void openTargetDialog(lv_event_t*) {
+  showTargetDialog();
+}
+
 void createLiveTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
@@ -1511,6 +1582,9 @@ void createSettingsTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 8, LV_PART_MAIN);
+
+  createSettingsRow(panel, "Control Target", openTargetDialog, false, &target_label);
+  updateTargetLabel();
 
   createSettingsRow(panel, "Orientation", onFlipDisplay, false, &orientation_label);
   updateOrientationLabel();

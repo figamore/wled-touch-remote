@@ -19,6 +19,7 @@ void updateOrientationLabel();
 void updateIdleLabel();
 void updateModeLabel();
 void updateConnLabel();
+void updateTargetLabel();
 
 // ── LVGL event callbacks (registered in tabs.cpp) ────────────────────────────
 

@@ -29,6 +29,7 @@ constexpr uint8_t kMsgHello = 0x04;
 constexpr uint8_t kMsgLive = 0x05;
 
 constexpr uint8_t kWledMac[6] = {0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33};
+constexpr uint8_t kWledMac2[6] = {0xAA, 0xBB, 0xCC, 0x44, 0x55, 0x66};
 constexpr uint32_t kLiveTimeoutMs = 3000;  // {"lv":true} keepalive expiry, same as WLED
 constexpr uint32_t kLiveFramePeriodMs = 45;
 constexpr uint16_t kLedCount = 60;
@@ -53,10 +54,13 @@ bool g_liveActive = false;
 uint32_t g_lastLiveFrame = 0;
 float g_livePhase = 0.0f;
 bool g_dropNextResponse = false;
+uint8_t g_responseMac[6] = {0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33};
+uint8_t g_liveMac[6] = {0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33};
 
 // Outgoing messages are queued and delivered one per tick so the remote's
 // single-message inbox is never clobbered by back-to-back replies.
 struct PendingMessage {
+  uint8_t source[6];
   uint8_t type;
   uint8_t id;
   std::vector<uint8_t> payload;
@@ -108,6 +112,7 @@ std::vector<std::string> effectNames() {
 
 void queueMessage(uint8_t type, uint8_t id, const uint8_t* payload, size_t len) {
   PendingMessage message;
+  memcpy(message.source, g_responseMac, sizeof(message.source));
   message.type = type;
   message.id = id;
   message.payload.assign(payload, payload + len);
@@ -142,7 +147,7 @@ void deliverMessage(const PendingMessage& message) {
     const size_t chunk = std::min<size_t>(kFragSize, len - offset);
     frame[4] = static_cast<uint8_t>(i);
     if (chunk) memcpy(frame + kHeaderSize, message.payload.data() + offset, chunk);
-    callback(kWledMac, frame, static_cast<int>(kHeaderSize + chunk));
+    callback(message.source, frame, static_cast<int>(kHeaderSize + chunk));
   }
 }
 
@@ -168,7 +173,7 @@ void buildStateInfo(JsonDocument& doc) {
   col0.add(g_state.col[2]);
 
   JsonObject info = doc["info"].to<JsonObject>();
-  info["name"] = "Sim WLED";
+  info["name"] = memcmp(g_responseMac, kWledMac2, sizeof(kWledMac2)) == 0 ? "Sim WLED 2" : "Sim WLED";
   info["ver"] = "0.16.0-sim";
 }
 
@@ -182,11 +187,12 @@ void queueStatePush() {
   queueStateResponse(kMsgPush, g_pushId++);
 }
 
-void queueHello() {
+void queueHello(const uint8_t* mac, const char* name) {
+  memcpy(g_responseMac, mac, sizeof(g_responseMac));
   JsonDocument doc;
   JsonObject hello = doc["hello"].to<JsonObject>();
-  hello["name"] = "Sim WLED";
-  hello["mac"] = "aabbcc112233";
+  hello["name"] = name;
+  hello["mac"] = memcmp(mac, kWledMac2, sizeof(kWledMac2)) == 0 ? "aabbcc445566" : "aabbcc112233";
   hello["ver"] = 2607000;
   hello["ch"] = 6;
   queueJson(kMsgHello, 0, doc);
@@ -282,6 +288,7 @@ void handleRequest(uint8_t id, const uint8_t* payload, size_t len) {
 
   if (doc["lv"].is<bool>()) {
     g_liveActive = doc["lv"].as<bool>();
+    memcpy(g_liveMac, g_responseMac, sizeof(g_liveMac));
     g_lastLvKeepalive = millis();
     JsonDocument ok;
     ok["success"] = true;
@@ -344,12 +351,13 @@ void queueLiveFrame() {
     payload[2 + i * 3 + 1] = g;
     payload[2 + i * 3 + 2] = b;
   }
+  memcpy(g_responseMac, g_liveMac, sizeof(g_responseMac));
   queueMessage(kMsgLive, g_pushId++, payload, sizeof(payload));
 }
 
 }  // namespace
 
-void simWledOnOutgoingFrame(const uint8_t*, const uint8_t* data, size_t len) {
+void simWledOnOutgoingFrame(const uint8_t* target, const uint8_t* data, size_t len) {
   if (len < kHeaderSize || data[0] != kMagic || data[1] != kVersion) {
     return;  // WizMote packets and other traffic are not for the JSON API
   }
@@ -366,8 +374,10 @@ void simWledOnOutgoingFrame(const uint8_t*, const uint8_t* data, size_t len) {
   const size_t payloadLen = len - kHeaderSize;
 
   if (type == kMsgHello) {
-    queueHello();
+    queueHello(kWledMac, "Sim WLED");
+    queueHello(kWledMac2, "Sim WLED 2");
   } else if (type == kMsgRequest) {
+    if (target) memcpy(g_responseMac, target, sizeof(g_responseMac));
     handleRequest(id, payload, payloadLen);
   }
 }

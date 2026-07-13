@@ -35,12 +35,26 @@ struct Model {
   std::vector<PresetInfo> presets;
 };
 
+struct DeviceInfo {
+  uint8_t mac[6];
+  uint8_t channel;
+  bool online;
+  std::string name;
+};
+
 void begin();
 void loop(uint32_t now_ms);
 
 const Model& model();
 bool online();
 uint8_t radioChannel(); // discovered WLED channel, or 0 while searching
+size_t deviceCount();
+size_t activeDeviceCount();
+DeviceInfo deviceInfo(size_t index);
+size_t focusedDevice();
+bool targetingAll();
+void selectDevice(size_t index);
+void selectAll();
 
 // Monotonic counters; UI compares against its last-seen value to know when to refresh.
 uint32_t stateRevision();

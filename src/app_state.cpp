@@ -18,6 +18,7 @@ lv_obj_t* brightness_label = nullptr;
 lv_obj_t* brightness_slider = nullptr;
 lv_obj_t* mac_label = nullptr;
 lv_obj_t* conn_label = nullptr;
+lv_obj_t* target_label = nullptr;
 lv_obj_t* orientation_label = nullptr;
 lv_obj_t* idle_label = nullptr;
 lv_obj_t* mode_label = nullptr;

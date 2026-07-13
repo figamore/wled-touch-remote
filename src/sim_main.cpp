@@ -144,6 +144,8 @@ int runSelfTest() {
   simulatorUseDefaultViewState();
 
   expectTrue(waitUntil([] { return wled::online(); }, 3000), "WLED discovered via HELLO");
+  expectTrue(waitUntil([] { return wled::deviceCount() == 2; }, 3000),
+             "multiple WLED instances collected during discovery");
   // effect/palette catalogs are baked into the firmware; only presets arrive over the API
   expectTrue(waitUntil([] { return !wled::model().presets.empty(); }, 12000),
              "preset catalog loaded");
@@ -151,6 +153,16 @@ int runSelfTest() {
   const wled::Model& m = wled::model();
   expectTrue(m.brightness == simWledSnapshot().bri, "boot state pull: brightness");
   expectTrue(m.color == simWledSnapshot().color, "boot state pull: color");
+
+  // Group writes are reliable unicasts, then compact polls reconcile each device model.
+  wled::selectAll();
+  wled::setBrightness(73);
+  expectTrue(waitUntil([] { return simWledSnapshot().bri == 73; }, 3000),
+             "group brightness command reached WLED instances");
+  simulatorRunFrames(120);
+  wled::selectDevice(1);
+  expectTrue(wled::model().brightness == 73, "second WLED model reconciled after group command");
+  wled::selectDevice(0);
 
   // Lose a direct response after WLED applies the request. The remote must retry the same
   // idempotent command, receive its matching response, then release the next queued command.
