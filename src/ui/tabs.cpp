@@ -620,12 +620,22 @@ void onTargetRename(lv_event_t* event) {
   showControllerNameDialog(index);
 }
 
+void onTargetForget(lv_event_t* event) {
+  const size_t index = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+  if (wled::forgetDevice(index)) closeTargetDialog(nullptr);
+}
+
 void onTargetSelected(lv_event_t* event) {
   const uintptr_t value = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
   if (value == 0) wled::selectAll();
   else wled::selectDevice(value - 1);
   updateTargetLabel();
   updateConnLabel();
+  closeTargetDialog(nullptr);
+}
+
+void onTargetScan(lv_event_t*) {
+  wled::scanNow();
   closeTargetDialog(nullptr);
 }
 
@@ -642,6 +652,14 @@ void showTargetDialog() {
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(content, 6, LV_PART_MAIN);
   configurePageScroll(content, true);
+
+  lv_obj_t* scanButton = lv_btn_create(content);
+  styleButton(scanButton);
+  lv_obj_set_size(scanButton, LV_PCT(100), 36);
+  lv_obj_add_event_cb(scanButton, onTargetScan, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* scanLabel = lv_label_create(scanButton);
+  lv_label_set_text(scanLabel, LV_SYMBOL_REFRESH " Scan for linked controllers");
+  lv_obj_center(scanLabel);
 
   if (wled::deviceCount() > 1) {
     lv_obj_t* allButton = lv_btn_create(content);
@@ -667,7 +685,7 @@ void showTargetDialog() {
     styleButton(button, true);
     lv_obj_set_height(button, 38);
     lv_obj_set_flex_grow(button, 1);
-    if (device.channel != wled::radioChannel()) lv_obj_add_state(button, LV_STATE_DISABLED);
+    if (device.channel != wled::radioChannel() || !device.online) lv_obj_add_state(button, LV_STATE_DISABLED);
     if (!wled::targetingAll() && wled::focusedDevice() == i) lv_obj_add_state(button, LV_STATE_CHECKED);
     lv_obj_add_event_cb(button, onTargetSelected, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<uintptr_t>(i + 1)));
@@ -685,10 +703,10 @@ void showTargetDialog() {
     lv_obj_t* rename = lv_btn_create(row);
     styleButton(rename);
     lv_obj_set_size(rename, 42, 38);
-    lv_obj_add_event_cb(rename, onTargetRename, LV_EVENT_CLICKED,
+    lv_obj_add_event_cb(rename, device.online ? onTargetRename : onTargetForget, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
     lv_obj_t* renameLabel = lv_label_create(rename);
-    lv_label_set_text(renameLabel, LV_SYMBOL_EDIT);
+    lv_label_set_text(renameLabel, device.online ? LV_SYMBOL_EDIT : LV_SYMBOL_TRASH);
     lv_obj_center(renameLabel);
   }
 }

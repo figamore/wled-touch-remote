@@ -38,7 +38,10 @@ Repeat these steps for each WLED controller. Controllers on the same Wi-Fi chann
 automatically within a few seconds; the remote does not need to be restarted. Open
 `Settings -> Control Target` to select one controller, rename it locally, or select
 `All controllers` for simultaneous control. Local names are saved by controller MAC and survive
-remote restarts.
+remote restarts. The controller registry, preferred channel, focused controller, and All-mode
+selection are also restored after restart; discovery then verifies which controllers are online.
+Offline controllers can be forgotten from the target picker after they are removed from WLED's
+linked-remote list, preventing stale registry entries from consuming the six-controller limit.
 
 ![Info tab](screenshots/wled-touch-remote-info.png)
 
@@ -76,7 +79,8 @@ peek data to the remote. Web UI changes therefore update the touchscreen automat
 
 ESP-NOW devices must share a radio channel. Simultaneous multi-controller mode is intended for
 WLED instances on the same Wi-Fi network/channel. `All controllers` sends a reliable unicast to
-each online controller and then reconciles their state individually.
+each online controller and then reconciles their state individually. If controller values differ,
+the Power and Brightness controls show `Mixed` until a group value is chosen.
 
 ## Settings
 

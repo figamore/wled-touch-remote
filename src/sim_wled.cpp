@@ -25,8 +25,9 @@ constexpr uint8_t kFragSize = 244;
 constexpr uint8_t kMsgRequest = 0x01;
 constexpr uint8_t kMsgResponse = 0x02;
 constexpr uint8_t kMsgPush = 0x03;
-constexpr uint8_t kMsgHello = 0x04;
+constexpr uint8_t kMsgDiscover = 0x04;
 constexpr uint8_t kMsgLive = 0x05;
+constexpr uint8_t kMsgAnnounce = 0x06;
 
 constexpr uint8_t kWledMac[6] = {0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33};
 constexpr uint8_t kWledMac2[6] = {0xAA, 0xBB, 0xCC, 0x44, 0x55, 0x66};
@@ -54,6 +55,7 @@ bool g_liveActive = false;
 uint32_t g_lastLiveFrame = 0;
 float g_livePhase = 0.0f;
 bool g_dropNextResponse = false;
+bool g_secondLinked = false;
 uint8_t g_responseMac[6] = {0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33};
 uint8_t g_liveMac[6] = {0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33};
 
@@ -187,15 +189,17 @@ void queueStatePush() {
   queueStateResponse(kMsgPush, g_pushId++);
 }
 
-void queueHello(const uint8_t* mac, const char* name) {
+void queueAnnounce(const uint8_t* mac, const char* name, uint8_t id) {
   memcpy(g_responseMac, mac, sizeof(g_responseMac));
   JsonDocument doc;
-  JsonObject hello = doc["hello"].to<JsonObject>();
-  hello["name"] = name;
-  hello["mac"] = memcmp(mac, kWledMac2, sizeof(kWledMac2)) == 0 ? "aabbcc445566" : "aabbcc112233";
-  hello["ver"] = 2607000;
-  hello["ch"] = 6;
-  queueJson(kMsgHello, 0, doc);
+  JsonObject announce = doc["announce"].to<JsonObject>();
+  announce["name"] = name;
+  announce["mac"] = memcmp(mac, kWledMac2, sizeof(kWledMac2)) == 0 ? "aabbcc445566" : "aabbcc112233";
+  announce["ver"] = 2607000;
+  announce["ch"] = 6;
+  announce["proto"] = 1;
+  announce["cap"] = 15;
+  queueJson(kMsgAnnounce, id, doc);
 }
 
 void queueCatalog(const char* what, uint8_t id) {
@@ -373,13 +377,17 @@ void simWledOnOutgoingFrame(const uint8_t* target, const uint8_t* data, size_t l
   const uint8_t* payload = data + kHeaderSize;
   const size_t payloadLen = len - kHeaderSize;
 
-  if (type == kMsgHello) {
-    queueHello(kWledMac, "Sim WLED");
-    queueHello(kWledMac2, "Sim WLED 2");
+  if (type == kMsgDiscover) {
+    queueAnnounce(kWledMac, "Sim WLED", id);
+    if (g_secondLinked) queueAnnounce(kWledMac2, "Sim WLED 2", id);
   } else if (type == kMsgRequest) {
     if (target) memcpy(g_responseMac, target, sizeof(g_responseMac));
     handleRequest(id, payload, payloadLen);
   }
+}
+
+void simWledSetSecondLinked(bool linked) {
+  g_secondLinked = linked;
 }
 
 void simWledTick() {

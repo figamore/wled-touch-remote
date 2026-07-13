@@ -399,7 +399,11 @@ void updateModeLabel() {
 void updateConnLabel() {
   if (!conn_label) return;
   const wled::Model& m = wled::model();
-  if (m.online) {
+  if (wled::targetingAll() && wled::activeDeviceCount()) {
+    lv_label_set_text_fmt(conn_label, LV_SYMBOL_OK " All controllers (%u)",
+                          unsigned(wled::activeDeviceCount()));
+    lv_obj_set_style_text_color(conn_label, lv_color_hex(kColorOk), LV_PART_MAIN);
+  } else if (m.online) {
     lv_label_set_text_fmt(conn_label, LV_SYMBOL_OK " %s", m.name.empty() ? "Connected" : m.name.c_str());
     lv_obj_set_style_text_color(conn_label, lv_color_hex(kColorOk), LV_PART_MAIN);
   } else {
@@ -454,13 +458,25 @@ void uiSyncFromModel() {
   updateTargetLabel();
 
   const wled::Model& m = wled::model();
-  if (state.power != m.power) setPowerUi(m.power);
+  const uint16_t mixed = wled::mixedStateMask();
+  if (mixed & wled::kMixedPower) {
+    if (power_button) lv_obj_clear_state(power_button, LV_STATE_CHECKED);
+    if (power_button_label) lv_label_set_text(power_button_label, LV_SYMBOL_POWER "  Mixed");
+  } else if (state.power != m.power || wled::targetingAll()) {
+    setPowerUi(m.power);
+  }
 
   if (state.brightness != m.brightness &&
       !(brightness_slider && lv_obj_has_state(brightness_slider, LV_STATE_PRESSED))) {
     state.brightness = m.brightness;
     if (brightness_slider) lv_slider_set_value(brightness_slider, m.brightness, LV_ANIM_OFF);
-    if (brightness_label) lv_label_set_text_fmt(brightness_label, "%u", m.brightness);
+    if (brightness_label) {
+      if (mixed & wled::kMixedBrightness) lv_label_set_text(brightness_label, "Mixed");
+      else lv_label_set_text_fmt(brightness_label, "%u", m.brightness);
+    }
+  } else if (brightness_label && (mixed & wled::kMixedBrightness) &&
+             !(brightness_slider && lv_obj_has_state(brightness_slider, LV_STATE_PRESSED))) {
+    lv_label_set_text(brightness_label, "Mixed");
   }
 
   updateColorControlsFromModel();
@@ -478,7 +494,8 @@ void uiSyncFromModel() {
 // ── Event handlers ────────────────────────────────────────────────────────────
 
 void onPower(lv_event_t*) {
-  setPowerUi(!state.power);
+  const bool turnOn = (wled::mixedStateMask() & wled::kMixedPower) || !state.power;
+  setPowerUi(turnOn);
   wled::setPower(state.power);
 }
 

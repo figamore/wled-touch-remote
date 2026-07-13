@@ -11,6 +11,7 @@
 
 // Wired into include/sim/esp_now.h: every esp_now_send() lands here.
 void simWledOnOutgoingFrame(const uint8_t* mac, const uint8_t* data, size_t len);
+void simWledSetSecondLinked(bool linked);
 
 // Call once per loop(): delivers queued replies and streams live peek frames.
 void simWledTick();

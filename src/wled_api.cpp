@@ -24,13 +24,14 @@ constexpr uint8_t kFragSize = 244;
 constexpr uint8_t kMsgRequest = 0x01;
 constexpr uint8_t kMsgResponse = 0x02;
 constexpr uint8_t kMsgPush = 0x03;
-constexpr uint8_t kMsgHello = 0x04;
+constexpr uint8_t kMsgDiscover = 0x04;
 constexpr uint8_t kMsgLive = 0x05;
+constexpr uint8_t kMsgAnnounce = 0x06;
 
 constexpr size_t kMaxJson = 8192;
 constexpr uint8_t kMaxFrags = kMaxJson / kFragSize + 1;
 constexpr uint32_t kLiveReArmMs = 10000;  // refresh the live subscription well inside WLED's 30 s lease
-constexpr uint32_t kHeartbeatMs = 3000;   // cheap HELLO keepalive cadence while connected
+constexpr uint32_t kHeartbeatMs = 3000;   // cheap DISCOVER presence cadence while connected
 constexpr uint32_t kResyncMs = 30000;     // periodic full state poll to correct any missed pushes
 constexpr uint32_t kOfflineMs = 10000;    // no rx for this long => offline (must exceed kHeartbeatMs)
 constexpr uint32_t kHopDwellMs = 150;     // time spent probing each channel while hunting for WLED
@@ -40,21 +41,26 @@ constexpr uint32_t kRequestRetryMs = 120;
 constexpr uint8_t  kMaxChannel = 13;
 constexpr uint8_t  kCatalogTries = 6;     // give up refetching the preset list after this many attempts
 constexpr uint8_t  kMaxRequestAttempts = 4;
-constexpr size_t   kRxQueueSize = kMaxFrags; // hold one maximum fragmented message
-// Six-device group writes plus reconciliation polls need 12 slots. Two spare slots absorb
-// heartbeat/catalog work without reserving several unnecessary kilobytes of internal DRAM.
-constexpr size_t   kRequestQueueSize = 14;
+// WLED emits at most three fragments per loop and this remote drains six. Twelve callback
+// slots absorb scheduling jitter without reserving an entire 8 KB message twice in DRAM.
+constexpr size_t   kRxQueueSize = 12;
+// A transaction stores one payload plus a target bitmap, regardless of group size. Eight
+// distinct pending actions cover UI bursts while using substantially less internal DRAM.
+constexpr size_t   kTransactionQueueSize = 8;
 // Remote-generated requests are compact single-fragment JSON; 192 bytes also covers a safely
 // escaped 32-character preset name while keeping every queue entry bounded.
 constexpr size_t   kMaxRequestLength = 192;
 constexpr size_t   kMaxDevices = 6;
 constexpr size_t   kMaxDeviceAliasLength = 32;
+constexpr size_t   kMaxLiveBytes = 4 + 256 * 3; // WLED caps live peek at 256 RGB pixels
+constexpr uint8_t  kDeviceRegistryVersion = 1;
 constexpr uint32_t kDiscoveryCollectMs = 500;
 
 Model g_model;
 struct DeviceSlot {
   uint8_t mac[6] = {};
   uint8_t channel = 0;
+  uint8_t capabilities = 0;
   bool peerRegistered = false;
   uint32_t lastSeen = 0;
   char alias[kMaxDeviceAliasLength + 1] = {};
@@ -97,19 +103,24 @@ bool g_active = false;
 uint32_t g_reasmLast = 0;
 
 // Latest decoded live frame.
-uint8_t g_live[kMaxJson];
+uint8_t g_live[kMaxLiveBytes];
 uint16_t g_liveCount = 0, g_liveW = 0, g_liveH = 0;
 
 bool g_liveWanted = false;
 uint32_t g_liveArmed = 0;
 
 // ESP-NOW only receives on the channel the radio is tuned to, and WLED replies on its own WiFi
-// channel. So we hop channels broadcasting HELLO until WLED answers, then lock on. This keeps the
+// channel. So we hop channels broadcasting DISCOVER until WLED answers, then lock on. This keeps the
 // remote plug-and-play (no channel config) the way the send-only WizMote path was.
 uint8_t g_channel = 0;
 bool g_channelLocked = false;
+uint8_t g_preferredChannel = 0;
+bool g_preferredChannelTried = false;
 uint32_t g_lastHop = 0;
 uint32_t g_lastHeartbeat = 0;
+bool g_discoveryRequested = false;
+uint8_t g_lastDiscoveryId = 0;
+uint32_t g_lastDiscoverySent = 0;
 uint32_t g_lastPoll = 0;
 uint32_t g_lastCatalog = 0;
 uint32_t g_presetCatalogRefreshAt = 0;
@@ -136,17 +147,23 @@ enum class RequestKey : uint8_t {
   Live,
 };
 
-struct QueuedRequest {
+struct QueuedTransaction {
+  char json[kMaxRequestLength] = {};
+  RequestKey key = RequestKey::None;
+  bool retryable = true;
+  bool started = false;
+  uint8_t targets = 0;
+  uint8_t reconcileTargets = 0;
+};
+
+QueuedTransaction g_transactions[kTransactionQueueSize];
+uint8_t g_transactionRead = 0, g_transactionWrite = 0, g_transactionCount = 0;
+
+struct ActiveRequest {
   uint8_t target[6] = {};
   char json[kMaxRequestLength] = {};
   RequestKey key = RequestKey::None;
   bool retryable = true;
-};
-
-QueuedRequest g_requestQueue[kRequestQueueSize];
-uint8_t g_requestRead = 0, g_requestWrite = 0, g_requestCount = 0;
-
-struct ActiveRequest : QueuedRequest {
   bool active = false;
   bool awaitingResponse = false;
   uint8_t id = 0;
@@ -190,8 +207,9 @@ const char* messageTypeName(uint8_t type) {
     case kMsgRequest:  return "REQUEST";
     case kMsgResponse: return "RESPONSE";
     case kMsgPush:     return "PUSH";
-    case kMsgHello:    return "HELLO";
+    case kMsgDiscover: return "LEGACY_HELLO";
     case kMsgLive:     return "LIVE";
+    case kMsgAnnounce: return "ANNOUNCE";
     default:           return "UNKNOWN";
   }
 }
@@ -248,21 +266,99 @@ void saveDeviceAlias(const DeviceSlot& device) {
   prefs.end();
 }
 
+bool decodeHexNibble(char value, uint8_t& nibble) {
+  if (value >= '0' && value <= '9') nibble = uint8_t(value - '0');
+  else if (value >= 'a' && value <= 'f') nibble = uint8_t(value - 'a' + 10);
+  else if (value >= 'A' && value <= 'F') nibble = uint8_t(value - 'A' + 10);
+  else return false;
+  return true;
+}
+
+bool decodeDeviceRecord(const char* record, uint8_t* mac, uint8_t& channel) {
+  if (!record || !mac || strnlen(record, 16) != 14) return false;
+  for (size_t i = 0; i < 6; ++i) {
+    uint8_t high, low;
+    if (!decodeHexNibble(record[i * 2], high) || !decodeHexNibble(record[i * 2 + 1], low)) return false;
+    mac[i] = uint8_t((high << 4) | low);
+  }
+  channel = uint8_t(atoi(record + 12));
+  return channel >= 1 && channel <= kMaxChannel;
+}
+
+// Persists known MAC/channel pairs and target selection so startup can probe the useful channel first.
+void saveDeviceRegistry() {
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNamespace, false)) return;
+  prefs.putUChar("regVer", kDeviceRegistryVersion);
+  prefs.putUChar("devCount", uint8_t(g_deviceCount));
+  prefs.putUChar("focus", uint8_t(g_focusDevice));
+  prefs.putBool("targetAll", g_targetAll);
+  for (size_t i = 0; i < g_deviceCount; ++i) {
+    char key[6];
+    char record[16];
+    snprintf(key, sizeof(key), "dev%u", unsigned(i));
+    snprintf(record, sizeof(record), "%02x%02x%02x%02x%02x%02x%02u",
+             g_devices[i].mac[0], g_devices[i].mac[1], g_devices[i].mac[2],
+             g_devices[i].mac[3], g_devices[i].mac[4], g_devices[i].mac[5],
+             g_devices[i].channel);
+    prefs.putString(key, record);
+  }
+  prefs.end();
+}
+
+// Loads the bounded registry without treating persisted devices as online until they announce.
+void loadDeviceRegistry() {
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNamespace, true)) return;
+  if (prefs.getUChar("regVer", 0) != kDeviceRegistryVersion) { prefs.end(); return; }
+  const uint8_t count = std::min<uint8_t>(prefs.getUChar("devCount", 0), uint8_t(kMaxDevices));
+  for (uint8_t i = 0; i < count; ++i) {
+    char key[6];
+    char record[16] = {};
+    snprintf(key, sizeof(key), "dev%u", unsigned(i));
+    prefs.getString(key, record, sizeof(record));
+    DeviceSlot candidate;
+    if (!decodeDeviceRecord(record, candidate.mac, candidate.channel)) continue;
+    g_devices[g_deviceCount++] = std::move(candidate);
+  }
+  g_focusDevice = std::min<size_t>(prefs.getUChar("focus", 0), g_deviceCount ? g_deviceCount - 1 : 0);
+  g_targetAll = g_deviceCount > 1 && prefs.getBool("targetAll", false);
+  prefs.end();
+  for (size_t i = 0; i < g_deviceCount; ++i) loadDeviceAlias(g_devices[i]);
+  if (g_deviceCount) {
+    g_preferredChannel = g_devices[g_focusDevice].channel;
+    g_model = g_devices[g_focusDevice].model;
+    g_stateRev++;
+    g_deviceRev++;
+  }
+}
+
 
 DeviceSlot* rememberDevice(const uint8_t* mac, uint32_t now_ms) {
   if (!mac || isBroadcastMac(mac)) return nullptr;
   DeviceSlot* device = findDevice(mac);
+  bool registryChanged = false;
   if (!device) {
-    if (g_deviceCount >= kMaxDevices) return nullptr;
+    if (g_deviceCount >= kMaxDevices) {
+      Serial.printf("[ESPNOW] controller registry full capacity=%u; ignored "
+                    "%02x:%02x:%02x:%02x:%02x:%02x\n",
+                    unsigned(kMaxDevices), mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+      return nullptr;
+    }
     device = &g_devices[g_deviceCount++];
     memcpy(device->mac, mac, sizeof(device->mac));
     device->channel = g_channel;
     loadDeviceAlias(*device);
     g_stateRev++;
     g_deviceRev++;
+    registryChanged = true;
   }
-  device->channel = g_channel;
+  if (device->channel != g_channel) {
+    device->channel = g_channel;
+    registryChanged = true;
+  }
   device->lastSeen = now_ms;
+  if (registryChanged) saveDeviceRegistry();
   return device;
 }
 
@@ -334,16 +430,26 @@ void processFrame(const RxFrame& frame, uint32_t now_ms) {
   const uint8_t idx = data[4];
   const uint8_t total = data[5];
   const uint8_t plen = len - kHeaderSize;
-  if (type != kMsgResponse && type != kMsgPush && type != kMsgHello && type != kMsgLive) return;
-  if (!g_channelLocked && type != kMsgHello) return;
-  if (g_channelLocked && type != kMsgHello && !findDevice(mac)) return;
+  if (type != kMsgResponse && type != kMsgPush && type != kMsgDiscover &&
+      type != kMsgLive && type != kMsgAnnounce) return;
+  const bool discoveryReply = type == kMsgAnnounce || type == kMsgDiscover;
+  if (!g_channelLocked && !discoveryReply) return;
+  if (g_channelLocked && !discoveryReply && !findDevice(mac)) return;
+  if (type == kMsgAnnounce &&
+      (!g_lastDiscoverySent || id != g_lastDiscoveryId ||
+       now_ms - g_lastDiscoverySent > kRequestTimeoutMs)) return;
+  if (type == kMsgDiscover &&
+      (!g_lastDiscoverySent || now_ms - g_lastDiscoverySent > kRequestTimeoutMs)) return;
+  if (type == kMsgResponse &&
+      (!g_request.active || id != g_request.id ||
+       memcmp(mac, g_request.target, sizeof(g_request.target)) != 0)) return;
   if (total < 1 || total > kMaxFrags || idx >= total || plen > kFragSize) return;
+  if (discoveryReply && (idx != 0 || total != 1)) return;
   if (idx < total - 1 && plen != kFragSize) return;
 
-  g_lastLinkRx = now_ms;
   if (g_active && now_ms - g_reasmLast > kReasmTimeoutMs) resetReasm();
 
-  // A request/response exchange has priority over best-effort LIVE, PUSH, and HELLO traffic.
+  // A request/response exchange has priority over best-effort LIVE, PUSH, and discovery traffic.
   // Sharing one reassembly buffer otherwise lets an unrelated frame discard a partial response.
   if (g_request.active && g_request.awaitingResponse &&
       (type != kMsgResponse || id != g_request.id ||
@@ -352,7 +458,7 @@ void processFrame(const RxFrame& frame, uint32_t now_ms) {
     return;
   }
   // Once a state PUSH starts, let its remaining fragments finish before accepting best-effort
-  // live/hello traffic. A newer PUSH may still replace an incomplete older state update.
+  // live/discovery traffic. A newer PUSH may still replace an incomplete older state update.
   if (g_active && g_curType == kMsgPush && type != kMsgPush) return;
   if (!g_active || g_curId != id || g_curType != type || g_curTotal != total ||
       (mac && memcmp(g_curMac, mac, sizeof(g_curMac)) != 0)) {
@@ -417,60 +523,96 @@ bool sendFrameTo(const uint8_t* mac, uint8_t type, uint8_t id, const uint8_t* pa
 
 void clearRequests() {
   g_request = ActiveRequest{};
-  g_requestRead = g_requestWrite = g_requestCount = 0;
+  g_transactionRead = g_transactionWrite = g_transactionCount = 0;
 }
 
-void queueRequest(const char* json, RequestKey key, bool retryable = true,
-                  const uint8_t* target = nullptr) {
-  if (!json) return;
-  if (!target) {
-    if (!g_deviceCount) return;
-    target = g_devices[g_focusDevice].mac;
+int deviceIndexForMac(const uint8_t* mac) {
+  if (!mac) return -1;
+  for (size_t i = 0; i < g_deviceCount; ++i) {
+    if (memcmp(g_devices[i].mac, mac, sizeof(g_devices[i].mac)) == 0) return int(i);
   }
-  const size_t len = strnlen(json, kMaxRequestLength);
-  if (!len || len >= kMaxRequestLength) return;
+  return -1;
+}
 
-  // Replace a queued value for the same control. This keeps slider/color gestures bounded
-  // while preserving ordering between different controls.
+uint8_t onlineTargetMask() {
+  if (!g_deviceCount) return 0;
+  if (!g_targetAll) return uint8_t(1U << g_focusDevice);
+  uint8_t mask = 0;
+  for (size_t i = 0; i < g_deviceCount; ++i) {
+    if (g_devices[i].channel == g_channel && g_devices[i].model.online) mask |= uint8_t(1U << i);
+  }
+  return mask;
+}
+
+uint8_t targetCount(uint8_t mask) {
+  uint8_t count = 0;
+  while (mask) { count += mask & 1U; mask >>= 1; }
+  return count;
+}
+
+// Stores one command once and lets the scheduler visit every target. No group fan-out can
+// exhaust the queue halfway through an operation.
+bool queueTransaction(const char* json, RequestKey key, bool retryable, uint8_t targets,
+                      bool reconcile) {
+  if (!json || !targets) return false;
+  const size_t len = strnlen(json, kMaxRequestLength);
+  if (!len || len >= kMaxRequestLength) return false;
+
+  // Coalesce gestures that have not started. The front transaction is immutable while its
+  // active target is in flight so every member of a group receives the same command value.
   if (key != RequestKey::None) {
-    for (uint8_t i = 0; i < g_requestCount; i++) {
-      QueuedRequest& queued = g_requestQueue[(g_requestRead + i) % kRequestQueueSize];
-      if (queued.key == key && memcmp(queued.target, target, sizeof(queued.target)) == 0) {
+    for (uint8_t i = 0; i < g_transactionCount; i++) {
+      QueuedTransaction& queued = g_transactions[(g_transactionRead + i) % kTransactionQueueSize];
+      if (queued.started) continue;
+      if (queued.key == key && queued.targets == targets) {
         memcpy(queued.json, json, len + 1);
         queued.retryable = retryable;
-        return;
+        queued.reconcileTargets = reconcile ? targets : 0;
+        return true;
+      }
+      if (queued.key == key && queued.retryable == retryable &&
+          strcmp(queued.json, json) == 0) {
+        queued.targets |= targets;
+        if (reconcile) queued.reconcileTargets |= targets;
+        return true;
       }
     }
   }
-  if (g_requestCount >= kRequestQueueSize) return;
+  if (g_transactionCount >= kTransactionQueueSize) {
+    Serial.printf("[ESPNOW] transaction queue full key=%s targets=0x%02x depth=%u\n",
+                  requestKeyName(key), targets, g_transactionCount);
+    return false;
+  }
 
-  QueuedRequest& queued = g_requestQueue[g_requestWrite];
-  memcpy(queued.target, target, sizeof(queued.target));
+  QueuedTransaction& queued = g_transactions[g_transactionWrite];
+  queued = QueuedTransaction{};
   memcpy(queued.json, json, len + 1);
   queued.key = key;
   queued.retryable = retryable;
-  g_requestWrite = (g_requestWrite + 1) % kRequestQueueSize;
-  g_requestCount++;
+  queued.targets = targets;
+  queued.reconcileTargets = reconcile ? targets : 0;
+  g_transactionWrite = (g_transactionWrite + 1) % kTransactionQueueSize;
+  g_transactionCount++;
+  return true;
 }
 
-// Enqueues one reliable unicast per selected device; commands remain ordered and retryable.
-void queueForTargets(const char* json, RequestKey key, bool retryable = true) {
-  if (!g_deviceCount) return;
-  if (!g_targetAll) {
-    queueRequest(json, key, retryable, g_devices[g_focusDevice].mac);
-    return;
+bool queueRequest(const char* json, RequestKey key, bool retryable = true,
+                  const uint8_t* target = nullptr) {
+  if (!target) {
+    if (!g_deviceCount) return false;
+    target = g_devices[g_focusDevice].mac;
   }
-  for (size_t i = 0; i < g_deviceCount; ++i) {
-    if (g_devices[i].channel != g_channel || !g_devices[i].model.online) continue;
-    queueRequest(json, key, retryable, g_devices[i].mac);
-  }
-  // Group PUSH frames can overlap the next unicast response; compact polls reconcile every model.
-  if (key != RequestKey::Poll && key != RequestKey::Live && key != RequestKey::None) {
-    for (size_t i = 0; i < g_deviceCount; ++i) {
-      if (g_devices[i].channel != g_channel || !g_devices[i].model.online) continue;
-      queueRequest("{\"v\":\"compact\"}", RequestKey::Poll, true, g_devices[i].mac);
-    }
-  }
+  const int index = deviceIndexForMac(target);
+  if (index < 0) return false;
+  return queueTransaction(json, key, retryable, uint8_t(1U << index), false);
+}
+
+// Enqueues one transaction for the selection; group reconciliation is generated lazily.
+bool queueForTargets(const char* json, RequestKey key, bool retryable = true) {
+  const uint8_t targets = onlineTargetMask();
+  const bool reconcile = targetCount(targets) > 1 && key != RequestKey::Poll &&
+                         key != RequestKey::Live && key != RequestKey::None;
+  return queueTransaction(json, key, retryable, targets, reconcile);
 }
 
 void completeRequest() {
@@ -491,21 +633,54 @@ void retryRequest(uint32_t now_ms) {
   g_request.nextAttempt = now_ms + kRequestRetryMs;
 }
 
-void pumpRequests(uint32_t now_ms) {
-  if (!g_channelLocked || !g_deviceCount) return;
+void markRequestTargetOffline() {
+  const int index = deviceIndexForMac(g_request.target);
+  if (index < 0) return;
+  DeviceSlot& device = g_devices[index];
+  if (device.model.online) {
+    device.model.online = false;
+    if (size_t(index) == g_focusDevice) g_model = device.model;
+    g_stateRev++;
+    g_deviceRev++;
+  }
+  if (g_transactionCount) {
+    g_transactions[g_transactionRead].reconcileTargets &= uint8_t(~(1U << index));
+  }
+}
 
-  if (!g_request.active && g_requestCount) {
-    const QueuedRequest& queued = g_requestQueue[g_requestRead];
-    memcpy(g_request.target, queued.target, sizeof(g_request.target));
-    memcpy(g_request.json, queued.json, sizeof(g_request.json));
-    g_request.key = queued.key;
-    g_request.retryable = queued.retryable;
+// Loads the next target from the front transaction, then lazily enters reconciliation phase.
+bool startNextRequest() {
+  while (g_transactionCount) {
+    QueuedTransaction& transaction = g_transactions[g_transactionRead];
+    const bool reconciling = transaction.targets == 0;
+    uint8_t& targets = reconciling ? transaction.reconcileTargets : transaction.targets;
+    if (!targets) {
+      transaction = QueuedTransaction{};
+      g_transactionRead = (g_transactionRead + 1) % kTransactionQueueSize;
+      g_transactionCount--;
+      continue;
+    }
+    uint8_t index = 0;
+    while (!(targets & uint8_t(1U << index))) index++;
+    targets &= uint8_t(~(1U << index));
+    transaction.started = true;
+    memcpy(g_request.target, g_devices[index].mac, sizeof(g_request.target));
+    const char* json = reconciling ? "{\"v\":\"compact\"}" : transaction.json;
+    memcpy(g_request.json, json, strlen(json) + 1);
+    g_request.key = reconciling ? RequestKey::Poll : transaction.key;
+    g_request.retryable = reconciling ? true : transaction.retryable;
     g_request.active = true;
     g_request.id = g_msgId++;
     g_framesDeferredForResponse = 0;
-    g_requestRead = (g_requestRead + 1) % kRequestQueueSize;
-    g_requestCount--;
+    return true;
   }
+  return false;
+}
+
+void pumpRequests(uint32_t now_ms) {
+  if (!g_channelLocked || !g_deviceCount) return;
+
+  if (!g_request.active) startNextRequest();
   if (!g_request.active) return;
 
   if (g_request.awaitingResponse) {
@@ -515,6 +690,7 @@ void pumpRequests(uint32_t now_ms) {
                   now_ms - g_request.sentAt, now_ms - g_lastLinkRx, g_channel,
                   currentRadioChannel(), g_framesDeferredForResponse);
     if (!g_request.retryable || g_request.attempts >= kMaxRequestAttempts) {
+      if (g_request.retryable) markRequestTargetOffline();
       completeRequest();
       return;
     }
@@ -525,7 +701,7 @@ void pumpRequests(uint32_t now_ms) {
   const size_t len = strlen(g_request.json);
   Serial.printf("[ESPNOW] TX request key=%s id=%u attempt=%u bytes=%u lockedCh=%u radioCh=%u queued=%u\n",
                 requestKeyName(g_request.key), g_request.id, g_request.attempts + 1,
-                unsigned(len), g_channel, currentRadioChannel(), g_requestCount);
+                unsigned(len), g_channel, currentRadioChannel(), g_transactionCount);
   if (sendFrameTo(g_request.target, kMsgRequest, g_request.id,
                   reinterpret_cast<const uint8_t*>(g_request.json), len)) {
     if (g_request.key == RequestKey::Live) {
@@ -538,7 +714,13 @@ void pumpRequests(uint32_t now_ms) {
   } else {
     Serial.printf("[ESPNOW] TX request immediate failure key=%s id=%u ch=%u\n",
                   requestKeyName(g_request.key), g_request.id, g_channel);
-    g_request.nextAttempt = now_ms + kRequestRetryMs;
+    g_request.attempts++;
+    if (!g_request.retryable || g_request.attempts >= kMaxRequestAttempts) {
+      if (g_request.retryable) markRequestTargetOffline();
+      completeRequest();
+    } else {
+      g_request.nextAttempt = now_ms + kRequestRetryMs;
+    }
   }
 }
 
@@ -548,12 +730,23 @@ void setRadioChannel(uint8_t ch) {
   esp_wifi_set_promiscuous(false);
 }
 
+void sendDiscovery(uint32_t now_ms) {
+  g_lastDiscoveryId = g_msgId++;
+  g_lastDiscoverySent = now_ms;
+  sendFrameTo(kBroadcastMac, kMsgDiscover, g_lastDiscoveryId, nullptr, 0);
+}
+
 void hopChannel(uint32_t now_ms) {
-  g_channel = (g_channel % kMaxChannel) + 1;
+  if (!g_preferredChannelTried && g_preferredChannel >= 1 && g_preferredChannel <= kMaxChannel) {
+    g_channel = g_preferredChannel;
+    g_preferredChannelTried = true;
+  } else {
+    g_channel = (g_channel % kMaxChannel) + 1;
+  }
   setRadioChannel(g_channel);
-  sendFrameTo(kBroadcastMac, kMsgHello, g_msgId++, nullptr, 0);
-  Serial.printf("[ESPNOW] discovery probe ch=%u helloId=%u rxDrops=%lu\n",
-                g_channel, uint8_t(g_msgId - 1), g_rxQueueDrops.load(std::memory_order_relaxed));
+  sendDiscovery(now_ms);
+  Serial.printf("[ESPNOW] discovery probe ch=%u discoveryId=%u rxDrops=%lu\n",
+                g_channel, g_lastDiscoveryId, g_rxQueueDrops.load(std::memory_order_relaxed));
   g_lastHop = now_ms;
 }
 
@@ -598,16 +791,33 @@ struct ParseResult {
   int error = -1;
 };
 
-ParseResult parseInbox(DeviceSlot& device, const uint8_t* data, size_t len) {
+ParseResult parseInbox(DeviceSlot& device, uint8_t msgType, const uint8_t* data, size_t len) {
   ParseResult result;
   JsonDocument doc;
   if (deserializeJson(doc, data, len)) return result;
 
-  if (doc["hello"].is<JsonObject>()) {
-    JsonObjectConst hello = doc["hello"].as<JsonObjectConst>();
-    const char* name = hello["name"].as<const char*>();
+  const bool modernAnnouncement = doc["announce"].is<JsonObject>();
+  const bool legacyAnnouncement = doc["hello"].is<JsonObject>();
+  const bool statePayload = doc["state"].is<JsonObject>();
+  const bool catalogPayload = doc["presets"].is<JsonObject>();
+  const bool resultPayload = doc["success"].is<bool>() || doc["error"].is<int>();
+  if ((msgType == kMsgAnnounce && !modernAnnouncement) ||
+      (msgType == kMsgDiscover && !legacyAnnouncement) ||
+      (msgType == kMsgPush && !statePayload) ||
+      (msgType == kMsgResponse && !statePayload && !catalogPayload && !resultPayload)) return result;
+
+  if (modernAnnouncement || legacyAnnouncement) {
+    JsonObjectConst announce = modernAnnouncement
+                                   ? doc["announce"].as<JsonObjectConst>()
+                                   : doc["hello"].as<JsonObjectConst>();
+    if (modernAnnouncement &&
+        ((!announce["proto"].is<int>() || announce["proto"].as<int>() != kVersion) ||
+         (!announce["ch"].is<int>() || announce["ch"].as<int>() != g_channel))) return result;
+    const char* name = announce["name"].as<const char*>();
+    if (name && strnlen(name, kMaxDeviceAliasLength + 1) > kMaxDeviceAliasLength) return result;
     const bool changed = !device.model.online || (name && device.model.name != name);
     if (name) device.model.name = name;
+    if (modernAnnouncement && announce["cap"].is<int>()) device.capabilities = announce["cap"].as<uint8_t>();
     device.model.online = true;
     if (changed) {
       g_stateRev++;
@@ -615,10 +825,17 @@ ParseResult parseInbox(DeviceSlot& device, const uint8_t* data, size_t len) {
     }
     result.valid = true;
   } else if (doc["state"].is<JsonObject>()) {
+    const bool wasOffline = !device.model.online;
     applyState(device.model, doc["state"].as<JsonObjectConst>(), doc["info"].as<JsonObjectConst>());
     g_stateRev++;
+    if (wasOffline) g_deviceRev++;
     result.valid = true;
   } else if (doc["presets"].is<JsonObject>()) {
+    if (!device.model.online) {
+      device.model.online = true;
+      g_stateRev++;
+      g_deviceRev++;
+    }
     device.model.presets.clear();
     for (JsonPairConst kv : doc["presets"].as<JsonObjectConst>()) {
       const char* s = kv.value().as<const char*>();
@@ -633,6 +850,7 @@ ParseResult parseInbox(DeviceSlot& device, const uint8_t* data, size_t len) {
     if (!device.model.online) {
       device.model.online = true;
       g_stateRev++;
+      g_deviceRev++;
     }
     result.valid = true;
     if (doc["error"].is<int>()) result.error = doc["error"].as<int>();
@@ -675,32 +893,36 @@ void handleCompleteMessage(uint8_t type, uint8_t id, const uint8_t* src,
   DeviceSlot* device = findDevice(src);
   const bool newDevice = !device;
   DeviceSlot discoveredDevice;
-  if (type == kMsgHello && !device) {
+  if ((type == kMsgAnnounce || type == kMsgDiscover) && !device) {
     memcpy(discoveredDevice.mac, src, sizeof(discoveredDevice.mac));
     discoveredDevice.channel = g_channel;
     discoveredDevice.lastSeen = now_ms;
     device = &discoveredDevice;
   }
   if (!device) return;
-  device->lastSeen = now_ms;
 
   if (type == kMsgLive) {
     if (device == &g_devices[g_focusDevice] && decodeLive(payload, len)) {
+      device->lastSeen = now_ms;
+      g_lastLinkRx = now_ms;
       g_lastRx = now_ms;
       g_lastLiveRx = now_ms;
     }
     return;
   }
 
-  const ParseResult result = parseInbox(*device, payload, len);
+  const ParseResult result = parseInbox(*device, type, payload, len);
   if (!result.valid) return;
+  device->lastSeen = now_ms;
+  g_lastLinkRx = now_ms;
   if (newDevice) {
     DeviceSlot* storedDevice = rememberDevice(src, now_ms);
     if (!storedDevice) return;
     storedDevice->model = std::move(device->model);
+    storedDevice->capabilities = device->capabilities;
     device = storedDevice;
   }
-  if (type == kMsgHello && newDevice && g_channelLocked) {
+  if ((type == kMsgAnnounce || type == kMsgDiscover) && newDevice && g_channelLocked) {
     if (ensurePeerRegistered(*device)) {
       Serial.printf("[ESPNOW] discovered newly linked WLED %02x:%02x:%02x:%02x:%02x:%02x ch=%u devices=%u\n",
                     device->mac[0], device->mac[1], device->mac[2], device->mac[3],
@@ -710,12 +932,15 @@ void handleCompleteMessage(uint8_t type, uint8_t id, const uint8_t* src,
   }
   g_lastRx = now_ms;
   if (device == &g_devices[g_focusDevice]) g_model = device->model;
-  if (type == kMsgHello && !g_channelLocked) {
+  if ((type == kMsgAnnounce || type == kMsgDiscover) && !g_channelLocked) {
     if (!g_discoveryFirstReply) g_discoveryFirstReply = now_ms;
   }
   if (type == kMsgResponse && g_request.active && id == g_request.id &&
       memcmp(src, g_request.target, sizeof(g_request.target)) == 0) {
-    if (result.error == 3) retryRequest(now_ms);
+    if (result.error == 3) {
+      if (g_request.attempts >= kMaxRequestAttempts) completeRequest();
+      else retryRequest(now_ms);
+    }
     else {
       if (g_request.key == RequestKey::Catalog && result.error == 8) loadFallbackPresets(*device);
       else if (g_request.key == RequestKey::Catalog && result.error >= 8) g_presetsLoaded = true;
@@ -727,6 +952,7 @@ void handleCompleteMessage(uint8_t type, uint8_t id, const uint8_t* src,
 }  // namespace
 
 void begin() {
+  loadDeviceRegistry();
   esp_now_register_recv_cb(onRecv);
 }
 
@@ -765,30 +991,34 @@ void loop(uint32_t now_ms) {
     }
   }
 
-  // Keep collecting staggered HELLO replies before locking the radio to this device group.
+  // Keep collecting staggered ANNOUNCE replies before locking the radio to this device group.
   if (!g_channelLocked && g_discoveryFirstReply &&
       now_ms - g_discoveryFirstReply >= kDiscoveryCollectMs) {
     size_t registered = 0;
     for (size_t i = 0; i < g_deviceCount; ++i) {
-      if (g_devices[i].channel == g_channel && ensurePeerRegistered(g_devices[i])) registered++;
+      if (g_devices[i].channel == g_channel && g_devices[i].model.online &&
+          ensurePeerRegistered(g_devices[i])) registered++;
     }
     if (registered) {
-      if (g_focusDevice >= g_deviceCount || g_devices[g_focusDevice].channel != g_channel) {
+      if (g_focusDevice >= g_deviceCount || g_devices[g_focusDevice].channel != g_channel ||
+          !g_devices[g_focusDevice].model.online) {
         for (size_t i = 0; i < g_deviceCount; ++i) {
-          if (g_devices[i].channel == g_channel) { g_focusDevice = i; break; }
+          if (g_devices[i].channel == g_channel && g_devices[i].model.online) { g_focusDevice = i; break; }
         }
         g_targetAll = false;
       }
       g_channelLocked = true;
+      g_preferredChannel = g_channel;
       g_lastLinkRx = now_ms;
       g_lastHeartbeat = g_lastPoll = g_lastCatalog = now_ms;
       g_catalogTries = 1;
       g_discoveryFirstReply = 0;
       g_model = g_devices[g_focusDevice].model;
+      saveDeviceRegistry();
       Serial.printf("[ESPNOW] LOCKED ch=%u devices=%u radioCh=%u rxDrops=%lu\n",
                     g_channel, unsigned(registered), currentRadioChannel(), rxQueueDrops);
       for (size_t i = 0; i < g_deviceCount; ++i) {
-        if (g_devices[i].channel == g_channel) {
+        if (g_devices[i].channel == g_channel && g_devices[i].model.online) {
           queueRequest("{\"v\":\"compact\"}", RequestKey::Poll, true, g_devices[i].mac);
         }
       }
@@ -805,6 +1035,8 @@ void loop(uint32_t now_ms) {
       g_devices[i].peerRegistered = false;
     }
     g_channelLocked = false;
+    g_preferredChannel = g_channel;
+    g_preferredChannelTried = false;
     g_discoveryFirstReply = 0;
     g_presetsLoaded = false;
     g_presetCatalogRefreshAt = 0;
@@ -822,9 +1054,11 @@ void loop(uint32_t now_ms) {
       queueRequest("{\"get\":\"ps\"}", RequestKey::CatalogRefresh, true,
                    g_presetCatalogRefreshMac);
     }
-    if (!g_request.active && !g_requestCount && now_ms - g_lastHeartbeat > kHeartbeatMs) {
-      sendFrameTo(kBroadcastMac, kMsgHello, g_msgId++, nullptr, 0);
+    if (!g_request.active && !g_transactionCount &&
+        (g_discoveryRequested || now_ms - g_lastHeartbeat > kHeartbeatMs)) {
+      sendDiscovery(now_ms);
       g_lastHeartbeat = now_ms;
+      g_discoveryRequested = false;
     }
     if (now_ms - g_lastPoll > kResyncMs) {
       poll();
@@ -867,6 +1101,24 @@ DeviceInfo deviceInfo(size_t index) {
 size_t focusedDevice() { return g_focusDevice; }
 bool targetingAll() { return g_targetAll; }
 
+uint16_t mixedStateMask() {
+  if (!g_targetAll) return kMixedNone;
+  const DeviceSlot* reference = nullptr;
+  uint16_t mixed = kMixedNone;
+  for (size_t i = 0; i < g_deviceCount; ++i) {
+    const DeviceSlot& device = g_devices[i];
+    if (device.channel != g_channel || !device.model.online) continue;
+    if (!reference) { reference = &device; continue; }
+    if (device.model.power != reference->model.power) mixed |= kMixedPower;
+    if (device.model.brightness != reference->model.brightness) mixed |= kMixedBrightness;
+    if (device.model.effect != reference->model.effect) mixed |= kMixedEffect;
+    if (device.model.palette != reference->model.palette) mixed |= kMixedPalette;
+    if (device.model.preset != reference->model.preset) mixed |= kMixedPreset;
+    if (device.model.color != reference->model.color) mixed |= kMixedColor;
+  }
+  return mixed;
+}
+
 void selectDevice(size_t index) {
   if (index >= g_deviceCount) return;
   if (g_channelLocked && g_devices[index].channel != g_channel) return;
@@ -882,6 +1134,8 @@ void selectDevice(size_t index) {
   g_lastLiveRx = 0;
   g_stateRev++;
   g_catalogRev++;
+  g_preferredChannel = g_devices[index].channel;
+  saveDeviceRegistry();
   if (g_liveWanted) queueRequest("{\"lv\":true}", RequestKey::Live, true, g_devices[index].mac);
   requestCatalogs();
 }
@@ -890,6 +1144,7 @@ void selectAll() {
   if (!g_deviceCount) return;
   g_targetAll = true;
   g_stateRev++;
+  saveDeviceRegistry();
 }
 
 // Assigns a persistent local controller name; an empty name restores WLED's own name.
@@ -904,6 +1159,43 @@ void renameDevice(size_t index, const char* name) {
   g_deviceRev++;
 }
 
+
+// Removes an unlinked/offline controller so stale registry entries cannot exhaust capacity.
+bool forgetDevice(size_t index) {
+  if (index >= g_deviceCount || g_devices[index].model.online) return false;
+
+  g_devices[index].alias[0] = '\0';
+  saveDeviceAlias(g_devices[index]);
+  const size_t previousCount = g_deviceCount;
+  for (size_t i = index; i + 1 < g_deviceCount; ++i) g_devices[i] = std::move(g_devices[i + 1]);
+  g_devices[--g_deviceCount] = DeviceSlot{};
+
+  if (!g_deviceCount) {
+    g_focusDevice = 0;
+    g_targetAll = false;
+    g_model = Model{};
+  } else {
+    if (g_focusDevice > index) g_focusDevice--;
+    else if (g_focusDevice == index) g_focusDevice = std::min(index, g_deviceCount - 1);
+    if (g_deviceCount < 2) g_targetAll = false;
+    g_model = g_devices[g_focusDevice].model;
+  }
+
+  Preferences prefs;
+  if (prefs.begin(kPrefsNamespace, false)) {
+    char key[6];
+    snprintf(key, sizeof(key), "dev%u", unsigned(previousCount - 1));
+    prefs.remove(key);
+    prefs.end();
+  }
+  saveDeviceRegistry();
+  g_stateRev++;
+  g_catalogRev++;
+  g_deviceRev++;
+  return true;
+}
+
+void scanNow() { g_discoveryRequested = true; }
 uint32_t stateRevision() { return g_stateRev; }
 uint32_t catalogRevision() { return g_catalogRev; }
 uint32_t liveRevision() { return g_liveRev; }
@@ -965,13 +1257,16 @@ void savePreset(uint8_t id, const char* name) {
 
 
 void setEffect(uint8_t fxId) {
-  g_model.effect = fxId; // optimistic model update prevents unrelated revisions restoring stale state
-  if (g_targetAll) {
-    for (size_t i = 0; i < g_deviceCount; ++i) g_devices[i].model.effect = fxId;
-  } else if (g_deviceCount) g_devices[g_focusDevice].model.effect = fxId;
   char buf[48];
   snprintf(buf, sizeof(buf), "{\"seg\":[{\"fx\":%u}],\"v\":true}", fxId);
-  queueForTargets(buf, RequestKey::Effect);
+  if (!queueForTargets(buf, RequestKey::Effect)) return;
+  g_model.effect = fxId; // optimistic model update prevents unrelated revisions restoring stale state
+  if (g_targetAll) {
+    for (size_t i = 0; i < g_deviceCount; ++i) {
+      if (g_devices[i].channel == g_channel && g_devices[i].model.online)
+        g_devices[i].model.effect = fxId;
+    }
+  } else if (g_deviceCount) g_devices[g_focusDevice].model.effect = fxId;
 }
 
 void setPalette(uint8_t palId) {
@@ -981,13 +1276,16 @@ void setPalette(uint8_t palId) {
 }
 
 void setColor(uint8_t r, uint8_t g, uint8_t b) {
-  g_model.color = (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
-  if (g_targetAll) {
-    for (size_t i = 0; i < g_deviceCount; ++i) g_devices[i].model.color = g_model.color;
-  } else if (g_deviceCount) g_devices[g_focusDevice].model.color = g_model.color;
   char buf[64];
   snprintf(buf, sizeof(buf), "{\"seg\":[{\"col\":[[%u,%u,%u]]}],\"v\":true}", r, g, b);
-  queueForTargets(buf, RequestKey::Color);
+  if (!queueForTargets(buf, RequestKey::Color)) return;
+  g_model.color = (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
+  if (g_targetAll) {
+    for (size_t i = 0; i < g_deviceCount; ++i) {
+      if (g_devices[i].channel == g_channel && g_devices[i].model.online)
+        g_devices[i].model.color = g_model.color;
+    }
+  } else if (g_deviceCount) g_devices[g_focusDevice].model.color = g_model.color;
 }
 
 void setEffectParams(int speed, int intensity) {

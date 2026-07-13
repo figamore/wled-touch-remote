@@ -42,6 +42,16 @@ struct DeviceInfo {
   std::string name;
 };
 
+enum MixedState : uint16_t {
+  kMixedNone = 0,
+  kMixedPower = 1U << 0,
+  kMixedBrightness = 1U << 1,
+  kMixedEffect = 1U << 2,
+  kMixedPalette = 1U << 3,
+  kMixedPreset = 1U << 4,
+  kMixedColor = 1U << 5,
+};
+
 void begin();
 void loop(uint32_t now_ms);
 
@@ -53,9 +63,12 @@ size_t activeDeviceCount();
 DeviceInfo deviceInfo(size_t index);
 size_t focusedDevice();
 bool targetingAll();
+uint16_t mixedStateMask();
 void selectDevice(size_t index);
 void selectAll();
 void renameDevice(size_t index, const char* name);
+bool forgetDevice(size_t index);
+void scanNow();
 
 // Monotonic counters; UI compares against its last-seen value to know when to refresh.
 uint32_t stateRevision();

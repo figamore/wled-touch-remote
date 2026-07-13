@@ -143,9 +143,14 @@ int runSelfTest() {
   mkdir("screenshots", 0755);
   simulatorUseDefaultViewState();
 
-  expectTrue(waitUntil([] { return wled::online(); }, 3000), "WLED discovered via HELLO");
-  expectTrue(waitUntil([] { return wled::deviceCount() == 2; }, 3000),
-             "multiple WLED instances collected during discovery");
+  simWledSetSecondLinked(false);
+  expectTrue(waitUntil([] { return wled::online(); }, 3000), "WLED discovered via ANNOUNCE");
+  expectTrue(wled::activeDeviceCount() == 1, "only linked WLED instances become active");
+  simWledSetSecondLinked(true);
+  expectTrue(waitUntil([] { return wled::activeDeviceCount() == 2; }, 6000),
+             "newly linked WLED detected without restarting remote");
+  wled::renameDevice(1, "Desk lights");
+  expectTrue(wled::deviceInfo(1).name == "Desk lights", "controller alias applied by MAC");
   // effect/palette catalogs are baked into the firmware; only presets arrive over the API
   expectTrue(waitUntil([] { return !wled::model().presets.empty(); }, 12000),
              "preset catalog loaded");
