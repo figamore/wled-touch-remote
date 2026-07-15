@@ -36,13 +36,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout bidirectional WLED fork
+        uses: actions/checkout@v4
+        with:
+          repository: figamore/WLED
+          ref: ${{ inputs.wled_ref }}
+          path: wled-fork
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: wled-fork/requirements.txt
 
       - name: Install firmware build tools
-        run: python -m pip install --upgrade platformio esptool
+        run: python -m pip install -r wled-fork/requirements.txt esptool
 
       - name: Build bidirectional remote
         run: pio run -e esp32-cyd
@@ -67,13 +76,6 @@ jobs:
             0xE000 "$boot_app0" \
             0x10000 .pio/build/esp32-cyd/firmware.bin
 
-      - name: Checkout bidirectional WLED fork
-        uses: actions/checkout@v4
-        with:
-          repository: figamore/WLED
-          ref: ${{ inputs.wled_ref }}
-          path: wled-fork
-
       - name: Set up Node.js for WLED assets
         uses: actions/setup-node@v4
         with:
@@ -81,10 +83,8 @@ jobs:
           cache: npm
           cache-dependency-path: wled-fork/package-lock.json
 
-      - name: Install WLED build dependencies
-        run: |
-          python -m pip install -r wled-fork/requirements.txt
-          npm ci --prefix wled-fork
+      - name: Install WLED web dependencies
+        run: npm ci --prefix wled-fork
 
       - name: Build generic ESP32 WLED preview
         run: pio run -d wled-fork -e esp32dev
