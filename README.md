@@ -2,7 +2,12 @@
 
 A wireless-capable, touchscreen remote controller for WLED running on the ESP32 Cheap Yellow Display (CYD).
 
-It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over **ESP-NOW**, a wireless protocol. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell. [See the Bill of Materials](#bom)
+It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over **ESP-NOW**, a wireless protocol. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell. [See the Bill of Materials](#bom).
+
+Two firmware tracks are available from the same installer:
+
+- **Standard WLED** uses WLED's existing WizMote-compatible ESP-NOW protocol. It is the stable choice and works with normal WLED releases.
+- **Bidirectional ESP-NOW API preview** uses the richer API under development on this branch. Until that API is merged upstream, it requires the matching [`figamore/WLED` fork](https://github.com/figamore/WLED/tree/feature/bidirectional-espnow).
 
 > **Hardware note:** the default firmware supports common capacitive and resistive CYD boards. On first boot, setup asks you to tap the screen and saves the detected touch hardware.
 
@@ -10,20 +15,38 @@ It gives you a small dedicated controller for power, brightness, presets, colors
 
 ## Features
 
-- Power on/off and brightness control
-- Preset selection
-- Optional, easy-to-configure [extended mode](#extended-mode) for up to 20 presets, effects, palettes, speed, intensity, and color controls
+- Power, brightness, presets, effects, palettes, effect parameters, and color controls
+- Control one WLED instance at a time or several simultaneously with the bidirectional preview
+- Automatic controller discovery, per-controller names, and live state synchronization
+- Realtime LED peek preview, palette browser, and color wheel in the bidirectional preview
 - On-device settings for screen orientation, idle behavior (dim, always off/on), and Basic/Extended mode
 - Help screens with QR codes for setup instructions
-- Web installer support for easy browser flashing
+- A guided web installer for both firmware tracks
 
-## Flash It
+## Install
 
-The easiest way is the [web installer](https://figamore.github.io/wled-touch-remote/):
+The [web installer](https://figamore.github.io/wled-touch-remote/) starts by asking which experience you want:
 
 1. Open the [web installer](https://figamore.github.io/wled-touch-remote/)
-2. Connect the CYD with a data-capable USB cable.
-3. Click Install and choose the ESP32 serial port.
+2. Choose **Standard WLED** or **Bidirectional ESP-NOW API**.
+3. Follow the on-screen steps, then connect the CYD with a data-capable USB cable and choose its ESP32 serial port.
+
+### Standard WLED track
+
+Choose this for the traditional remote and an official WLED release. Only the remote needs to be flashed. Extended controls continue to use [`remote.json`](#extended-mode).
+
+### Bidirectional ESP-NOW API preview
+
+Choose this to try the advanced remote on the `feature/bidirectional-api` branch. It adds:
+
+- Simultaneous or individual control of different WLED instances
+- Live synchronization when WLED is changed from its web UI or another client
+- Realtime LED peek preview
+- Controller discovery, selection, and local names
+- Presets, effects, palettes, effect parameters, and a color wheel
+- Reliable per-controller responses and mixed-state feedback when grouped controllers differ
+
+> **Requires the WLED fork:** standard WLED does not yet implement this bidirectional API. Until the change is merged upstream, install the matching [`feature/bidirectional-espnow` WLED fork](https://github.com/figamore/WLED/tree/feature/bidirectional-espnow) on every controller used with the advanced remote.
 
 ## Pair With WLED
 
@@ -34,20 +57,18 @@ The easiest way is the [web installer](https://figamore.github.io/wled-touch-rem
    bidirectional WLED firmware, it also appears as `Last device seen` while the remote is on.
 1. Save and reboot WLED if prompted.
 
-Repeat these steps for each WLED controller. Controllers on the same Wi-Fi channel are detected
-automatically within a few seconds; the remote does not need to be restarted. Open
-`Settings -> Control Target` to select one controller, rename it locally, or select
-`All controllers` for simultaneous control. Local names are saved by controller MAC and survive
-remote restarts. The controller registry, preferred channel, focused controller, and All-mode
-selection are also restored after restart; discovery then verifies which controllers are online.
-Offline controllers can be forgotten from the target picker after they are removed from WLED's
-linked-remote list, preventing stale registry entries from consuming the six-controller limit.
+With the bidirectional preview, repeat these steps for each WLED controller. Controllers on the
+same Wi-Fi channel are detected automatically within a few seconds; the remote does not need to
+be restarted. Open `Settings -> Control Target` to select one controller, rename it locally, or
+select `All controllers` for simultaneous control. Saved controller names and selections survive
+remote restarts. Offline controllers can be forgotten from the target picker after they are
+removed from WLED's linked-remote list.
 
 ![Info tab](screenshots/wled-touch-remote-info.png)
 
 ## Basic Mode
 
-Basic mode works with WLED's built-in ESP-NOW remote behavior. You get:
+On the standard firmware track, Basic mode works with WLED's built-in WizMote-compatible ESP-NOW behavior. You get:
 
 - Power
 - Brightness
@@ -58,7 +79,7 @@ This mode does not require uploading any extra files to WLED.
 
 ## Extended Mode
 
-Extended mode unlocks the richer controls. To use it, upload [remote.json](https://raw.githubusercontent.com/figamore/wled-touch-remote/main/remote.json) to your WLED controller as `/remote.json`.
+On the standard firmware track, Extended mode unlocks richer controls. To use it, upload [remote.json](https://raw.githubusercontent.com/figamore/wled-touch-remote/main/remote.json) to your WLED controller as `/remote.json`.
 
 In WLED:
 
@@ -74,8 +95,9 @@ Extended mode adds more preset buttons, WLED effects, effect settings, palette c
 
 ## Communication Notes
 
-The bidirectional ESP-NOW JSON firmware returns state, catalogs, command responses, and live LED
-peek data to the remote. Web UI changes therefore update the touchscreen automatically.
+The traditional WizMote-compatible protocol is primarily send-only. The bidirectional ESP-NOW
+JSON fork returns state, catalogs, command responses, and live LED peek data to the remote. Web UI
+changes therefore update the touchscreen automatically on the advanced track.
 
 ESP-NOW devices must share a radio channel. Simultaneous multi-controller mode is intended for
 WLED instances on the same Wi-Fi network/channel. `All controllers` sends a reliable unicast to

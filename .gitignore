@@ -7,5 +7,6 @@
 *.sim-prefs
 *.bmp
 .wled-preview-cache.json
+__pycache__/
 include/generated/version.h
 notes.md

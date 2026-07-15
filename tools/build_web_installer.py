@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build the GitHub Pages web installer from a GitHub Release.
+"""Assemble the GitHub Pages installer for stable and preview firmware.
 
-The installer is static, but ESP Web Tools works best when firmware is served
-from the same origin as the page. This script downloads the latest release
-firmware into the Pages artifact and writes the manifest consumed by the
-installer button.
+The stable remote is downloaded from a GitHub release. The bidirectional
+remote and its matching WLED build are produced by the Pages workflow and
+passed in as local binaries. Keeping every artifact in the Pages bundle avoids
+cross-origin Web Serial issues and makes the preview reproducible.
 """
 
 from __future__ import annotations
@@ -23,6 +23,12 @@ from typing import Any
 DEFAULT_REPO = "figamore/wled-touch-remote"
 DEFAULT_SITE_DIR = Path("web-installer")
 FIRMWARE_DIR = "firmware"
+INSTALLER_SCREENSHOTS = (
+    "wled-touch-remote-power.png",
+    "wled-touch-remote-fx.png",
+    "wled-touch-remote-palettes.png",
+    "wled-presets-color-palette.png",
+)
 
 
 class InstallerError(RuntimeError):
@@ -71,11 +77,14 @@ def download_asset(asset: dict[str, Any], dest: Path, token: str | None = None) 
         raise InstallerError(f"Download failed for {asset['name']}: {exc.reason}") from exc
 
 
-def asset_score(asset_name: str, variant: str, positive_terms: tuple[str, ...], negative_terms: tuple[str, ...] = ()) -> int:
+def asset_score(
+    asset_name: str,
+    variant: str,
+    positive_terms: tuple[str, ...],
+    negative_terms: tuple[str, ...] = (),
+) -> int:
     name = asset_name.lower()
-    if not name.endswith(".bin"):
-        return -1
-    if any(term in name for term in negative_terms):
+    if not name.endswith(".bin") or any(term in name for term in negative_terms):
         return -1
     if "no-battery" in name and "no-battery" not in variant.lower():
         return -1
@@ -88,10 +97,12 @@ def asset_score(asset_name: str, variant: str, positive_terms: tuple[str, ...], 
     return score
 
 
-def best_asset(assets: list[dict[str, Any]],
-               variant: str,
-               positive_terms: tuple[str, ...],
-               negative_terms: tuple[str, ...] = ()) -> dict[str, Any] | None:
+def best_asset(
+    assets: list[dict[str, Any]],
+    variant: str,
+    positive_terms: tuple[str, ...],
+    negative_terms: tuple[str, ...] = (),
+) -> dict[str, Any] | None:
     candidates = []
     for asset in assets:
         score = asset_score(asset["name"], variant, positive_terms, negative_terms)
@@ -103,7 +114,9 @@ def best_asset(assets: list[dict[str, Any]],
     return candidates[0][2]
 
 
-def find_firmware_assets(assets: list[dict[str, Any]], variant: str) -> tuple[list[tuple[dict[str, Any], int]], str]:
+def find_firmware_assets(
+    assets: list[dict[str, Any]], variant: str
+) -> tuple[list[tuple[dict[str, Any], int]], str]:
     merged = (
         best_asset(assets, variant, ("merged",)),
         best_asset(assets, variant, ("factory",)),
@@ -134,85 +147,178 @@ def find_firmware_assets(assets: list[dict[str, Any]], variant: str) -> tuple[li
     )
 
 
-def write_manifest(site_dir: Path,
-                   release: dict[str, Any],
-                   downloaded: list[tuple[Path, int]]) -> None:
+def write_manifest(
+    site_dir: Path,
+    filename: str,
+    name: str,
+    version: str,
+    parts: list[tuple[str, int]],
+) -> None:
     manifest = {
-        "name": "WLED Touch Remote",
-        "version": release.get("tag_name", "release"),
+        "name": name,
+        "version": version,
         "new_install_prompt_erase": False,
         "new_install_improv_wait_time": 0,
         "builds": [
             {
                 "chipFamily": "ESP32",
                 "improv": False,
-                "parts": [
-                    {
-                        "path": f"{FIRMWARE_DIR}/{path.name}",
-                        "offset": offset,
-                    }
-                    for path, offset in downloaded
-                ],
+                "parts": [{"path": path, "offset": offset} for path, offset in parts],
             }
         ],
     }
-    (site_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (site_dir / filename).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-def write_release_metadata(site_dir: Path,
-                           release: dict[str, Any],
-                           mode: str,
-                           downloaded: list[tuple[Path, int]]) -> None:
-    metadata = {
-        "name": release.get("name") or release.get("tag_name", "Latest release"),
-        "tag_name": release.get("tag_name"),
-        "html_url": release.get("html_url"),
-        "published_at": release.get("published_at"),
-        "firmware_mode": mode,
-        "firmware_files": [
-            {
-                "path": f"{FIRMWARE_DIR}/{path.name}",
-                "offset": offset,
-            }
-            for path, offset in downloaded
-        ],
-    }
-    (site_dir / "release.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+def copy_local_binary(source: Path, destination: Path, description: str) -> None:
+    if not source.is_file():
+        raise InstallerError(f"{description} not found: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
 
 
-def build_installer(repo: str, release_tag: str, site_dir: Path, variant: str, token: str | None) -> None:
+def copy_installer_screenshots(source_dir: Path, site_dir: Path) -> None:
+    destination_dir = site_dir / "screenshots"
+    if destination_dir.exists():
+        shutil.rmtree(destination_dir)
+    destination_dir.mkdir(parents=True)
+    for filename in INSTALLER_SCREENSHOTS:
+        source = source_dir / filename
+        if not source.is_file():
+            raise InstallerError(f"Installer screenshot not found: {source}")
+        shutil.copy2(source, destination_dir / filename)
+
+
+def build_installer(
+    repo: str,
+    release_tag: str,
+    site_dir: Path,
+    variant: str,
+    advanced_firmware: Path | None,
+    advanced_version: str,
+    advanced_source_url: str,
+    wled_firmware: Path | None,
+    wled_version: str,
+    wled_source_url: str,
+    assets_dir: Path,
+    token: str | None,
+) -> None:
     release = request_json(release_url(repo, release_tag), token)
-    assets = release.get("assets", [])
-    selected, mode = find_firmware_assets(assets, variant)
+    selected, stable_mode = find_firmware_assets(release.get("assets", []), variant)
 
     firmware_dir = site_dir / FIRMWARE_DIR
-    firmware_dir.mkdir(parents=True, exist_ok=True)
-    for stale in firmware_dir.glob("*.bin"):
-        stale.unlink()
+    if firmware_dir.exists():
+        shutil.rmtree(firmware_dir)
+    (firmware_dir / "stable").mkdir(parents=True)
 
-    downloaded: list[tuple[Path, int]] = []
+    stable_parts: list[tuple[str, int]] = []
+    stable_files: list[dict[str, Any]] = []
     for asset, offset in selected:
-        dest = firmware_dir / asset["name"]
+        dest = firmware_dir / "stable" / asset["name"]
         print(f"Downloading {asset['name']} -> {dest}")
         download_asset(asset, dest, token)
-        downloaded.append((dest, offset))
+        relative = dest.relative_to(site_dir).as_posix()
+        stable_parts.append((relative, offset))
+        stable_files.append({"path": relative, "offset": offset})
 
-    write_manifest(site_dir, release, downloaded)
-    write_release_metadata(site_dir, release, mode, downloaded)
-    print(f"Built installer for {release.get('tag_name')} using {mode} firmware.")
+    stable_version = release.get("tag_name", "release")
+    write_manifest(
+        site_dir,
+        "manifest-stable.json",
+        "WLED Touch Remote — Standard WLED",
+        stable_version,
+        stable_parts,
+    )
+    # Preserve old links/bookmarks: the unqualified manifest remains the stable track.
+    shutil.copy2(site_dir / "manifest-stable.json", site_dir / "manifest.json")
+
+    metadata: dict[str, Any] = {
+        "stable": {
+            "name": release.get("name") or stable_version,
+            "version": stable_version,
+            "html_url": release.get("html_url"),
+            "published_at": release.get("published_at"),
+            "firmware_mode": stable_mode,
+            "firmware_files": stable_files,
+        }
+    }
+
+    if advanced_firmware is not None:
+        advanced_dest = firmware_dir / "advanced" / "wled-touch-remote-bidirectional.bin"
+        copy_local_binary(advanced_firmware, advanced_dest, "Advanced remote firmware")
+        advanced_path = advanced_dest.relative_to(site_dir).as_posix()
+        write_manifest(
+            site_dir,
+            "manifest-advanced.json",
+            "WLED Touch Remote — Bidirectional preview",
+            advanced_version,
+            [(advanced_path, 0)],
+        )
+        metadata["advanced"] = {
+            "name": "Bidirectional ESP-NOW preview",
+            "version": advanced_version,
+            "source_url": advanced_source_url,
+            "firmware_file": advanced_path,
+        }
+
+    if wled_firmware is not None:
+        if advanced_firmware is None:
+            raise InstallerError("--wled-firmware requires --advanced-firmware")
+        wled_dest = firmware_dir / "wled" / "WLED_ESP32_bidirectional_OTA.bin"
+        copy_local_binary(wled_firmware, wled_dest, "Bidirectional WLED firmware")
+        metadata["wled"] = {
+            "name": "WLED ESP32 bidirectional ESP-NOW preview",
+            "version": wled_version,
+            "source_url": wled_source_url,
+            "firmware_file": wled_dest.relative_to(site_dir).as_posix(),
+            "format": "generic ESP32 OTA/application binary",
+        }
+
+    (site_dir / "installer.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    # Older installer JavaScript reads release.json.
+    (site_dir / "release.json").write_text(json.dumps(metadata["stable"], indent=2) + "\n", encoding="utf-8")
+    copy_installer_screenshots(assets_dir, site_dir)
+    print(f"Built stable installer for {stable_version} using {stable_mode} firmware.")
+    if "advanced" in metadata:
+        print(f"Built advanced installer for {advanced_version} with WLED {wled_version}.")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", default=DEFAULT_REPO, help="GitHub repository, e.g. figamore/wled-touch-remote")
-    parser.add_argument("--release-tag", default="latest", help='Release tag to use, or "latest"')
+    parser.add_argument("--release-tag", default="latest", help='Stable release tag to use, or "latest"')
     parser.add_argument("--site-dir", type=Path, default=DEFAULT_SITE_DIR)
+    parser.add_argument("--assets-dir", type=Path, default=Path("screenshots"))
     parser.add_argument("--variant", default="esp32-cyd")
+    parser.add_argument("--advanced-firmware", type=Path, required=True)
+    parser.add_argument("--advanced-version", default="feature preview")
+    parser.add_argument(
+        "--advanced-source-url",
+        default="https://github.com/figamore/wled-touch-remote/tree/feature/bidirectional-api",
+    )
+    parser.add_argument("--wled-firmware", type=Path, required=True)
+    parser.add_argument("--wled-version", default="feature/bidirectional-espnow")
+    parser.add_argument(
+        "--wled-source-url",
+        default="https://github.com/figamore/WLED/tree/feature/bidirectional-espnow",
+    )
     args = parser.parse_args()
 
-    token = os.environ.get("GITHUB_TOKEN")
     try:
-        build_installer(args.repo, args.release_tag, args.site_dir, args.variant, token)
+        build_installer(
+            args.repo,
+            args.release_tag,
+            args.site_dir,
+            args.variant,
+            args.advanced_firmware,
+            args.advanced_version,
+            args.advanced_source_url,
+            args.wled_firmware,
+            args.wled_version,
+            args.wled_source_url,
+            args.assets_dir,
+            os.environ.get("GITHUB_TOKEN"),
+        )
     except InstallerError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

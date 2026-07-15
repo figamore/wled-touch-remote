@@ -4,13 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag to publish, or "latest"'
+        description: 'Stable remote release tag, or "latest"'
         required: true
         default: latest
       firmware_variant:
-        description: "Firmware asset variant to prefer"
+        description: "Stable remote firmware asset variant"
         required: true
         default: esp32-cyd
+      wled_ref:
+        description: "WLED fork branch, tag, or commit for the bidirectional preview"
+        required: true
+        default: feature/bidirectional-espnow
 
 permissions:
   contents: read
@@ -32,17 +36,79 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install firmware build tools
+        run: python -m pip install --upgrade platformio esptool
+
+      - name: Build bidirectional remote
+        run: pio run -e esp32-cyd
+
+      - name: Package bidirectional remote for Web Serial
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          boot_app0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
+          if [ -z "$boot_app0" ]; then
+            echo "boot_app0.bin not found"
+            exit 1
+          fi
+
+          python -m esptool --chip esp32 merge_bin \
+            --flash_mode dio \
+            --flash_freq 40m \
+            --flash_size 4MB \
+            -o dist/wled-touch-remote-bidirectional-merged.bin \
+            0x1000 .pio/build/esp32-cyd/bootloader.bin \
+            0x8000 .pio/build/esp32-cyd/partitions.bin \
+            0xE000 "$boot_app0" \
+            0x10000 .pio/build/esp32-cyd/firmware.bin
+
+      - name: Checkout bidirectional WLED fork
+        uses: actions/checkout@v4
+        with:
+          repository: figamore/WLED
+          ref: ${{ inputs.wled_ref }}
+          path: wled-fork
+
+      - name: Set up Node.js for WLED assets
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: wled-fork/.nvmrc
+          cache: npm
+          cache-dependency-path: wled-fork/package-lock.json
+
+      - name: Install WLED build dependencies
+        run: |
+          python -m pip install -r wled-fork/requirements.txt
+          npm ci --prefix wled-fork
+
+      - name: Build generic ESP32 WLED preview
+        run: pio run -d wled-fork -e esp32dev
+
       - name: Configure Pages
         uses: actions/configure-pages@v6
 
-      - name: Build installer from release
+      - name: Assemble both installer tracks
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          advanced_version="preview-${GITHUB_SHA::7}"
+          wled_sha="$(git -C wled-fork rev-parse --short HEAD)"
+          wled_full_sha="$(git -C wled-fork rev-parse HEAD)"
           python3 tools/build_web_installer.py \
             --repo "${{ github.repository }}" \
             --release-tag "${{ inputs.release_tag }}" \
             --variant "${{ inputs.firmware_variant }}" \
+            --advanced-firmware dist/wled-touch-remote-bidirectional-merged.bin \
+            --advanced-version "$advanced_version" \
+            --advanced-source-url "https://github.com/${{ github.repository }}/commit/${{ github.sha }}" \
+            --wled-firmware wled-fork/.pio/build/esp32dev/firmware.bin \
+            --wled-version "${{ inputs.wled_ref }}@$wled_sha" \
+            --wled-source-url "https://github.com/figamore/WLED/commit/$wled_full_sha" \
             --site-dir web-installer
 
       - name: Upload Pages artifact

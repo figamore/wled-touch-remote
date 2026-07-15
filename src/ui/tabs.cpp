@@ -173,7 +173,7 @@ lv_obj_t* createLabeledSlider(lv_obj_t* parent,
 
   if (name) {
     lv_obj_t* name_label = lv_label_create(row);
-    lv_obj_set_width(name_label, 72);
+    lv_obj_set_width(name_label, 82);
     lv_label_set_long_mode(name_label, LV_LABEL_LONG_DOT);
     lv_obj_add_style(name_label, &style_label_muted, LV_PART_MAIN);
     lv_label_set_text(name_label, name);
@@ -182,7 +182,7 @@ lv_obj_t* createLabeledSlider(lv_obj_t* parent,
   lv_obj_t* slider = lv_slider_create(row);
   lv_slider_set_range(slider, min, max);
   lv_slider_set_value(slider, value, LV_ANIM_OFF);
-  lv_obj_set_size(slider, name ? 150 : 190, 12);
+  lv_obj_set_size(slider, name ? 140 : 190, 12);
   lv_obj_set_flex_grow(slider, 1);
   lv_obj_add_flag(slider, LV_OBJ_FLAG_PRESS_LOCK);
   lv_obj_clear_flag(slider, LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);

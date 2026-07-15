@@ -3,425 +3,180 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>WLED Touch Remote - Installer</title>
+    <title>WLED Touch Remote — Installer</title>
     <meta
       name="description"
-      content="Flash WLED Touch Remote firmware onto a supported ESP32 Cheap Yellow Display from your browser."
+      content="Choose the standard WLED Touch Remote or the bidirectional ESP-NOW preview and flash it from your browser."
     />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#0d1117" />
     <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/wled.png" />
-
-    <meta property="og:title" content="WLED Touch Remote - Installer" />
-    <meta property="og:description" content="Flash the WLED ESP-NOW touch remote from Chrome or Edge." />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-power.png" />
-
-    <script
-      type="module"
-      src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
-    ></script>
+    <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
 
     <style>
       :root {
         color-scheme: light;
-
-        --bg: #ffffff;
-        --bg-soft: #f6f6f5;
+        --bg: #fbfbfa;
+        --surface: #ffffff;
+        --soft: #f4f4f1;
         --text: #18181b;
-        --muted: #57575e;
-        --faint: #8c8c95;
-        --border: #e6e5e2;
-        --border-strong: #d6d5d1;
-
-        --ink: #18181b;
-        --ink-hover: #000000;
-
-        --accent: #b45309;
-        --accent-soft: #fff7ed;
-        --accent-line: #f59e0b;
-
-        --ok: #15803d;
-        --danger: #b91c1c;
-
-        --radius: 14px;
-        --radius-sm: 10px;
-        --maxw: 60rem;
-
-        --font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-          "Segoe UI", Roboto, sans-serif;
+        --muted: #5d5d65;
+        --faint: #85858e;
+        --line: #e3e3df;
+        --line-strong: #cdcdc7;
+        --ink: #16181d;
+        --accent: #c25113;
+        --accent-soft: #fff5eb;
+        --blue: #1768ac;
+        --blue-soft: #eef7ff;
+        --danger: #a43a30;
+        --radius: 18px;
+        --radius-sm: 12px;
+        --max: 64rem;
+        --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
       }
 
-      * {
-        box-sizing: border-box;
-      }
-
-      html {
-        scroll-behavior: smooth;
-      }
-
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
       body {
         margin: 0;
         min-height: 100vh;
         background: var(--bg);
         color: var(--text);
         font-family: var(--font);
-        font-size: 16px;
-        line-height: 1.6;
+        line-height: 1.55;
         -webkit-font-smoothing: antialiased;
-        text-rendering: optimizeLegibility;
       }
+      button, input { font: inherit; }
+      a { color: var(--accent); text-underline-offset: 0.16em; }
+      a:hover { color: var(--ink); }
+      [hidden] { display: none !important; }
+      :focus-visible { outline: 3px solid #f4a261; outline-offset: 3px; }
 
-      a {
-        color: var(--accent);
-        text-underline-offset: 0.16em;
-      }
-      a:hover {
-        color: var(--ink);
-      }
-
-      :focus-visible {
-        outline: 2px solid var(--accent-line);
-        outline-offset: 2px;
-        border-radius: 4px;
-      }
-
-      .wrap {
-        width: min(var(--maxw), calc(100% - 2.5rem));
-        margin-inline: auto;
-      }
-
-      /* ---------- Header ---------- */
-      header {
-        border-bottom: 1px solid var(--border);
-      }
+      .wrap { width: min(var(--max), calc(100% - 2rem)); margin-inline: auto; }
+      header { border-bottom: 1px solid var(--line); background: rgba(251, 251, 250, 0.92); }
       header .wrap {
+        min-height: 3.8rem;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 1rem;
-        height: 3.75rem;
       }
-      .brand {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.6rem;
-        font-weight: 650;
-        color: var(--text);
-        text-decoration: none;
-        letter-spacing: -0.01em;
-      }
-      .gh {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.4rem;
-        color: var(--muted);
-        font-size: 0.9rem;
-        font-weight: 500;
-        text-decoration: none;
-      }
-      .gh:hover {
-        color: var(--text);
-      }
-      .gh svg {
-        width: 17px;
-        height: 17px;
-      }
+      .brand { color: var(--text); font-weight: 750; letter-spacing: -0.02em; text-decoration: none; }
+      .github { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--muted); font-size: 0.9rem; font-weight: 600; text-decoration: none; }
+      .github svg { width: 17px; height: 17px; }
 
-      /* ---------- Hero / installer ---------- */
-      .hero {
-        max-width: 38rem;
-        margin-inline: auto;
-        padding: clamp(3rem, 9vw, 5.5rem) 0 clamp(2.5rem, 6vw, 4rem);
-        text-align: center;
-      }
+      .hero { padding: clamp(3.5rem, 9vw, 5.5rem) 0 2.4rem; text-align: center; }
       .works-with {
         display: inline-flex;
         align-items: center;
         gap: 0.5rem;
         margin: 0 0 1.4rem;
         padding: 0.4rem 0.9rem;
-        border: 1px solid var(--border-strong);
+        border: 1px solid var(--line-strong);
         border-radius: 999px;
-        background: var(--bg-soft);
+        background: var(--soft);
         color: var(--muted);
         font-size: 0.85rem;
-        font-weight: 600;
+        font-weight: 700;
       }
-      .works-with img {
-        height: 18px;
-        width: auto;
-        image-rendering: pixelated;
-      }
-      h1 {
-        margin: 0;
-        font-size: clamp(2.1rem, 6vw, 3rem);
-        line-height: 1.07;
-        letter-spacing: -0.03em;
-        font-weight: 800;
-      }
-      .sub {
-        margin: 0.9rem auto 0;
-        max-width: 30rem;
-        color: var(--muted);
-        font-size: 1.1rem;
-      }
+      .works-with img { height: 18px; width: auto; image-rendering: pixelated; }
+      h1 { margin: 0; font-size: clamp(2.1rem, 6vw, 3rem); line-height: 1.07; letter-spacing: -0.035em; }
+      .lead { max-width: 32rem; margin: 0.9rem auto 0; color: var(--muted); font-size: 1.08rem; }
 
-      /* the install card is the focal point */
-      .installer {
-        margin: 2.25rem auto 0;
-        max-width: 27rem;
-        padding: 1.25rem;
-        background: var(--bg);
-        border: 1px solid var(--border);
+      .chooser { padding: 0 0 clamp(3.2rem, 8vw, 5rem); }
+      .chooser-title { margin: 0 0 1rem; text-align: center; color: var(--muted); font-size: 0.93rem; font-weight: 650; }
+      .tracks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+      .track {
+        position: relative;
+        min-height: 16rem;
+        padding: 1.5rem;
+        border: 1px solid var(--line);
         border-radius: var(--radius);
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 28px -16px rgba(0, 0, 0, 0.25);
-      }
-
-      esp-web-install-button {
-        --esp-tools-button-color: var(--ink);
-        --esp-tools-button-text-color: #fff;
-        --esp-tools-button-border-radius: 12px;
-        display: block;
-      }
-      esp-web-install-button:not(:defined) [slot="unsupported"],
-      esp-web-install-button:not(:defined) [slot="not-allowed"] {
-        display: none;
-      }
-
-      .install-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.6rem;
-        width: 100%;
-        min-height: 3.4rem;
-        padding: 0 1.5rem;
-        border: 0;
-        border-radius: 12px;
-        background: var(--ink);
-        color: #fff;
-        font: inherit;
-        font-size: 1.08rem;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-        cursor: pointer;
-        transition: background 0.15s ease, transform 0.1s ease;
-      }
-      .install-btn:hover {
-        background: var(--ink-hover);
-      }
-      .install-btn:active {
-        transform: translateY(1px);
-      }
-      .install-btn svg {
-        width: 29px;
-        height: 14px;
-        flex: none;
-      }
-
-      .slot-msg {
-        display: block;
-        padding: 0.8rem 0.95rem;
-        border-radius: var(--radius-sm);
-        font-size: 0.9rem;
-        font-weight: 500;
+        background: var(--surface);
+        color: inherit;
         text-align: left;
+        cursor: pointer;
+        box-shadow: 0 12px 35px -30px rgba(0, 0, 0, 0.5);
+        transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
       }
-      .slot-msg.unsupported {
-        background: #fef2f2;
-        border: 1px solid #fecaca;
-        color: var(--danger);
-      }
-      .slot-msg.not-allowed {
-        background: var(--accent-soft);
-        border: 1px solid #fed7aa;
-        color: var(--accent);
-      }
+      .track:hover { transform: translateY(-2px); border-color: var(--line-strong); box-shadow: 0 18px 40px -28px rgba(0, 0, 0, 0.55); }
+      .track.advanced { background: linear-gradient(150deg, #fff 35%, var(--blue-soft)); border-color: #bed7ed; }
+      .tag { display: inline-block; padding: 0.2rem 0.55rem; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 0.73rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+      .advanced .tag { background: #dceeff; color: #175888; }
+      .track h2 { margin: 1rem 0 0.45rem; font-size: 1.45rem; letter-spacing: -0.025em; }
+      .track p { margin: 0; color: var(--muted); }
+      .track ul { margin: 1rem 0 0; padding-left: 1.15rem; color: var(--muted); font-size: 0.91rem; }
+      .choose { display: inline-flex; margin-top: 1.1rem; color: var(--text); font-weight: 750; }
 
-      .meta {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: center;
-        gap: 0.35rem 0.85rem;
-        margin: 0.95rem 0 0;
-        color: var(--faint);
-        font-size: 0.85rem;
-      }
-      .meta .sep {
-        color: var(--border-strong);
-      }
-      #release-status[data-state="ok"] {
-        color: var(--muted);
-      }
-      #release-status b {
-        color: var(--text);
-        font-weight: 600;
-      }
-      .install-note {
-        margin: 0.65rem 0 0;
-        color: var(--faint);
-        font-size: 0.82rem;
-        line-height: 1.4;
-      }
+      .flow { padding: 0 0 clamp(3.5rem, 8vw, 5rem); }
+      .flow-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.2rem; }
+      .back { border: 0; background: none; padding: 0.3rem 0; color: var(--muted); cursor: pointer; font-weight: 650; }
+      .back:hover { color: var(--text); }
+      .flow-head h2 { margin: 0; font-size: clamp(1.55rem, 4vw, 2.1rem); letter-spacing: -0.03em; }
 
-      /* ---------- Steps ---------- */
-      .steps-section {
-        background: var(--bg-soft);
-        border-top: 1px solid var(--border);
-        border-bottom: 1px solid var(--border);
-        padding: clamp(2.25rem, 5vw, 3.25rem) 0;
-      }
-      .steps {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1.75rem;
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        counter-reset: step;
-      }
-      @media (max-width: 680px) {
-        .steps {
-          grid-template-columns: 1fr;
-          gap: 1.25rem;
-        }
-      }
-      .steps li {
-        counter-increment: step;
-      }
-      .steps li::before {
-        content: counter(step);
+      .wizard { display: grid; gap: 1rem; }
+      .step-card { display: grid; grid-template-columns: 2.6rem 1fr; gap: 0.85rem; padding: 1.3rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+      .step-number { width: 2.2rem; height: 2.2rem; display: grid; place-items: center; border-radius: 50%; background: var(--ink); color: white; font-weight: 800; }
+      .step-body h3 { margin: 0.15rem 0 0.35rem; font-size: 1.08rem; }
+      .step-body p { margin: 0.35rem 0; color: var(--muted); }
+      .step-body ol { margin: 0.75rem 0 0; padding-left: 1.2rem; color: var(--muted); }
+      .step-body code { font-family: var(--mono); font-size: 0.86em; }
+      .notice { margin: 0.85rem 0; padding: 0.85rem 1rem; border: 1px solid #efc99f; border-radius: var(--radius-sm); background: var(--accent-soft); color: #753b12; font-size: 0.91rem; }
+      .notice.blue { border-color: #b9d6ed; background: var(--blue-soft); color: #174f78; }
+
+      .download, .install-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 1.85rem;
-        height: 1.85rem;
-        margin-bottom: 0.7rem;
-        border-radius: 50%;
-        border: 1.5px solid var(--accent-line);
-        color: var(--accent);
-        font-weight: 700;
-        font-size: 0.9rem;
-      }
-      .steps h3 {
-        margin: 0 0 0.25rem;
-        font-size: 1rem;
-        font-weight: 650;
-      }
-      .steps p {
-        margin: 0;
-        color: var(--muted);
-        font-size: 0.93rem;
-      }
-      .steps kbd {
-        font-family: var(--mono);
-        font-size: 0.82em;
-        padding: 0.05em 0.4em;
-        border: 1px solid var(--border-strong);
-        border-bottom-width: 2px;
-        border-radius: 5px;
-        background: var(--bg);
-      }
-
-      /* ---------- Screenshots (secondary) ---------- */
-      .screens-section {
-        padding: clamp(2.5rem, 6vw, 3.75rem) 0;
-        text-align: center;
-      }
-      .screens-section h2 {
-        margin: 0 0 0.4rem;
-        font-size: 1.3rem;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-      }
-      .screens-section .note {
-        margin: 0 auto 2rem;
-        max-width: 30rem;
-        color: var(--muted);
-        font-size: 0.96rem;
-      }
-      .screens {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 1rem;
-      }
-      @media (max-width: 760px) {
-        .screens {
-          grid-template-columns: repeat(2, 1fr);
-          max-width: 24rem;
-          margin-inline: auto;
-        }
-      }
-      .screen {
-        margin: 0;
-      }
-      .screen img {
-        display: block;
-        width: 100%;
-        aspect-ratio: 4 / 3;
-        object-fit: cover;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        image-rendering: pixelated;
-        background: #0b1117;
-      }
-      .screen figcaption {
-        margin-top: 0.55rem;
-        color: var(--muted);
-        font-size: 0.85rem;
-        font-weight: 500;
-      }
-
-      /* ---------- Pairing note ---------- */
-      .pair {
-        max-width: 40rem;
-        margin: 0 auto;
-        padding: 0 0 clamp(2.5rem, 6vw, 3.5rem);
-        color: var(--muted);
-        font-size: 0.95rem;
-        text-align: center;
-      }
-      .pair strong {
-        color: var(--text);
-      }
-
-      /* ---------- Footer ---------- */
-      footer {
-        border-top: 1px solid var(--border);
-        padding: 1.75rem 0;
-      }
-      footer .wrap {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.5rem 1.25rem;
-        color: var(--faint);
-        font-size: 0.88rem;
-      }
-      footer .links {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 1.1rem;
-      }
-      footer a {
-        color: var(--muted);
+        min-height: 3rem;
+        margin-top: 0.8rem;
+        padding: 0 1.15rem;
+        border: 0;
+        border-radius: 11px;
+        background: var(--ink);
+        color: white;
+        font-weight: 750;
         text-decoration: none;
+        cursor: pointer;
       }
-      footer a:hover {
-        color: var(--text);
-      }
+      .download:hover, .install-btn:hover { background: #000; color: white; }
+      .install-btn { width: min(100%, 24rem); }
+      .install-btn:disabled { background: #aaa; cursor: not-allowed; }
+      esp-web-install-button { --esp-tools-button-color: var(--ink); --esp-tools-button-text-color: #fff; --esp-tools-button-border-radius: 11px; display: block; }
+      esp-web-install-button:not(:defined) [slot="unsupported"],
+      esp-web-install-button:not(:defined) [slot="not-allowed"] { display: none; }
+      .slot-msg { display: block; max-width: 32rem; margin-top: 0.8rem; padding: 0.75rem; border-radius: 10px; background: #fff1f0; color: var(--danger); font-size: 0.88rem; }
+      .confirm { display: flex; align-items: flex-start; gap: 0.65rem; margin-top: 1rem; color: var(--text); font-size: 0.92rem; cursor: pointer; }
+      .confirm input { width: 1.1rem; height: 1.1rem; margin-top: 0.18rem; accent-color: var(--ink); }
+      .version { margin-top: 0.65rem !important; color: var(--faint) !important; font-size: 0.82rem; }
 
-      @media (prefers-reduced-motion: reduce) {
-        html {
-          scroll-behavior: auto;
-        }
-        * {
-          transition: none !important;
-        }
+      .steps-section { background: var(--soft); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: clamp(2.25rem, 5vw, 3.25rem) 0; }
+      .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.75rem; margin: 0; padding: 0; list-style: none; counter-reset: step; }
+      .steps li { counter-increment: step; }
+      .steps li::before { content: counter(step); display: inline-flex; align-items: center; justify-content: center; width: 1.85rem; height: 1.85rem; margin-bottom: 0.7rem; border: 1.5px solid #f59e0b; border-radius: 50%; color: var(--accent); font-size: 0.9rem; font-weight: 750; }
+      .steps h3 { margin: 0 0 0.25rem; font-size: 1rem; font-weight: 700; }
+      .steps p { margin: 0; color: var(--muted); font-size: 0.93rem; }
+      .steps kbd { font-family: var(--mono); font-size: 0.82em; padding: 0.05em 0.4em; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); }
+
+      .preview-gallery { margin-top: 2rem; padding-bottom: clamp(3rem, 7vw, 4.8rem); }
+      .preview-gallery h3 { margin: 0 0 0.9rem; font-size: 1rem; font-weight: 700; text-align: center; }
+      .screens { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.9rem; }
+      figure { margin: 0; }
+      figure img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--line); border-radius: 12px; background: #111; image-rendering: pixelated; }
+      figcaption { margin-top: 0.45rem; color: var(--muted); font-size: 0.82rem; text-align: center; }
+
+      footer { border-top: 1px solid var(--line); padding: 1.5rem 0; color: var(--faint); font-size: 0.86rem; }
+      footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; }
+
+      @media (max-width: 700px) {
+        .tracks { grid-template-columns: 1fr; }
+        .track { min-height: 0; }
+        .steps { grid-template-columns: 1fr; gap: 1.25rem; }
+        .screens { grid-template-columns: repeat(2, 1fr); }
+        .step-card { grid-template-columns: 2.25rem 1fr; padding: 1rem; }
       }
+      @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
     </style>
   </head>
 
@@ -429,54 +184,147 @@
     <header>
       <div class="wrap">
         <a class="brand" href="#top">WLED Touch Remote</a>
-        <a class="gh" href="https://github.com/figamore/wled-touch-remote" rel="noopener">
-          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
-          </svg>
+        <a class="github" href="https://github.com/figamore/wled-touch-remote" rel="noopener">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
           GitHub
         </a>
       </div>
     </header>
 
     <main id="top">
-      <!-- Installer first -->
       <section class="wrap hero">
         <p class="works-with">
           Works with
           <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/wled.png" alt="WLED" />
         </p>
         <h1>Install WLED Touch Remote</h1>
-        <p class="sub">
-          Flash the firmware onto a supported ESP32 Cheap Yellow Display directly from the browser.
-        </p>
+        <p class="lead">Flash the firmware onto a supported ESP32 Cheap Yellow Display directly from the browser.</p>
+      </section>
 
-        <div class="installer">
-          <esp-web-install-button manifest="manifest.json">
-            <button class="install-btn" slot="activate">
-              <svg viewBox="0 0 475.248 228.092" fill="currentColor" aria-hidden="true"><path d="M 462.836,114.054 L 412.799,85.158 L 412.799,105.771 L 157.046,105.771 L 206.844,53.159 C 211.082,49.762 216.627,47.379 222.331,47.247 C 245.406,47.247 259.109,47.241 264.153,47.231 C 267.572,56.972 276.756,64.003 287.674,64.003 C 301.486,64.003 312.695,52.795 312.695,38.978 C 312.695,25.155 301.487,13.951 287.674,13.951 C 276.756,13.951 267.572,20.978 264.153,30.711 L 222.821,30.704 C 211.619,30.704 199.881,36.85 192.41,44.055 C 192.614,43.841 192.826,43.613 192.398,44.059 C 192.24,44.237 139.564,99.873 139.564,99.873 C 135.335,103.265 129.793,105.633 124.093,105.769 L 95.161,105.769 C 91.326,86.656 74.448,72.256 54.202,72.256 C 31.119,72.256 12.408,90.967 12.408,114.043 C 12.408,137.126 31.119,155.838 54.202,155.838 C 74.452,155.838 91.33,141.426 95.165,122.297 L 123.59,122.297 C 123.663,122.297 123.736,122.301 123.81,122.297 L 186.681,122.297 C 192.37,122.442 197.905,124.813 202.13,128.209 C 202.13,128.209 254.794,183.841 254.957,184.021 C 255.379,184.468 255.169,184.235 254.961,184.025 C 262.432,191.229 274.175,197.371 285.379,197.371 L 325.211,197.362 L 325.211,214.139 L 375.261,214.139 L 375.261,164.094 L 325.211,164.094 L 325.211,180.849 C 325.211,180.849 314.72,180.83 284.891,180.83 C 279.186,180.699 273.635,178.319 269.399,174.922 L 219.59,122.3 L 412.799,122.3 L 412.799,142.946 L 462.836,114.054 z"/></svg>
-              Install
-            </button>
-            <span class="slot-msg unsupported" slot="unsupported">
-              This browser doesn't support Web Serial. Open this page in Chrome or Edge on a desktop computer.
-            </span>
-            <span class="slot-msg not-allowed" slot="not-allowed">
-              Web Serial needs a secure connection. Use the HTTPS link, not a local file.
-            </span>
-          </esp-web-install-button>
+      <section class="wrap chooser" id="chooser" aria-labelledby="choose-heading">
+        <p class="chooser-title" id="choose-heading">Choose the firmware that matches your WLED controllers</p>
+        <div class="tracks">
+          <button class="track" type="button" data-open-flow="stable">
+            <span class="tag">Recommended for most</span>
+            <h2>Standard WLED</h2>
+            <p>Flash the traditional WizMote-compatible remote. It works with regular WLED releases.</p>
+            <ul>
+              <li>No custom WLED firmware</li>
+              <li>Power, brightness, presets, effects, palettes, and colors</li>
+            </ul>
+            <span class="choose">Choose standard →</span>
+          </button>
 
-          <p class="meta">
-            <span id="release-status" data-state="loading">Checking latest release…</span>
-            <span class="sep">·</span>
-            <span>Ensure a supported CYD is connected via USB</span>
-          </p>
-          <p class="install-note">
-            The installer performs a clean flash for reliable setup. Saved settings on the remote may be reset.
-          </p>
+          <button class="track advanced" type="button" data-open-flow="advanced">
+            <span class="tag">Feature preview</span>
+            <h2>Bidirectional ESP-NOW API</h2>
+            <p>Live state and richer control using the experimental WLED API fork.</p>
+            <ul>
+              <li>One or many WLED instances</li>
+              <li>Realtime peek, palettes, color wheel, and more</li>
+            </ul>
+            <span class="choose">Try the preview →</span>
+          </button>
         </div>
       </section>
 
-      <!-- How to flash -->
-      <section class="steps-section">
+      <section class="wrap flow" id="stable-flow" hidden aria-labelledby="stable-title">
+        <div class="flow-head">
+          <button class="back" type="button" data-back>← Back</button>
+          <h2 id="stable-title">Install for standard WLED</h2>
+        </div>
+        <div class="wizard">
+          <article class="step-card">
+            <span class="step-number">1</span>
+            <div class="step-body">
+              <h3>Connect your CYD</h3>
+              <p>Use a data-capable USB cable. Chrome or Edge on a desktop computer is required for Web Serial.</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <span class="step-number">2</span>
+            <div class="step-body">
+              <h3>Flash the stable remote</h3>
+              <p>Select the ESP32 serial port when prompted. A clean installation can reset settings saved on the remote.</p>
+              <esp-web-install-button manifest="manifest-stable.json">
+                <button class="install-btn" slot="activate">Install standard remote</button>
+                <span class="slot-msg" slot="unsupported">Web Serial is unavailable. Open this page in desktop Chrome or Edge.</span>
+                <span class="slot-msg" slot="not-allowed">Web Serial requires this page to be opened over HTTPS.</span>
+              </esp-web-install-button>
+              <p class="version" id="stable-version">Checking the stable release…</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <span class="step-number">3</span>
+            <div class="step-body">
+              <h3>Pair with WLED</h3>
+              <p>In WLED, open <code>Config → WiFi &amp; Network</code>, enable ESP-NOW, and add the MAC shown on the remote's <code>Info</code> screen to <code>Linked MACs</code>.</p>
+            </div>
+          </article>
+        </div>
+
+      </section>
+
+      <section class="wrap flow" id="advanced-flow" hidden aria-labelledby="advanced-title">
+        <div class="flow-head">
+          <button class="back" type="button" data-back>← Back</button>
+          <h2 id="advanced-title">Set up the bidirectional preview</h2>
+        </div>
+        <div class="notice">
+          <strong>Preview dependency:</strong> until the bidirectional ESP-NOW API is merged upstream, this remote requires
+          <a href="https://github.com/figamore/WLED/tree/feature/bidirectional-espnow" rel="noopener">figamore's WLED fork</a>.
+          The advanced remote will not work correctly with a standard WLED build.
+        </div>
+        <div class="wizard">
+          <article class="step-card">
+            <span class="step-number">1</span>
+            <div class="step-body">
+              <h3>Update WLED first</h3>
+              <p>The installer action builds an OTA/application binary directly from the matching fork revision.</p>
+              <div class="notice blue">
+                This download is for a <strong>generic, classic ESP32</strong> WLED controller. Do not install it on ESP8266, ESP32-S2, S3, C3, Ethernet, or another specialized build. For those targets, build the fork for your own PlatformIO environment.
+              </div>
+              <ol>
+                <li>Back up your WLED configuration.</li>
+                <li>Download the preview binary below.</li>
+                <li>Open <code>http://&lt;wled-ip&gt;/update</code>, upload the binary, and let WLED reboot.</li>
+              </ol>
+              <a class="download" id="wled-download" href="firmware/wled/WLED_ESP32_bidirectional_OTA.bin" download>Download WLED ESP32 preview .bin</a>
+              <p class="version" id="wled-version">Checking the WLED fork revision…</p>
+              <p><a id="wled-source" href="https://github.com/figamore/WLED/tree/feature/bidirectional-espnow" rel="noopener">Exact source and custom build instructions ↗</a></p>
+            </div>
+          </article>
+
+          <article class="step-card">
+            <span class="step-number">2</span>
+            <div class="step-body">
+              <h3>Flash the matching remote</h3>
+              <p>Connect the CYD with a data-capable USB cable, then confirm that your WLED controller is ready.</p>
+              <label class="confirm">
+                <input type="checkbox" id="wled-ready" />
+                <span>I installed the bidirectional WLED fork (or it is already running).</span>
+              </label>
+              <esp-web-install-button manifest="manifest-advanced.json">
+                <button class="install-btn" id="advanced-install" slot="activate" disabled>Install bidirectional remote</button>
+                <span class="slot-msg" slot="unsupported">Web Serial is unavailable. Open this page in desktop Chrome or Edge.</span>
+                <span class="slot-msg" slot="not-allowed">Web Serial requires this page to be opened over HTTPS.</span>
+              </esp-web-install-button>
+              <p class="version" id="advanced-version">Checking the preview build…</p>
+            </div>
+          </article>
+
+          <article class="step-card">
+            <span class="step-number">3</span>
+            <div class="step-body">
+              <h3>Link and discover controllers</h3>
+              <p>In each WLED instance, open <code>Config → WiFi &amp; Network</code>, enable ESP-NOW, and add the remote MAC to <code>Linked MACs</code>. The remote discovers linked controllers on the same radio channel; use <code>Settings → Control Target</code> to control one or all of them.</p>
+            </div>
+          </article>
+        </div>
+
+      </section>
+
+      <section class="steps-section" aria-label="Installation overview">
         <div class="wrap">
           <ol class="steps">
             <li>
@@ -485,80 +333,83 @@
             </li>
             <li>
               <h3>Install</h3>
-              <p>Click <strong>Install</strong>, choose the ESP32 serial port, then tap the setup target on the CYD when prompted.</p>
+              <p>Choose a firmware above, click <strong>Install</strong>, and select the ESP32 serial port.</p>
             </li>
             <li>
               <h3>Pair</h3>
-              <p>Go to <kbd>Config → WiFi & Network</kbd>, check <strong>"Enable ESP-NOW"</strong> then copy the MAC from the <kbd>Info</kbd> tab into WLED's <kbd>Linked MACs</kbd> field.</p>
+              <p>In WLED, go to <kbd>Config → WiFi &amp; Network</kbd>, enable ESP-NOW, and add the MAC from the remote's <kbd>Info</kbd> tab to <kbd>Linked MACs</kbd>.</p>
             </li>
           </ol>
         </div>
       </section>
 
-      <!-- What you get (secondary) -->
-      <section class="wrap screens-section">
-        <h2>What's on the display</h2>
-        <p class="note">A touch UI for WLED's built-in ESP-NOW controls - power, presets, and effects.</p>
+      <section class="wrap preview-gallery" aria-labelledby="preview-gallery-title">
+        <h3 id="preview-gallery-title">Remote interface</h3>
         <div class="screens">
-          <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-power.png" alt="Power tab" />
-            <figcaption>Power</figcaption>
-          </figure>
-          <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-presets.png" alt="Presets tab" />
-            <figcaption>Presets</figcaption>
-          </figure>
-          <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-fx.png" alt="FX tab" />
-            <figcaption>FX</figcaption>
-          </figure>
-          <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-info.png" alt="Info tab" />
-            <figcaption>Info</figcaption>
-          </figure>
-          <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-settings.png" alt="Settings tab" />
-            <figcaption>Settings</figcaption>
-          </figure>
+          <figure><img src="screenshots/wled-touch-remote-power.png" alt="Power and brightness controls" /><figcaption>Power &amp; brightness</figcaption></figure>
+          <figure><img src="screenshots/wled-touch-remote-fx.png" alt="WLED effects interface" /><figcaption>Effects</figcaption></figure>
+          <figure><img src="screenshots/wled-touch-remote-palettes.png" alt="WLED palette browser" /><figcaption>Palettes</figcaption></figure>
+          <figure><img src="screenshots/wled-presets-color-palette.png" alt="Preset and color controls" /><figcaption>Presets &amp; color</figcaption></figure>
         </div>
       </section>
 
-      <!-- <p class="pair wrap">
-        <strong>After flashing:</strong> enable ESP-NOW remote control in WLED under Config → WiFi Setup,
-        then copy the MAC from the Info tab into WLED's Hardware MAC field.
-        <a href="https://github.com/figamore/wled-touch-remote#readme" rel="noopener">Full setup guide →</a>
-      </p> -->
     </main>
 
     <footer>
-      <div class="wrap">
-        <span>© figamore 2026</span>
-        <span class="links">
-          <a href="https://github.com/figamore/wled-touch-remote" rel="noopener">GitHub</a>
-          <a href="https://esphome.github.io/esp-web-tools/" rel="noopener">ESP Web Tools</a>
-        </span>
-      </div>
+      <div class="wrap"><span>© figamore 2026</span><span><a href="https://github.com/figamore/wled-touch-remote" rel="noopener">GitHub</a> · Powered by ESP Web Tools</span></div>
     </footer>
 
     <script>
-      (async function showRelease() {
-        const el = document.querySelector("#release-status");
-        if (!el) return;
+      const chooser = document.querySelector("#chooser");
+      const flows = {
+        stable: document.querySelector("#stable-flow"),
+        advanced: document.querySelector("#advanced-flow"),
+      };
+
+      function showFlow(name, updateHistory = true) {
+        const selected = flows[name];
+        if (!selected) return;
+        chooser.hidden = true;
+        Object.values(flows).forEach((flow) => { flow.hidden = flow !== selected; });
+        if (updateHistory) history.replaceState(null, "", `?track=${name}#${name}-flow`);
+        selected.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      function showChooser() {
+        chooser.hidden = false;
+        Object.values(flows).forEach((flow) => { flow.hidden = true; });
+        history.replaceState(null, "", `${location.pathname}#top`);
+        document.querySelector("#top").scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      document.querySelectorAll("[data-open-flow]").forEach((button) => {
+        button.addEventListener("click", () => showFlow(button.dataset.openFlow));
+      });
+      document.querySelectorAll("[data-back]").forEach((button) => button.addEventListener("click", showChooser));
+
+      const ready = document.querySelector("#wled-ready");
+      const advancedInstall = document.querySelector("#advanced-install");
+      ready.addEventListener("change", () => { advancedInstall.disabled = !ready.checked; });
+
+      (async function loadBuilds() {
         try {
-          const res = await fetch("release.json", { cache: "no-store" });
-          if (!res.ok) throw new Error("unavailable");
-          const release = await res.json();
-          const label = release.name || release.tag_name || "Latest";
-          el.dataset.state = "ok";
-          el.replaceChildren(document.createTextNode("Firmware "));
-          const strong = document.createElement("b");
-          strong.textContent = label;
-          el.appendChild(strong);
-        } catch (err) {
-          el.dataset.state = "idle";
-          el.textContent = "";
+          const response = await fetch("installer.json", { cache: "no-store" });
+          if (!response.ok) throw new Error("Build metadata unavailable");
+          const data = await response.json();
+          if (data.stable) document.querySelector("#stable-version").textContent = `Stable remote ${data.stable.version}`;
+          if (data.advanced) document.querySelector("#advanced-version").textContent = `Remote ${data.advanced.version}`;
+          if (data.wled) {
+            document.querySelector("#wled-version").textContent = `Built from ${data.wled.version}`;
+            document.querySelector("#wled-download").href = data.wled.firmware_file;
+            document.querySelector("#wled-source").href = data.wled.source_url;
+          }
+        } catch (error) {
+          document.querySelectorAll(".version").forEach((element) => { element.textContent = ""; });
         }
       })();
+
+      const initialTrack = new URLSearchParams(location.search).get("track");
+      if (flows[initialTrack]) showFlow(initialTrack, false);
     </script>
   </body>
 </html>
