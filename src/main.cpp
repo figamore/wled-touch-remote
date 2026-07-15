@@ -171,7 +171,7 @@ void pollSerialCommands() {
 #endif
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(WLED_CYD_SERIAL_BAUD);
   delay(100);
 
   initShutdownControl();

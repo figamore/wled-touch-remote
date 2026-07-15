@@ -158,10 +158,42 @@ def write_color_variants(data: bytes, output: Path) -> list[Path]:
     return variants
 
 
+def capture_bmp(port: serial.Serial) -> bytes:
+    port.write(b"screenshot-serial\n")
+    port.flush()
+
+    while True:
+        line = read_line(port)
+        if line.startswith(b"BEGIN_BMP "):
+            size = int(line.split()[1])
+            break
+        sys.stderr.write(line.decode("utf-8", errors="replace"))
+
+    chunks = []
+    remaining = size
+    while remaining > 0:
+        chunk = port.read(min(4096, remaining))
+        if not chunk:
+            received = size - remaining
+            raise TimeoutError(f"Expected {size} bytes, got {received}")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+        received = size - remaining
+        print(f"\rReceived {received}/{size} bytes", end="", file=sys.stderr)
+    print(file=sys.stderr)
+    data = b"".join(chunks)
+
+    end = read_line(port)
+    if not end.endswith(b"END_BMP\n"):
+        sys.stderr.write(end.decode("utf-8", errors="replace"))
+        raise RuntimeError("Did not receive END_BMP marker")
+    return data
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Capture a CYD screenshot over serial.")
     parser.add_argument("port", help="Serial port, for example /dev/cu.usbserial-110")
-    parser.add_argument("-b", "--baud", type=int, default=115200)
+    parser.add_argument("-b", "--baud", type=int, default=748800)
     parser.add_argument("-o", "--output", type=Path, default=Path("cyd-screenshot.png"))
     parser.add_argument("-t", "--timeout", type=float, default=60.0)
     parser.add_argument(
@@ -178,34 +210,7 @@ def main() -> int:
 
     with serial.Serial(args.port, args.baud, timeout=args.timeout) as port:
         port.reset_input_buffer()
-        port.write(b"screenshot-serial\n")
-        port.flush()
-
-        while True:
-            line = read_line(port)
-            if line.startswith(b"BEGIN_BMP "):
-                size = int(line.split()[1])
-                break
-            sys.stderr.write(line.decode("utf-8", errors="replace"))
-
-        chunks = []
-        remaining = size
-        while remaining > 0:
-            chunk = port.read(min(4096, remaining))
-            if not chunk:
-                received = size - remaining
-                raise TimeoutError(f"Expected {size} bytes, got {received}")
-            chunks.append(chunk)
-            remaining -= len(chunk)
-            received = size - remaining
-            print(f"\rReceived {received}/{size} bytes", end="", file=sys.stderr)
-        print(file=sys.stderr)
-        data = b"".join(chunks)
-
-        end = read_line(port)
-        if not end.endswith(b"END_BMP\n"):
-            sys.stderr.write(end.decode("utf-8", errors="replace"))
-            raise RuntimeError("Did not receive END_BMP marker")
+        data = capture_bmp(port)
 
     if args.transform:
         data = transform_bmp(data, args.transform)
