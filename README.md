@@ -48,21 +48,30 @@ Choose this to try the advanced remote on the `feature/bidirectional-api` branch
 
 > **Requires the WLED fork:** standard WLED does not yet implement this bidirectional API. Until the change is merged upstream, install the matching [`feature/bidirectional-espnow` WLED fork](https://github.com/figamore/WLED/tree/feature/bidirectional-espnow) on every controller used with the advanced remote.
 
+Bidirectional preview screens:
+
+<table>
+  <tr>
+    <td><img src="screenshots/cyd-full-espnow/cyd-full-controllers.png" alt="Bidirectional controller picker" width="320"><br>Controllers</td>
+    <td><img src="screenshots/cyd-full-espnow/cyd-full-presets.png" alt="Bidirectional presets screen" width="320"><br>Presets</td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/cyd-full-espnow/cyd-full-fx.png" alt="Bidirectional effects screen" width="320"><br>Effects</td>
+    <td><img src="screenshots/cyd-full-espnow/cyd-full-palettes.png" alt="Bidirectional palettes screen" width="320"><br>Palettes</td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/cyd-full-espnow/cyd-full-colorwheel.png" alt="Bidirectional color wheel" width="320"><br>Color wheel</td>
+    <td></td>
+  </tr>
+</table>
+
 ## Pair With WLED
 
 1. Open your WLED controller in a browser.
 1. Go to `Config -> WiFi & Network`.
 1. Enable ESP-NOW remote control.
-1. Copy the remote MAC from the `Info` tab into WLED's `Linked MACs` field. With the
-   bidirectional WLED firmware, it also appears as `Last device seen` while the remote is on.
+1. Copy the remote MAC from the `Info` tab into WLED's `Linked MACs` field. With the bidirectional WLED firmware, it also appears as `Last device seen` while the remote is on.
 1. Save and reboot WLED if prompted.
-
-With the bidirectional preview, repeat these steps for each WLED controller. Controllers on the
-same Wi-Fi channel are detected automatically within a few seconds; the remote does not need to
-be restarted. Open `Settings -> Control Target` to select one controller, rename it locally, or
-select `All controllers` for simultaneous control. Saved controller names and selections survive
-remote restarts. Offline controllers can be forgotten from the target picker after they are
-removed from WLED's linked-remote list.
 
 ![Info tab](screenshots/wled-touch-remote-info.png)
 
@@ -95,14 +104,7 @@ Extended mode adds more preset buttons, WLED effects, effect settings, palette c
 
 ## Communication Notes
 
-The traditional WizMote-compatible protocol is primarily send-only. The bidirectional ESP-NOW
-JSON fork returns state, catalogs, command responses, and live LED peek data to the remote. Web UI
-changes therefore update the touchscreen automatically on the advanced track.
-
-ESP-NOW devices must share a radio channel. Simultaneous multi-controller mode is intended for
-WLED instances on the same Wi-Fi network/channel. `All controllers` sends a reliable unicast to
-each online controller and then reconciles their state individually. If controller values differ,
-the Power and Brightness controls show `Mixed` until a group value is chosen.
+The traditional WizMote-compatible protocol is primarily send-only. The bidirectional ESP-NOW JSON fork returns state, catalogs, command responses, and live LED peek data to the remote. Web UI changes therefore update the touchscreen automatically on the advanced track.
 
 ## Settings
 
