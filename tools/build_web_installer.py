@@ -25,9 +25,9 @@ DEFAULT_SITE_DIR = Path("web-installer")
 FIRMWARE_DIR = "firmware"
 INSTALLER_SCREENSHOTS = (
     ("wled-touch-remote-power.png", "wled-touch-remote-power.png"),
-    ("wled-touch-remote-fx.png", "wled-touch-remote-fx.png"),
+    ("cyd-full-espnow/cyd-full-fx.png", "cyd-full-fx.png"),
     ("cyd-full-espnow/cyd-full-palettes.png", "wled-touch-remote-palettes.png"),
-    ("wled-presets-color-palette.png", "wled-presets-color-palette.png"),
+    ("cyd-full-espnow/cyd-full-presets.png", "cyd-full-presets.png"),
 )
 
 
