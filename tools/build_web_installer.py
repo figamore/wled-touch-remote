@@ -24,10 +24,10 @@ DEFAULT_REPO = "figamore/wled-touch-remote"
 DEFAULT_SITE_DIR = Path("web-installer")
 FIRMWARE_DIR = "firmware"
 INSTALLER_SCREENSHOTS = (
-    "wled-touch-remote-power.png",
-    "wled-touch-remote-fx.png",
-    "wled-touch-remote-palettes.png",
-    "wled-presets-color-palette.png",
+    ("wled-touch-remote-power.png", "wled-touch-remote-power.png"),
+    ("wled-touch-remote-fx.png", "wled-touch-remote-fx.png"),
+    ("cyd-full-espnow/cyd-full-palettes.png", "wled-touch-remote-palettes.png"),
+    ("wled-presets-color-palette.png", "wled-presets-color-palette.png"),
 )
 
 
@@ -182,11 +182,11 @@ def copy_installer_screenshots(source_dir: Path, site_dir: Path) -> None:
     if destination_dir.exists():
         shutil.rmtree(destination_dir)
     destination_dir.mkdir(parents=True)
-    for filename in INSTALLER_SCREENSHOTS:
-        source = source_dir / filename
+    for source_name, destination_name in INSTALLER_SCREENSHOTS:
+        source = source_dir / source_name
         if not source.is_file():
             raise InstallerError(f"Installer screenshot not found: {source}")
-        shutil.copy2(source, destination_dir / filename)
+        shutil.copy2(source, destination_dir / destination_name)
 
 
 def build_installer(
