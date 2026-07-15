@@ -87,6 +87,12 @@ jobs:
         run: npm ci --prefix wled-fork
 
       - name: Build generic ESP32 WLED preview
+        # WLED's official action builds each PlatformIO environment on a fresh
+        # runner. Keep its packages separate from the remote build above: both
+        # platforms provide a package named tool-esptoolpy, but they are not
+        # interchangeable.
+        env:
+          PLATFORMIO_CORE_DIR: ${{ runner.temp }}/platformio-wled
         run: pio run -d wled-fork -e esp32dev
 
       - name: Configure Pages
