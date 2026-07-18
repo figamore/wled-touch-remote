@@ -20,6 +20,7 @@ struct Model {
   bool online = false;
   bool power = false;
   uint8_t brightness = 128;
+  uint8_t mainSegmentId = 0;
   int effect = -1;          // current segment effect id, -1 = unknown
   int palette = -1;
   int preset = -1;          // current preset id, -1 = none
@@ -28,7 +29,7 @@ struct Model {
   uint8_t custom1 = 128;    // per-effect custom sliders (seg c1/c2/c3)
   uint8_t custom2 = 128;
   uint8_t custom3 = 16;
-  uint32_t color = 0xFFFFFF; // primary colour of the first segment, 0xRRGGBB
+  uint32_t color = 0xFFFFFF; // primary colour of the main segment, 0xRRGGBB
   std::string name;          // WLED instance name (info.name)
   // Effect and palette catalogs are baked in (generated/wled_catalog.h); only presets,
   // which are per-instance, are fetched over the API.

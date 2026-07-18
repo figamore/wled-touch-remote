@@ -151,6 +151,7 @@ struct QueuedTransaction {
   char json[kMaxRequestLength] = {};
   RequestKey key = RequestKey::None;
   bool retryable = true;
+  bool targetMainSegment = false;
   bool started = false;
   uint8_t targets = 0;
   uint8_t reconcileTargets = 0;
@@ -550,10 +551,22 @@ uint8_t targetCount(uint8_t mask) {
   return count;
 }
 
+// Adds the destination controller's main segment ID to a compact segment command.
+bool targetMainSegment(const char* json, uint8_t segmentId, char* output, size_t outputSize) {
+  static constexpr char segmentPrefix[] = "\"seg\":[{";
+  const char* segment = strstr(json, segmentPrefix);
+  if (!segment) return false;
+
+  const size_t insertOffset = size_t(segment - json) + sizeof(segmentPrefix) - 1;
+  const int length = snprintf(output, outputSize, "%.*s\"id\":%u,%s",
+                              int(insertOffset), json, unsigned(segmentId), json + insertOffset);
+  return length > 0 && size_t(length) < outputSize;
+}
+
 // Stores one command once and lets the scheduler visit every target. No group fan-out can
 // exhaust the queue halfway through an operation.
 bool queueTransaction(const char* json, RequestKey key, bool retryable, uint8_t targets,
-                      bool reconcile) {
+                      bool reconcile, bool targetMain = false) {
   if (!json || !targets) return false;
   const size_t len = strnlen(json, kMaxRequestLength);
   if (!len || len >= kMaxRequestLength) return false;
@@ -564,13 +577,14 @@ bool queueTransaction(const char* json, RequestKey key, bool retryable, uint8_t 
     for (uint8_t i = 0; i < g_transactionCount; i++) {
       QueuedTransaction& queued = g_transactions[(g_transactionRead + i) % kTransactionQueueSize];
       if (queued.started) continue;
-      if (queued.key == key && queued.targets == targets) {
+      if (queued.key == key && queued.targets == targets && queued.targetMainSegment == targetMain) {
         memcpy(queued.json, json, len + 1);
         queued.retryable = retryable;
         queued.reconcileTargets = reconcile ? targets : 0;
         return true;
       }
       if (queued.key == key && queued.retryable == retryable &&
+          queued.targetMainSegment == targetMain &&
           strcmp(queued.json, json) == 0) {
         queued.targets |= targets;
         if (reconcile) queued.reconcileTargets |= targets;
@@ -589,6 +603,7 @@ bool queueTransaction(const char* json, RequestKey key, bool retryable, uint8_t 
   memcpy(queued.json, json, len + 1);
   queued.key = key;
   queued.retryable = retryable;
+  queued.targetMainSegment = targetMain;
   queued.targets = targets;
   queued.reconcileTargets = reconcile ? targets : 0;
   g_transactionWrite = (g_transactionWrite + 1) % kTransactionQueueSize;
@@ -608,11 +623,12 @@ bool queueRequest(const char* json, RequestKey key, bool retryable = true,
 }
 
 // Enqueues one transaction for the selection; group reconciliation is generated lazily.
-bool queueForTargets(const char* json, RequestKey key, bool retryable = true) {
+bool queueForTargets(const char* json, RequestKey key, bool retryable = true,
+                     bool targetMain = false) {
   const uint8_t targets = onlineTargetMask();
   const bool reconcile = targetCount(targets) > 1 && key != RequestKey::Poll &&
                          key != RequestKey::Live && key != RequestKey::None;
-  return queueTransaction(json, key, retryable, targets, reconcile);
+  return queueTransaction(json, key, retryable, targets, reconcile, targetMain);
 }
 
 void completeRequest() {
@@ -665,8 +681,17 @@ bool startNextRequest() {
     targets &= uint8_t(~(1U << index));
     transaction.started = true;
     memcpy(g_request.target, g_devices[index].mac, sizeof(g_request.target));
-    const char* json = reconciling ? "{\"v\":\"compact\"}" : transaction.json;
-    memcpy(g_request.json, json, strlen(json) + 1);
+    if (reconciling) {
+      memcpy(g_request.json, "{\"v\":\"compact\"}", sizeof("{\"v\":\"compact\"}"));
+    } else if (transaction.targetMainSegment) {
+      if (!targetMainSegment(transaction.json, g_devices[index].model.mainSegmentId,
+                             g_request.json, sizeof(g_request.json))) {
+        Serial.printf("[ESPNOW] invalid main-segment command key=%s\n", requestKeyName(transaction.key));
+        continue;
+      }
+    } else {
+      memcpy(g_request.json, transaction.json, strlen(transaction.json) + 1);
+    }
     g_request.key = reconciling ? RequestKey::Poll : transaction.key;
     g_request.retryable = reconciling ? true : transaction.retryable;
     g_request.active = true;
@@ -763,9 +788,28 @@ void applyState(Model& model, JsonObjectConst state, JsonObjectConst info) {
     if (state["ps"].is<int>()) model.preset = state["ps"].as<int>();
     JsonArrayConst segs = state["seg"].as<JsonArrayConst>();
     if (!segs.isNull() && segs.size() > 0) {
-      size_t mainIdx = state["mainseg"].is<int>() ? size_t(state["mainseg"].as<int>()) : 0;
-      if (mainIdx >= segs.size()) mainIdx = 0;
-      JsonObjectConst seg = segs[mainIdx].as<JsonObjectConst>();
+      int mainSegmentId = state["mainseg"].is<int>() ? state["mainseg"].as<int>() : model.mainSegmentId;
+      if (mainSegmentId < 0 || mainSegmentId > UINT8_MAX) mainSegmentId = model.mainSegmentId;
+
+      JsonObjectConst seg;
+      for (JsonObjectConst candidate : segs) {
+        if (candidate["id"].is<int>() && candidate["id"].as<int>() == mainSegmentId) {
+          seg = candidate;
+          break;
+        }
+      }
+      if (seg.isNull()) {
+        // Older compact responses omitted segment IDs and used the array position instead.
+        size_t mainIdx = size_t(mainSegmentId);
+        if (mainIdx >= segs.size()) mainIdx = 0;
+        seg = segs[mainIdx].as<JsonObjectConst>();
+      }
+      if (seg["id"].is<int>()) {
+        const int segmentId = seg["id"].as<int>();
+        if (segmentId >= 0 && segmentId <= UINT8_MAX) model.mainSegmentId = uint8_t(segmentId);
+      } else {
+        model.mainSegmentId = uint8_t(mainSegmentId);
+      }
       if (seg["fx"].is<int>()) model.effect = seg["fx"].as<int>();
       if (seg["pal"].is<int>()) model.palette = seg["pal"].as<int>();
       if (seg["sx"].is<int>()) model.speed = seg["sx"].as<int>();
@@ -1259,7 +1303,7 @@ void savePreset(uint8_t id, const char* name) {
 void setEffect(uint8_t fxId) {
   char buf[48];
   snprintf(buf, sizeof(buf), "{\"seg\":[{\"fx\":%u}],\"v\":true}", fxId);
-  if (!queueForTargets(buf, RequestKey::Effect)) return;
+  if (!queueForTargets(buf, RequestKey::Effect, true, true)) return;
   g_model.effect = fxId; // optimistic model update prevents unrelated revisions restoring stale state
   if (g_targetAll) {
     for (size_t i = 0; i < g_deviceCount; ++i) {
@@ -1272,13 +1316,13 @@ void setEffect(uint8_t fxId) {
 void setPalette(uint8_t palId) {
   char buf[48];
   snprintf(buf, sizeof(buf), "{\"seg\":[{\"pal\":%u}],\"v\":true}", palId);
-  queueForTargets(buf, RequestKey::Palette);
+  queueForTargets(buf, RequestKey::Palette, true, true);
 }
 
 void setColor(uint8_t r, uint8_t g, uint8_t b) {
   char buf[64];
   snprintf(buf, sizeof(buf), "{\"seg\":[{\"col\":[[%u,%u,%u]]}],\"v\":true}", r, g, b);
-  if (!queueForTargets(buf, RequestKey::Color)) return;
+  if (!queueForTargets(buf, RequestKey::Color, true, true)) return;
   g_model.color = (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
   if (g_targetAll) {
     for (size_t i = 0; i < g_deviceCount; ++i) {
@@ -1295,7 +1339,7 @@ void setEffectParams(int speed, int intensity) {
   if (speed >= 0) { n += snprintf(seg + n, sizeof(seg) - n, "\"sx\":%d", speed); comma = true; }
   if (intensity >= 0) { n += snprintf(seg + n, sizeof(seg) - n, "%s\"ix\":%d", comma ? "," : "", intensity); }
   snprintf(seg + n, sizeof(seg) - n, "}],\"v\":true}");
-  queueForTargets(seg, RequestKey::EffectParams);
+  queueForTargets(seg, RequestKey::EffectParams, true, true);
 }
 
 void setCustomParam(uint8_t index, uint8_t value) {
@@ -1304,7 +1348,7 @@ void setCustomParam(uint8_t index, uint8_t value) {
   snprintf(buf, sizeof(buf), "{\"seg\":[{\"c%u\":%u}],\"v\":true}", index, value);
   const RequestKey key = index == 1 ? RequestKey::Custom1 :
                          index == 2 ? RequestKey::Custom2 : RequestKey::Custom3;
-  queueForTargets(buf, key);
+  queueForTargets(buf, key, true, true);
 }
 
 void sendRaw(const char* json) { queueForTargets(json, RequestKey::None, false); }
