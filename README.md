@@ -1,10 +1,27 @@
 # WLED Touch Remote
 
-WLED Touch Remote is a dedicated touchscreen controller for WLED over your local Wi-Fi network. It runs on the ESP32 Cheap Yellow Display (CYD) or the Guition ESP32-P4 display and controls power, brightness, presets, colours, effects, palettes, and live LED preview through WLED's standard JSON API.
+WLED Touch Remote is a dedicated touchscreen controller for WLED over your local Wi-Fi network. It runs on the ESP32 Cheap Yellow Display (CYD) or the Guition ESP32-P4 display and controls power, brightness, presets, colors, effects, palettes, and live LED preview through WLED's standard JSON API.
 
 It works with current WLED firmware and requires no custom WLED build or controller-side configuration. The remote can run from 5 V or, on supported capacitive displays, from a Li-Ion battery cell. See the [bill of materials](#bill-of-materials).
 
 > ## [▶ Try the interactive simulator in your browser for a preview](https://figamore.github.io/wled-touch-remote/simulator/jc4880p443.html)
+
+## Contents
+
+- [Support the project](#support-the-project)
+- [Features](#features)
+- [Screenshots](#screenshots)
+  - [ESP32-CYD](#esp32-cyd)
+  - [ESP32-P4](#esp32-p4)
+- [Flash it](#flash-it)
+- [Set up Wi-Fi and WLED](#set-up-wi-fi-and-wled)
+- [Settings](#settings)
+- [Supported hardware](#supported-hardware)
+- [Bill of materials](#bill-of-materials)
+- [3D-printed case](#3d-printed-case)
+- [Development](#development)
+- [ESP-NOW (deprecated)](#esp-now-deprecated)
+- [Contributing](#contributing)
 
 ## Support the project
 
@@ -36,7 +53,7 @@ If you enjoy WLED Touch Remote, please consider [sponsoring its development](htt
 <p align="center">
   <img src="screenshots/esp32-cyd/esp32-cyd-maintab.png" alt="ESP32-CYD main control screen" width="32%" />
   <img src="screenshots/esp32-cyd/esp32-cyd-presets.png" alt="ESP32-CYD presets screen" width="32%" />
-  <img src="screenshots/esp32-cyd/esp32-cyd-colorwheel.png" alt="ESP32-CYD colour wheel" width="32%" />
+  <img src="screenshots/esp32-cyd/esp32-cyd-colorwheel.png" alt="ESP32-CYD color wheel" width="32%" />
 </p>
 <p align="center">
   <img src="screenshots/esp32-cyd/esp32-cyd-fx.png" alt="ESP32-CYD effects screen" width="32%" />
@@ -49,7 +66,7 @@ If you enjoy WLED Touch Remote, please consider [sponsoring its development](htt
 <p align="center">
   <img src="screenshots/esp32-p4/esp32-p4-settings.png" alt="ESP32-P4 settings screen" width="23%" />
   <img src="screenshots/esp32-p4/esp32-p4-presets.png" alt="ESP32-P4 presets screen" width="23%" />
-  <img src="screenshots/esp32-p4/esp32-p4-colorwheel.png" alt="ESP32-P4 colour wheel" width="23%" />
+  <img src="screenshots/esp32-p4/esp32-p4-colorwheel.png" alt="ESP32-P4 color wheel" width="23%" />
   <img src="screenshots/esp32-p4/esp32-p4-fx.png" alt="ESP32-P4 effects screen" width="23%" />
 </p>
 <p align="center">
@@ -144,7 +161,13 @@ If you can source the ESP32-P4, it will provide a nicer experience due to its la
 
 ## 3D-printed case
 
-Optional snap-fit cases are available on MakerWorld: [FigCYD CYD case with optional battery](https://makerworld.com/en/models/2964422-figcyd-cyd-case-with-optional-battery#profileId-3323586).
+Optional snap-fit cases are available on MakerWorld: [FigCYD CYD case with optional battery](https://makerworld.com/en/models/2964422-figcyd-cyd-case-with-optional-battery).
+
+An ESP32-P4 case is also available on MakerWorld: [WLED Touch Remote based on ESP32-P4](https://makerworld.com/en/models/3124737-wled-touch-remote-based-on-esp32-p4).
+
+<p align="center">
+  <img src="screenshots/case/ESP32-p4-case.jpg" alt="ESP32-P4 case" width="620" />
+</p>
 
 Choose one of the two case styles:
 
@@ -189,7 +212,7 @@ The slim case can be powered through USB-C or through the board's `GND` and `5V`
 
 - Double-tap the power button to turn on.
 - Hold the power button for 10 seconds to turn off.
-- If you connect USB while running on battery, the device may restart. This is normal behaviour for the CYD battery circuitry.
+- If you connect USB while running on battery, the device may restart. This is normal behavior for the CYD battery circuitry.
 - Double-check polarity before powering the board. The case photos show the intended wiring path and board orientation.
 
 # Development
@@ -223,6 +246,10 @@ pio run -e macos-jc4880p443
 
 Each command opens a resizable SDL window. Click or drag in the window to
 simulate touch input; close the window to exit.
+
+## ESP-NOW (deprecated)
+
+ESP-NOW support is deprecated in favor of standard Wi-Fi. Use Wi-Fi for new installations.
 
 ## Contributing
 

@@ -12,7 +12,7 @@
     <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/wled.png" />
 
     <meta property="og:title" content="WLED Touch Remote - Installer" />
-    <meta property="og:description" content="Flash the WLED ESP-NOW touch remote from Chrome or Edge." />
+    <meta property="og:description" content="Flash the WLED Wi-Fi touch remote from Chrome or Edge." />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/esp32-cyd/esp32-cyd-maintab.png" />
 
@@ -605,8 +605,8 @@
               <p>Click <strong>Install</strong>, choose the ESP32 serial port, then tap the setup target on the CYD when prompted.</p>
             </li>
             <li>
-              <h3>Pair</h3>
-              <p>Go to <kbd>Config → WiFi & Network</kbd>, check <strong>"Enable ESP-NOW"</strong> then copy the MAC from the <kbd>Info</kbd> tab into WLED's <kbd>Linked MACs</kbd> field.</p>
+              <h3>Connect</h3>
+              <p>On the remote, open <kbd>Settings → Wi-Fi</kbd>, join your 2.4 GHz network, then select your WLED controller.</p>
             </li>
           </ol>
         </div>
@@ -615,7 +615,7 @@
       <!-- What you get (secondary) -->
       <section class="wrap screens-section">
         <h2>What's on the display</h2>
-        <p class="note">A touch UI for WLED's built-in ESP-NOW controls - power, presets, and effects.</p>
+        <p class="note">A touch UI for controlling WLED over Wi-Fi - power, presets, and effects.</p>
         <div class="screens">
           <figure class="screen">
             <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/esp32-cyd/esp32-cyd-maintab.png" alt="Main control screen" />
@@ -640,11 +640,6 @@
         </div>
       </section>
 
-      <!-- <p class="pair wrap">
-        <strong>After flashing:</strong> enable ESP-NOW remote control in WLED under Config → WiFi Setup,
-        then copy the MAC from the Info tab into WLED's Hardware MAC field.
-        <a href="https://github.com/figamore/wled-touch-remote#readme" rel="noopener">Full setup guide →</a>
-      </p> -->
     </main>
 
     <footer>
