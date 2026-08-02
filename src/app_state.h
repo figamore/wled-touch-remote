@@ -1,50 +1,54 @@
 #pragma once
 
 #include "app_config.h"
-#include "generated/wled_effects.h"
 #include <cstdint>
 #include <lvgl.h>
 
 // ── Layout ──────────────────────────────────────────────────────────────────
 
-constexpr int kScreenWidth = 320;
-constexpr int kScreenHeight = 240;
-constexpr int kTopBarHeight = 30;
-constexpr int kTabButtonHeight = 30;
+constexpr int kScreenWidth = WLED_SCREEN_WIDTH;
+constexpr int kScreenHeight = WLED_SCREEN_HEIGHT;
+
+// The JC4880P443 panel is ~1.5x the pixel density of a CYD, so every touch
+// target and font gets its own large-screen size instead of the CYD pixels.
+constexpr bool kLargeScreen = WLED_SCREEN_WIDTH >= 480;
+constexpr lv_coord_t uiScaled(lv_coord_t compact, lv_coord_t large) {
+  return kLargeScreen ? large : compact;
+}
+
+// WLED brightness is represented on the wire as 0–255; the UI presents the
+// equivalent rounded percentage without changing that protocol value.
+constexpr uint8_t brightnessPercent(uint8_t brightness) {
+  return static_cast<uint8_t>((uint16_t(brightness) * 100U + 127U) / 255U);
+}
+
+constexpr int kTopBarHeight = uiScaled(30, 44);
+constexpr int kTabButtonHeight = uiScaled(30, 52);
 constexpr int kPagePadding = 8;
 constexpr int kTabCardHeight = kScreenHeight - kTopBarHeight - kTabButtonHeight - (2 * kPagePadding);
-constexpr size_t kLvglBufferLines = 40;
+constexpr size_t kLvglBufferLines = WLED_LVGL_BUFFER_LINES;
+
+// Font roles; the large-screen sizes only exist in the P4 build (lv_conf.h).
+#if WLED_SCREEN_WIDTH >= 480
+#define UI_FONT_SMALL (&lv_font_montserrat_16)
+#define UI_FONT_BODY (&lv_font_montserrat_18)
+#define UI_FONT_HEADER (&lv_font_montserrat_24)
+#define UI_FONT_TITLE (&lv_font_montserrat_24)
+#define UI_FONT_BIG (&lv_font_montserrat_28)
+#else
+#define UI_FONT_SMALL (&lv_font_montserrat_12)
+#define UI_FONT_BODY (&lv_font_montserrat_14)
+#define UI_FONT_HEADER (&lv_font_montserrat_16)
+#define UI_FONT_TITLE (&lv_font_montserrat_18)
+#define UI_FONT_BIG (&lv_font_montserrat_20)
+#endif
 
 // ── Protocol ────────────────────────────────────────────────────────────────
 
-constexpr uint8_t kWledTouchButtonOn = 1;
-constexpr uint8_t kWledTouchButtonOff = 2;
-constexpr uint8_t kWledTouchButtonBrightDown = 8;
-constexpr uint8_t kWledTouchButtonBrightUp = 9;
 constexpr uint8_t kWledTouchButtonOne = 16;
-constexpr uint8_t kBasicPresetCount = 7;
-constexpr uint8_t kExtendedPresetCount = 20;
-constexpr uint8_t kRemoteActionFirst = 36;
-constexpr uint8_t kRemoteColorFirst = 51;
-constexpr uint8_t kInfoTabIndex = 3;
+constexpr uint8_t kPresetSlotCount = 20;
+constexpr uint8_t kInfoTabIndex = 4;
 constexpr uint8_t kSettingsTabIndex = 4;
-constexpr uint8_t kBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-
-constexpr uint8_t kRemotePaletteDown = kRemoteActionFirst;
-constexpr uint8_t kRemotePaletteUp = static_cast<uint8_t>(kRemoteActionFirst + 1);
-constexpr uint8_t kRemoteSpeedDown = static_cast<uint8_t>(kRemoteActionFirst + 2);
-constexpr uint8_t kRemoteSpeedUp = static_cast<uint8_t>(kRemoteActionFirst + 3);
-constexpr uint8_t kRemoteIntensityDown = static_cast<uint8_t>(kRemoteActionFirst + 4);
-constexpr uint8_t kRemoteIntensityUp = static_cast<uint8_t>(kRemoteActionFirst + 5);
-constexpr uint8_t kRemoteCustom1Down = static_cast<uint8_t>(kRemoteActionFirst + 6);
-constexpr uint8_t kRemoteCustom1Up = static_cast<uint8_t>(kRemoteActionFirst + 7);
-constexpr uint8_t kRemoteCustom2Down = static_cast<uint8_t>(kRemoteActionFirst + 8);
-constexpr uint8_t kRemoteCustom2Up = static_cast<uint8_t>(kRemoteActionFirst + 9);
-constexpr uint8_t kRemoteCustom3Down = static_cast<uint8_t>(kRemoteActionFirst + 10);
-constexpr uint8_t kRemoteCustom3Up = static_cast<uint8_t>(kRemoteActionFirst + 11);
-constexpr uint8_t kRemoteOption1Toggle = static_cast<uint8_t>(kRemoteActionFirst + 12);
-constexpr uint8_t kRemoteOption2Toggle = static_cast<uint8_t>(kRemoteActionFirst + 13);
-constexpr uint8_t kRemoteOption3Toggle = static_cast<uint8_t>(kRemoteActionFirst + 14);
 
 // ── Preferences keys ────────────────────────────────────────────────────────
 
@@ -52,11 +56,19 @@ constexpr const char* kPrefsNamespace = "wled-cyd";
 constexpr const char* kPrefsFlipKey = "flip";
 constexpr const char* kPrefsIdleOffKey = "idleOff";
 constexpr const char* kPrefsIdleModeKey = "idleMode";
-constexpr const char* kPrefsExtendedKey = "extended";
 constexpr const char* kPrefsInfoSeenKey = "infoSeen";
 constexpr const char* kPrefsHardwareProfileKey = "hwProfile";
 constexpr const char* kPrefsHardwareSetupVersionKey = "hwSetupVer";
 constexpr uint8_t kHardwareSetupVersion = 4;
+constexpr const char* kPrefsWifiSsidKey = "wifiSsid";
+constexpr const char* kPrefsWifiPassKey = "wifiPass";
+// The last known channel lets the station try the AP before doing a full
+// 2.4 GHz scan on the next boot.  It is only a hint: wifi_link falls back to
+// an all-channel attempt if the router has moved it.
+constexpr const char* kPrefsWifiChannelKey = "wifiChan";
+
+constexpr size_t kMaxSsidLength = 32;
+constexpr size_t kMaxWifiPassLength = 63;
 
 // ── Colors ──────────────────────────────────────────────────────────────────
 
@@ -99,17 +111,11 @@ struct RemoteState {
   uint8_t brightness = 255;
 };
 
-struct ColorSwatch {
-  const char* label;
-  uint8_t button;
-  uint32_t color;
-  bool dark_text;
-};
-
 enum class IdleMode : uint8_t {
   kDim,
   kOff,
   kAlwaysOn,
+  kEco,
 };
 
 enum class StatusCode : uint8_t {
@@ -127,19 +133,6 @@ enum class StatusCode : uint8_t {
 
 // ── Data tables ─────────────────────────────────────────────────────────────
 
-constexpr ColorSwatch kColorSwatches[] = {
-    {"Warm", kRemoteColorFirst, 0xFFB45A, false},
-    {"White", static_cast<uint8_t>(kRemoteColorFirst + 1), 0xFFFFFF, true},
-    {"Red", static_cast<uint8_t>(kRemoteColorFirst + 2), 0xFF2020, false},
-    {"Orange", static_cast<uint8_t>(kRemoteColorFirst + 3), 0xFF6000, false},
-    {"Yellow", static_cast<uint8_t>(kRemoteColorFirst + 4), 0xFFD600, true},
-    {"Green", static_cast<uint8_t>(kRemoteColorFirst + 5), 0x00BE50, false},
-    {"Cyan", static_cast<uint8_t>(kRemoteColorFirst + 6), 0x00D2FF, true},
-    {"Blue", static_cast<uint8_t>(kRemoteColorFirst + 7), 0x0058FF, false},
-    {"Purple", static_cast<uint8_t>(kRemoteColorFirst + 8), 0x8040FF, false},
-    {"Pink", static_cast<uint8_t>(kRemoteColorFirst + 9), 0xFF30A0, false},
-};
-
 // ── Shared mutable state ─────────────────────────────────────────────────────
 
 extern RemoteState state;
@@ -147,7 +140,6 @@ extern uint8_t selected_preset;
 extern uint8_t selected_effect_id;
 extern bool display_flipped;
 extern IdleMode idle_mode;
-extern bool extended_mode;
 extern bool show_info_on_first_boot;
 
 // ── LVGL widget handles ──────────────────────────────────────────────────────
@@ -155,16 +147,17 @@ extern bool show_info_on_first_boot;
 extern lv_obj_t* main_tabs;
 extern lv_obj_t* presets_tab;
 extern lv_obj_t* fx_tab;
-extern lv_obj_t* preset_buttons[kExtendedPresetCount];
+extern lv_obj_t* preset_buttons[kPresetSlotCount];
 extern lv_obj_t* power_button;
 extern lv_obj_t* power_button_label;
 extern lv_obj_t* brightness_label;
-extern lv_obj_t* mac_label;
+extern lv_obj_t* brightness_slider;
+extern lv_obj_t* conn_label;
+extern lv_obj_t* conn_detail_label;
+extern lv_obj_t* target_label;
 extern lv_obj_t* orientation_label;
 extern lv_obj_t* idle_label;
-extern lv_obj_t* mode_label;
 extern lv_obj_t* help_dialog;
-extern lv_obj_t* effect_preview;
 
 #if WLED_CYD_ENABLE_BATTERY
 extern lv_obj_t* battery_indicator;

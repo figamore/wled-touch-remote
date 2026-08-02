@@ -10,6 +10,8 @@ const char* idleModeName(IdleMode mode) {
       return "Display Off";
     case IdleMode::kAlwaysOn:
       return "Always On";
+    case IdleMode::kEco:
+      return "Eco";
   }
   return "Dim";
 }
@@ -21,6 +23,8 @@ IdleMode nextIdleMode(IdleMode mode) {
     case IdleMode::kOff:
       return IdleMode::kAlwaysOn;
     case IdleMode::kAlwaysOn:
+      return IdleMode::kEco;
+    case IdleMode::kEco:
       return IdleMode::kDim;
   }
   return IdleMode::kDim;
@@ -33,23 +37,24 @@ void loadSettings() {
     display_flipped = prefs.getBool(kPrefsFlipKey, false);
     if (prefs.isKey(kPrefsIdleModeKey)) {
       const uint8_t saved_idle_mode = prefs.getUChar(kPrefsIdleModeKey, static_cast<uint8_t>(IdleMode::kDim));
-      idle_mode = saved_idle_mode <= static_cast<uint8_t>(IdleMode::kAlwaysOn)
+      idle_mode = saved_idle_mode <= static_cast<uint8_t>(IdleMode::kEco)
                       ? static_cast<IdleMode>(saved_idle_mode)
                       : IdleMode::kDim;
     } else {
       idle_mode = prefs.getBool(kPrefsIdleOffKey, false) ? IdleMode::kOff : IdleMode::kDim;
     }
-    extended_mode = prefs.getBool(kPrefsExtendedKey, false);
     info_seen = prefs.getBool(kPrefsInfoSeenKey, false);
     prefs.end();
   }
   show_info_on_first_boot = !info_seen;
 #if WLED_TOUCH_SIMULATOR
-  extended_mode = true;
+  // Browser and desktop simulators do not retain device preferences reliably
+  // between sessions. Start at the primary Power view instead of treating every
+  // launch as a first boot and selecting the index shared by the Settings tab.
+  show_info_on_first_boot = false;
 #endif
   Serial.printf("Display orientation: %s\n", display_flipped ? "flipped" : "normal");
   Serial.printf("Display idle action: %s\n", idleModeName(idle_mode));
-  Serial.printf("Control mode: %s\n", extended_mode ? "extended" : "basic");
 }
 
 void markInfoTabSeen() {
@@ -70,7 +75,6 @@ void saveSettings() {
   if (prefs.begin(kPrefsNamespace, false)) {
     prefs.putBool(kPrefsFlipKey, display_flipped);
     prefs.putUChar(kPrefsIdleModeKey, static_cast<uint8_t>(idle_mode));
-    prefs.putBool(kPrefsExtendedKey, extended_mode);
     prefs.end();
   }
 }

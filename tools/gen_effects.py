@@ -3,7 +3,7 @@
 
 The generator reads the local official WLED checkout and emits:
   - include/generated/wled_effects.h for the touchscreen UI
-  - remote.json for WLED's ESP-NOW JSON remote handler
+  - WLED's standard JSON API catalog
 """
 
 import argparse

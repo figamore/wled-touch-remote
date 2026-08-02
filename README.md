@@ -1,169 +1,178 @@
 # WLED Touch Remote
 
-A wireless-capable, touchscreen remote controller for WLED running on the ESP32 Cheap Yellow Display (CYD).
+WLED Touch Remote is a dedicated touchscreen controller for WLED over your local Wi-Fi network. It runs on the ESP32 Cheap Yellow Display (CYD) or the Guition ESP32-P4 display and controls power, brightness, presets, colours, effects, palettes, and live LED preview through WLED's standard JSON API.
 
-It gives you a small dedicated controller for power, brightness, presets, colors, and WLED effects over **ESP-NOW**, a wireless protocol. No Wi-Fi connection is needed after pairing; the display talks directly to your WLED controller. It can run off 5V or wirelessly using an 18650 Li-Ion battery cell. [See the Bill of Materials](#bom)
+It works with current WLED firmware and requires no custom WLED build or controller-side configuration. The remote can run from 5 V or, on supported capacitive displays, from a Li-Ion battery cell. See the [bill of materials](#bill-of-materials).
 
-> **Hardware note:** the default firmware supports common capacitive and resistive CYD boards. On first boot, setup asks you to tap the screen and saves the detected touch hardware.
-
-![Display](screenshots/case/FigCyd-Standard-2.jpg)
+![Display](screenshots/case/esp32-cyd-and-esp32-p4.jpg)
 
 ## Features
 
-- Power on/off and brightness control
-- Preset selection
-- Optional, easy-to-configure [extended mode](#extended-mode) for up to 20 presets, effects, palettes, speed, intensity, and color controls
-- On-device settings for screen orientation, idle behavior (dim, always off/on), and Basic/Extended mode
-- Help screens with QR codes for setup instructions
-- Web installer support for easy browser flashing
+- Power and brightness control
+- Preset selection, creation, and renaming
+- Colors, effects, palettes, speed, and intensity controls
+- Live LED preview and responsive state updates from the selected controller
+- Automatic discovery of WLED controllers on the local network, with manual IP-address entry when discovery is unavailable
+- Control of one or all discovered controllers
+- On-device settings for screen orientation and inactivity behavior
+- Web installer support for browser-based flashing
 
-## Flash It
+![Effects](screenshots/esp32-cyd/esp32-cyd-fx.png)
 
-The easiest way is the [web installer](https://figamore.github.io/wled-touch-remote/):
+## Screenshots
 
-1. Open the [web installer](https://figamore.github.io/wled-touch-remote/)
-2. Connect the CYD with a data-capable USB cable.
-3. Click Install and choose the ESP32 serial port.
+### ESP32-CYD
 
-## Pair With WLED
+<p align="center">
+  <img src="screenshots/esp32-cyd/esp32-cyd-maintab.png" alt="ESP32-CYD main control screen" width="32%" />
+  <img src="screenshots/esp32-cyd/esp32-cyd-presets.png" alt="ESP32-CYD presets screen" width="32%" />
+  <img src="screenshots/esp32-cyd/esp32-cyd-colorwheel.png" alt="ESP32-CYD colour wheel" width="32%" />
+</p>
+<p align="center">
+  <img src="screenshots/esp32-cyd/esp32-cyd-fx.png" alt="ESP32-CYD effects screen" width="32%" />
+  <img src="screenshots/esp32-cyd/esp32-cyd-palettes.png" alt="ESP32-CYD palettes screen" width="32%" />
+  <img src="screenshots/esp32-cyd/esp32-cyd-settigs.png" alt="ESP32-CYD settings screen" width="32%" />
+</p>
 
-1. Open your WLED controller in a browser.
-1. Go to `Config -> WiFi & Network`.
-1. Enable ESP-NOW remote control.
-1. copy the MAC from the `Info` tab into WLED's `Linked MACs` field.
-1. Save and reboot WLED if prompted.
+### ESP32-P4
 
-![Info tab](screenshots/wled-touch-remote-info.png)
+<p align="center">
+  <img src="screenshots/esp32-p4/esp32-p4-settings.png" alt="ESP32-P4 settings screen" width="23%" />
+  <img src="screenshots/esp32-p4/esp32-p4-presets.png" alt="ESP32-P4 presets screen" width="23%" />
+  <img src="screenshots/esp32-p4/esp32-p4-colorwheel.png" alt="ESP32-P4 colour wheel" width="23%" />
+  <img src="screenshots/esp32-p4/esp32-p4-fx.png" alt="ESP32-P4 effects screen" width="23%" />
+</p>
+<p align="center">
+  <img src="screenshots/esp32-p4/esp32-p4-wifiscan.png" alt="ESP32-P4 Wi-Fi network scan" width="30%" />
+  <img src="screenshots/esp32-p4/esp32-p4-palettes.png" alt="ESP32-P4 palettes screen" width="30%" />
+  <img src="screenshots/esp32-p4/esp32-p4-keyboard.png" alt="ESP32-P4 on-screen keyboard" width="30%" />
+</p>
 
-## Basic Mode
+## Flash it
 
-Basic mode works with WLED's built-in ESP-NOW remote behavior. You get:
+The easiest option is the [web installer](https://figamore.github.io/wled-touch-remote/):
 
-- Power
-- Brightness
-- Presets 1-7
-- Settings and Info screens
+1. Open the [web installer](https://figamore.github.io/wled-touch-remote/).
+2. Connect your display using a data-capable USB cable.
+3. Click **Install** and choose the ESP32 serial port.
 
-This mode does not require uploading any extra files to WLED.
+## Set up Wi-Fi and WLED
 
-## Extended Mode
+1. On the remote, open **Settings → Wi-Fi**, choose your 2.4 GHz network, and enter its password.
+2. The remote finds WLED instances advertised on the LAN. Open **Settings → Control Target** to choose one or control all discovered controllers.
+3. If a controller is not discovered, choose **WLED IP** from the Wi-Fi screen and enter its IPv4 address.
 
-Extended mode unlocks the richer controls. To use it, upload [remote.json](https://raw.githubusercontent.com/figamore/wled-touch-remote/main/remote.json) to your WLED controller as `/remote.json`.
-
-In WLED:
-
-1. Open `http://<wled-ip>/edit`
-2. Upload [remote.json](https://raw.githubusercontent.com/figamore/wled-touch-remote/main/remote.json)
-3. On the remote, open Settings
-4. Enable Extended mode
-
-Extended mode adds more preset buttons, WLED effects, effect settings, palette controls, and large color swatches.
-
-![FX tab](screenshots/wled-touch-remote-fx.png)
-![FX parameters](screenshots/wled-touch-remote-fx-params.png)
-
-## Communication Notes
-
-WLED's ESP-NOW remote protocol is one-way unless WLED itself is modified. The remote sends commands to WLED, but WLED does not send status, delivery confirmation, or live LED data back to the remote.
-
-Because of that, on-screen state is based on the last action sent from the remote. Effect peek/preview animations are local estimates intended to help identify effects; they are not live previews from the WLED controller.
+The remote and WLED controller must be on the same routed local network.
 
 ## Settings
 
 The Settings tab lets you change:
 
+- The controller or controllers to control
+- Wi-Fi network
 - Display orientation
-- Idle display behavior: dim, turn off, or always on
-- Basic or Extended mode
+- Inactivity behavior:
+   * Always on
+   * Dim
+   * Display off
+   * Eco: display stays on while the WLED instance is on, then turns off after 30 seconds when the WLED instance is off.
+- Software updates from stable GitHub Releases
 
 Settings are saved on the ESP32 and restored after reboot.
 
-![Settings tab](screenshots/wled-touch-remote-settings.png)
+### Software updates
 
-## Supported Hardware
+Open **Settings → Software Update → Check for Updates** to compare the installed semantic version with the newest compatible stable GitHub Release. Drafts and prereleases are ignored. The remote only accepts the application firmware asset for its own board (`esp32-cyd` or `jc4880p443`), downloads it, and verifies the GitHub-provided SHA-256 digest before committing it to the OTA partition.
 
-This project targets ESP32 Cheap Yellow Display boards, especially the Guition JC2432W328C (recommended) / ESP32-2432S028C-style capacitive CYD and ESP32-024 / ESP32-2432S028-style resistive CYD.
+Keep the remote powered and connected to Wi-Fi during installation. A download, validation, or install failure aborts the pending OTA image and leaves the currently running firmware intact.
 
-The default firmware can auto-detect the common display and touch combinations used by these boards:
+![Settings](screenshots/esp32-p4/esp32-p4-settings.png)
 
-- ST7789 display + CST816S touch
-- ILI9341 display + FT5x06 touch
-- ILI9341 display + XPT2046 touch
-- ST7789 display + XPT2046 touch
+## Supported hardware
 
-On first boot, the firmware shows a one-time touch setup screen so it can confirm the touch hardware.
+Supported devices:
 
-## BOM
+- **Guition ESP32-P4 JC4880P443, 4.3-inch display** - highly recommended
+- **Guition JC2432W328C** - recommended capacitive CYD
+- **ESP32-024 and ESP32-2432S028-style resistive CYDs** - largely supported but **not recommended**
 
-##### - Cheap Yellow Display
-CYDs come in two variants: capacitive and resistive. The capacitive version is preferred due to its more responsive touch, slightly nicer display, and wider support. Additionally, only the capacitive CYDs support Li-Ion batteries (you must check whether it has the "BAT" connector before you buy as several variants exist). Most resistive CYDs are also supported, but not recommended. There are too many resistive variants to guarantee support for all of them.
+On first boot, the firmware shows a one-time touch setup screen to confirm the touch hardware.
 
-Search for "JC2432W328C" or "Capacitive CYD" on AliExpress or Amazon. `Guition` is the recommended brand for capacitive displays - but please avoid their resistive displays as they are likely not supported.
+## Bill of materials
 
- Below are some available options at this time for the capacitive CYD:
+### Cheap Yellow Display
 
-https://www.amazon.com/DIYmalls-Touchscreen-ESP-WROOM-32-Development-JC2432W328C
+CYDs come in capacitive and resistive versions. The capacitive version is preferred for its more responsive touch, slightly nicer display, and wider support. Only capacitive CYDs support Li-Ion batteries. Check for the `BAT` connector before buying because several variants exist.
 
-https://www.aliexpress.us/item/3256806545687380.html
+Most resistive CYDs are also supported, but they are not recommended. There are too many resistive variants to guarantee support for all of them.
 
-![Info tab](screenshots/capacitive-cyd.png)
+Search for `JC2432W328C` or `Capacitive CYD` on AliExpress or Amazon. Guition is the recommended brand for capacitive displays. Avoid its resistive displays because they are unlikely to be supported.
 
-##### - Fasteners for 3D printed case
-   - **Slim version**: 4 M3x10 bolts
-   - **Battery version**: 4 M3x20 bolts
+Some currently available capacitive CYDs:
 
-##### - Mating connectors (optional)
-- One JST-PB 1.25mm 4-pin connector is typically included when buying a CYD. This allows you to add buttons.
+- <https://www.amazon.com/DIYmalls-Touchscreen-ESP-WROOM-32-Development-JC2432W328C>
+- <https://www.aliexpress.us/item/3256806545687380.html>
 
-- A JST-PB 1.25mm 2-pin connector should be used if battery operation is desired - although it may suffice to carefully slice a 4-pin connector in half if a 2-pin connector can't be sourced.
+![Capacitive CYD](screenshots/capacitive-cyd.png)
 
-## 3D Printed Case
+If you can source the ESP32-P4, it will provide a nicer experience due to its larger and more powerful display:
+- <https://www.aliexpress.us/item/3256809431944589.html>
 
-Optional snap-fit cases are available on MakerWorld:
+### Fasteners for the 3D-printed case
 
-[FigCYD CYD case with optional battery](https://makerworld.com/en/models/2964422-figcyd-cyd-case-with-optional-battery#profileId-3323586)
+- **Slim version:** four M3×10 bolts
+- **Battery version:** four M3×20 bolts
 
-Choose one of the two case styles from MakerWorld:
+### Mating connectors (optional)
 
-- **Slim case**: for a clean remote without an internal battery. Useful when fixed on a wall or control cabinet with always-on power via USB-C or 5V.
+- CYDs usually include a JST-PB 1.25 mm four-pin connector, which you can use to add buttons.
+- For battery operation, use a JST-PB 1.25 mm two-pin connector. If necessary, carefully split a four-pin connector in half.
 
-![Slim case](screenshots/case/FigCyd-Standard.jpg)
+## 3D-printed case
 
-- **Battery case**: for a portable, fully-wireless build with an 18650 Li-Ion cell and holder.
+Optional snap-fit cases are available on MakerWorld: [FigCYD CYD case with optional battery](https://makerworld.com/en/models/2964422-figcyd-cyd-case-with-optional-battery#profileId-3323586).
 
-![Battery case](screenshots/case/FigCyd-Battery-1.jpg)
+Choose one of the two case styles:
 
-Assembly notes:
+- **Slim case:** A clean remote without an internal battery, suited to a wall or control cabinet with continuous USB-C or 5 V power.
 
-1. Print the case parts from MakerWorld (choose either slim or battery variant).
+  ![Slim case](screenshots/case/FigCyd-Standard.jpg)
+
+- **Battery case:** A portable build with an 18650 Li-Ion cell and holder.
+
+  ![Battery case](screenshots/case/FigCyd-Battery-1.jpg)
+
+Assembly:
+
+1. Print the case parts from MakerWorld for the slim or battery version.
 2. Press the CYD into the front shell, checking that the USB-C port, reset button, and side button line up.
-3. Snap the back shell into place. Bolts are optional because the case is snap-fit, but they are recommended for a more secure build.
-   - **Slim**: 4 M3x10 bolts
-   - **Battery**: 4 M3x20 bolts
+3. Snap the back shell into place. Bolts are optional because the case is snap-fit, but they make it more secure.
+   - **Slim:** four M3×10 bolts
+   - **Battery:** four M3×20 bolts
 
-If you are building the slim case, you can stop here. Continue only for the battery case:
+For the slim case, you can stop here. For the battery case:
 
-1. Remove the printed supports from the button opening, bolt holes, and battery holder area.
+1. Remove the printed supports from the button opening, bolt holes, and battery-holder area.
 2. Free the side power-button piece and make sure it moves smoothly before installing the CYD.
-3. Install the 18650 holder and route the wires carefully so they do not pinch when the case closes.
+3. Install the 18650 holder and route the wires so they do not pinch when the case closes.
 
 ![Case supports](screenshots/case/Remove-button-support.jpg)
-![Battery case inside](screenshots/case/FigCyd-Battery-Internal.jpg)
+![Battery case interior](screenshots/case/FigCyd-Battery-Internal.jpg)
 
-The slim case can be powered through USB-C, or through the board's `GND` and `5V` connector as shown below.
+The slim case can be powered through USB-C or through the board's `GND` and `5V` connector.
 
 ![Slim case power wiring](screenshots/case/FigCyd-Internal.jpg)
 
-**Battery operation instructions**
+### Battery operation
 
-- Double tap the power button to **turn on**.
-- Hold the power button for 10 seconds to **turn off**.
-- If a USB cable is connected while running on battery, the device may restart. This is normal behavior for the CYD battery circuitry.
+- Double-tap the power button to turn on.
+- Hold the power button for 10 seconds to turn off.
+- If you connect USB while running on battery, the device may restart. This is normal behaviour for the CYD battery circuitry.
 - Double-check polarity before powering the board. The case photos show the intended wiring path and board orientation.
 
 # Development
 
-## Building Locally
+## Build locally
 
 Install PlatformIO, then run:
 
@@ -172,21 +181,32 @@ pio run -e esp32-cyd
 pio run -e esp32-cyd -t upload
 ```
 
-## macOS Simulator
+For the JC4880P443, use `pio run -e jc4880p443`. See `platformio.ini` for all available environments and `include/app_config.h` for board-specific options.
+
+## macOS simulator
 
 A native SDL simulator is included for screenshots and UI checks:
 
 ```sh
 brew install sdl2
+
+# 320x240 ESP32-CYD
 pio run -e macos
 .pio/build/macos/program
+
+# 480x800 ESP32-P4 JC4880P443
+pio run -e macos-jc4880p443
+.pio/build/macos-jc4880p443/program
 ```
+
+Each command opens a resizable SDL window. Click or drag in the window to
+simulate touch input; close the window to exit.
 
 ## Contributing
 
-Issues and pull requests are welcome. Please keep changes focused, touch-friendly, and friendly to the small 320x240 screen.
+Issues and pull requests are welcome. Keep changes focused and touch-friendly on both the 320×240 CYD and the Guition ESP32-P4 JC4880P443 4.3-inch display.
 
-Useful areas for contributions:
+Useful areas for contributions include:
 
 - UI polish
 - Documentation

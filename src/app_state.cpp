@@ -5,22 +5,22 @@ uint8_t selected_preset = 0;
 uint8_t selected_effect_id = 255;
 bool display_flipped = false;
 IdleMode idle_mode = IdleMode::kDim;
-bool extended_mode = false;
 bool show_info_on_first_boot = false;
 
 lv_obj_t* main_tabs = nullptr;
 lv_obj_t* presets_tab = nullptr;
 lv_obj_t* fx_tab = nullptr;
-lv_obj_t* preset_buttons[kExtendedPresetCount] = {};
+lv_obj_t* preset_buttons[kPresetSlotCount] = {};
 lv_obj_t* power_button = nullptr;
 lv_obj_t* power_button_label = nullptr;
 lv_obj_t* brightness_label = nullptr;
-lv_obj_t* mac_label = nullptr;
+lv_obj_t* brightness_slider = nullptr;
+lv_obj_t* conn_label = nullptr;
+lv_obj_t* conn_detail_label = nullptr;
+lv_obj_t* target_label = nullptr;
 lv_obj_t* orientation_label = nullptr;
 lv_obj_t* idle_label = nullptr;
-lv_obj_t* mode_label = nullptr;
 lv_obj_t* help_dialog = nullptr;
-lv_obj_t* effect_preview = nullptr;
 
 #if WLED_CYD_ENABLE_BATTERY
 lv_obj_t* battery_indicator = nullptr;

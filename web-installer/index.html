@@ -14,7 +14,7 @@
     <meta property="og:title" content="WLED Touch Remote - Installer" />
     <meta property="og:description" content="Flash the WLED ESP-NOW touch remote from Chrome or Edge." />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-power.png" />
+    <meta property="og:image" content="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/esp32-cyd/esp32-cyd-maintab.png" />
 
     <script
       type="module"
@@ -176,6 +176,103 @@
         border: 1px solid var(--border);
         border-radius: var(--radius);
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 28px -16px rgba(0, 0, 0, 0.25);
+      }
+      .device-picker {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 0.9rem;
+      }
+      .device-option {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        padding: 0.55rem;
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-sm);
+        background: var(--bg);
+        cursor: pointer;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+      .device-option.is-selected {
+        border-color: #8b5cf6;
+        background: #f5f3ff;
+      }
+      .device-option input {
+        position: absolute;
+        opacity: 0;
+      }
+      .device-option .device-name {
+        display: block;
+        min-height: 2.5rem;
+        padding: 0 0.9rem;
+        color: var(--text);
+        font: inherit;
+        font-size: 0.82rem;
+        font-weight: 700;
+        text-align: center;
+      }
+      .device-option input:focus-visible + .device-name {
+        outline: 2px solid #7c3aed;
+        outline-offset: 3px;
+        border-radius: 3px;
+      }
+      .device-radio {
+        position: absolute;
+        top: 0.65rem;
+        right: 0.65rem;
+        width: 1.15rem;
+        height: 1.15rem;
+        border: 1.5px solid var(--border-strong);
+        border-radius: 50%;
+        background: var(--bg);
+      }
+      .device-option.is-selected .device-radio {
+        border-color: #7c3aed;
+        background: #7c3aed;
+      }
+      .device-option.is-selected .device-radio::after {
+        content: "";
+        position: absolute;
+        top: 0.25rem;
+        left: 0.22rem;
+        width: 0.45rem;
+        height: 0.22rem;
+        border-bottom: 2px solid #fff;
+        border-left: 2px solid #fff;
+        transform: rotate(-45deg);
+      }
+      .device-option img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        object-fit: cover;
+        margin-top: 0.45rem;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+      }
+      .device-simulators {
+        margin-bottom: 0.9rem;
+      }
+      .try-simulator {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.4rem;
+        padding: 0.45rem 0.65rem;
+        border: 1px solid #c4b5fd;
+        border-radius: 8px;
+        background: #f5f3ff;
+        color: #5b21b6;
+        font-size: 0.82rem;
+        font-weight: 700;
+        line-height: 1.2;
+        text-align: center;
+        text-decoration: none;
+      }
+      .try-simulator:hover {
+        border-color: #8b5cf6;
+        background: #ede9fe;
+        color: #4c1d95;
       }
 
       esp-web-install-button {
@@ -451,7 +548,28 @@
         </p>
 
         <div class="installer">
-          <esp-web-install-button manifest="manifest.json">
+          <div class="device-picker" role="radiogroup" aria-label="Choose your device">
+            <label class="device-option is-selected">
+              <input type="radio" name="device" value="manifest-esp32-cyd.json" checked />
+              <span class="device-name">ESP32-CYD</span>
+              <span class="device-radio" aria-hidden="true"></span>
+              <img src="https://placehold.co/320x240/f6f6f5/57575e?text=ESP32-CYD" alt="Placeholder for an ESP32-CYD board" />
+            </label>
+            <label class="device-option">
+              <input type="radio" name="device" value="manifest-jc4880p443.json" />
+              <span class="device-name">ESP32-P4 (JC4880P443)</span>
+              <span class="device-radio" aria-hidden="true"></span>
+              <img src="https://placehold.co/320x240/f6f6f5/57575e?text=ESP32-P4" alt="Placeholder for an ESP32-P4 JC4880P443 board" />
+            </label>
+          </div>
+
+          <div class="device-simulators">
+            <a class="try-simulator" href="simulator/jc4880p443.html" target="_blank" rel="noopener">
+              Try the simulator online
+            </a>
+          </div>
+
+          <esp-web-install-button id="install-button" manifest="manifest-esp32-cyd.json">
             <button class="install-btn" slot="activate">
               <svg viewBox="0 0 475.248 228.092" fill="currentColor" aria-hidden="true"><path d="M 462.836,114.054 L 412.799,85.158 L 412.799,105.771 L 157.046,105.771 L 206.844,53.159 C 211.082,49.762 216.627,47.379 222.331,47.247 C 245.406,47.247 259.109,47.241 264.153,47.231 C 267.572,56.972 276.756,64.003 287.674,64.003 C 301.486,64.003 312.695,52.795 312.695,38.978 C 312.695,25.155 301.487,13.951 287.674,13.951 C 276.756,13.951 267.572,20.978 264.153,30.711 L 222.821,30.704 C 211.619,30.704 199.881,36.85 192.41,44.055 C 192.614,43.841 192.826,43.613 192.398,44.059 C 192.24,44.237 139.564,99.873 139.564,99.873 C 135.335,103.265 129.793,105.633 124.093,105.769 L 95.161,105.769 C 91.326,86.656 74.448,72.256 54.202,72.256 C 31.119,72.256 12.408,90.967 12.408,114.043 C 12.408,137.126 31.119,155.838 54.202,155.838 C 74.452,155.838 91.33,141.426 95.165,122.297 L 123.59,122.297 C 123.663,122.297 123.736,122.301 123.81,122.297 L 186.681,122.297 C 192.37,122.442 197.905,124.813 202.13,128.209 C 202.13,128.209 254.794,183.841 254.957,184.021 C 255.379,184.468 255.169,184.235 254.961,184.025 C 262.432,191.229 274.175,197.371 285.379,197.371 L 325.211,197.362 L 325.211,214.139 L 375.261,214.139 L 375.261,164.094 L 325.211,164.094 L 325.211,180.849 C 325.211,180.849 314.72,180.83 284.891,180.83 C 279.186,180.699 273.635,178.319 269.399,174.922 L 219.59,122.3 L 412.799,122.3 L 412.799,142.946 L 462.836,114.054 z"/></svg>
               Install
@@ -501,23 +619,23 @@
         <p class="note">A touch UI for WLED's built-in ESP-NOW controls - power, presets, and effects.</p>
         <div class="screens">
           <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-power.png" alt="Power tab" />
-            <figcaption>Power</figcaption>
+            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/esp32-cyd/esp32-cyd-maintab.png" alt="Main control screen" />
+            <figcaption>Control</figcaption>
           </figure>
           <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-presets.png" alt="Presets tab" />
+            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/esp32-cyd/esp32-cyd-presets.png" alt="Presets screen" />
             <figcaption>Presets</figcaption>
           </figure>
           <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-fx.png" alt="FX tab" />
-            <figcaption>FX</figcaption>
+            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/esp32-cyd/esp32-cyd-fx.png" alt="Effects screen" />
+            <figcaption>Effects</figcaption>
           </figure>
           <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-info.png" alt="Info tab" />
-            <figcaption>Info</figcaption>
+            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/esp32-cyd/esp32-cyd-palettes.png" alt="Palettes screen" />
+            <figcaption>Palettes</figcaption>
           </figure>
           <figure class="screen">
-            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/wled-touch-remote-settings.png" alt="Settings tab" />
+            <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/esp32-cyd/esp32-cyd-settigs.png" alt="Settings screen" />
             <figcaption>Settings</figcaption>
           </figure>
         </div>
@@ -541,6 +659,18 @@
     </footer>
 
     <script>
+      const devices = document.querySelectorAll('input[name="device"]');
+      const installButton = document.querySelector("#install-button");
+      devices.forEach((device) => {
+        device.addEventListener("change", () => {
+          if (!device.checked) return;
+          installButton?.setAttribute("manifest", device.value);
+          devices.forEach((option) => {
+            option.closest(".device-option")?.classList.toggle("is-selected", option.checked);
+          });
+        });
+      });
+
       (async function showRelease() {
         const el = document.querySelector("#release-status");
         if (!el) return;

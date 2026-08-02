@@ -190,6 +190,12 @@ constexpr uint32_t kRemoteJsonQrWidth = {remote_qr_width};
 constexpr uint32_t kRemoteJsonQrHeight = {remote_qr_height};
 constexpr size_t kRemoteJsonQrPixelCount = {len(remote_qr_pixels)};
 
+extern const uint16_t kWledLogoPixels[] PROGMEM;
+extern const uint16_t kWledLogoHeaderPixels[] PROGMEM;
+extern const uint16_t kHelpQrPixels[] PROGMEM;
+extern const uint16_t kRemoteJsonQrPixels[] PROGMEM;
+
+#ifdef WLED_LOGO_ASSET_IMPLEMENTATION
 const uint16_t kWledLogoPixels[] PROGMEM = {{
 {format_pixels(logo_pixels)}
 }};
@@ -205,6 +211,7 @@ const uint16_t kHelpQrPixels[] PROGMEM = {{
 const uint16_t kRemoteJsonQrPixels[] PROGMEM = {{
 {format_pixels(remote_qr_pixels)}
 }};
+#endif
 """
 
 if not target.exists() or target.read_text() != content:

@@ -38,7 +38,9 @@ jobs:
       - name: Build firmware
         env:
           WLED_TOUCH_VERSION: ${{ steps.version.outputs.version }}
-        run: pio run -e esp32-cyd
+        run: |
+          pio run -e esp32-cyd
+          pio run -e jc4880p443
 
       - name: Package firmware
         run: |
@@ -53,23 +55,32 @@ jobs:
 
           package_env() {
             env_name="$1"
+            chip="$2"
+            flash_size="$3"
+            bootloader_offset="$4"
             base="wled-touch-remote-${{ steps.version.outputs.tag }}-${env_name}"
             build_dir=".pio/build/${env_name}"
 
             cp "${build_dir}/firmware.bin" "dist/${base}-firmware.bin"
 
-            python -m esptool --chip esp32 merge_bin \
-              --flash_mode dio \
-              --flash_freq 40m \
-              --flash_size 4MB \
-              -o "dist/${base}-merged.bin" \
-              0x1000 "${build_dir}/bootloader.bin" \
-              0x8000 "${build_dir}/partitions.bin" \
-              0xE000 "${boot_app0}" \
-              0x10000 "${build_dir}/firmware.bin"
+            merge_args=(
+              --chip "${chip}" merge_bin
+              --flash_mode dio
+              --flash_freq 40m
+              --flash_size "${flash_size}"
+              -o "dist/${base}-merged.bin"
+              "${bootloader_offset}" "${build_dir}/bootloader.bin"
+              0x8000 "${build_dir}/partitions.bin"
+            )
+            if [ "${chip}" = "esp32" ]; then
+              merge_args+=(0xE000 "${boot_app0}")
+            fi
+            merge_args+=(0x10000 "${build_dir}/firmware.bin")
+            python -m esptool "${merge_args[@]}"
           }
 
-          package_env esp32-cyd
+          package_env esp32-cyd esp32 4MB 0x1000
+          package_env jc4880p443 esp32p4 16MB 0x2000
           cp remote.json "dist/remote.json"
           sha256sum dist/* > "dist/SHA256SUMS.txt"
 

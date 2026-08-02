@@ -24,6 +24,12 @@ constexpr uint32_t kRemoteJsonQrWidth = 179;
 constexpr uint32_t kRemoteJsonQrHeight = 179;
 constexpr size_t kRemoteJsonQrPixelCount = 32041;
 
+extern const uint16_t kWledLogoPixels[] PROGMEM;
+extern const uint16_t kWledLogoHeaderPixels[] PROGMEM;
+extern const uint16_t kHelpQrPixels[] PROGMEM;
+extern const uint16_t kRemoteJsonQrPixels[] PROGMEM;
+
+#ifdef WLED_LOGO_ASSET_IMPLEMENTATION
 const uint16_t kWledLogoPixels[] PROGMEM = {
   0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
   0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
@@ -9968,3 +9974,4 @@ const uint16_t kRemoteJsonQrPixels[] PROGMEM = {
   0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
   0xFFFF,
 };
+#endif

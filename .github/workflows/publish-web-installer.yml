@@ -2,15 +2,6 @@ name: Publish web installer
 
 on:
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: 'Release tag to publish, or "latest"'
-        required: true
-        default: latest
-      firmware_variant:
-        description: "Firmware asset variant to prefer"
-        required: true
-        default: esp32-cyd
 
 permissions:
   contents: read
@@ -27,29 +18,62 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v6
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
-      - name: Build installer from release
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Install build tools
+        run: python -m pip install --upgrade platformio esptool
+
+      - name: Set up Emscripten
         run: |
-          python3 tools/build_web_installer.py \
-            --repo "${{ github.repository }}" \
-            --release-tag "${{ inputs.release_tag }}" \
-            --variant "${{ inputs.firmware_variant }}" \
-            --site-dir web-installer
+          emsdk_dir="$RUNNER_TEMP/emsdk"
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$emsdk_dir"
+          "$emsdk_dir/emsdk" install 4.0.7
+          "$emsdk_dir/emsdk" activate 4.0.7
+          echo "$emsdk_dir/upstream/emscripten" >> "$GITHUB_PATH"
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
+      - name: Build browser simulators
+        run: |
+          pio pkg install -e macos
+          bash tools/build_web_simulator.sh jc4880p443
+
+      - name: Build Wi-Fi firmware
+        run: |
+          pio run -e esp32-cyd
+          pio run -e jc4880p443
+
+      - name: Package firmware for Web Serial
+        run: |
+          set -euo pipefail
+          mkdir -p web-installer/firmware
+          boot_app0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
+          if [ -z "$boot_app0" ]; then
+            echo "boot_app0.bin not found"
+            exit 1
+          fi
+          python -m esptool --chip esp32 merge_bin --flash_mode dio --flash_freq 40m --flash_size 4MB \
+            -o web-installer/firmware/wled-touch-remote-wifi.bin \
+            0x1000 .pio/build/esp32-cyd/bootloader.bin \
+            0x8000 .pio/build/esp32-cyd/partitions.bin \
+            0xE000 "$boot_app0" \
+            0x10000 .pio/build/esp32-cyd/firmware.bin
+          python -m esptool --chip esp32p4 merge_bin --flash_mode dio --flash_freq 40m --flash_size 16MB \
+            -o web-installer/firmware/wled-touch-remote-jc4880p443.bin \
+            0x2000 .pio/build/jc4880p443/bootloader.bin \
+            0x8000 .pio/build/jc4880p443/partitions.bin \
+            0x10000 .pio/build/jc4880p443/firmware.bin
+          printf '%s\n' '{"name":"WLED Touch Remote — ESP32-CYD","version":"main","new_install_improv":true,"builds":[{"chipFamily":"ESP32","parts":[{"path":"firmware/wled-touch-remote-wifi.bin","offset":0}]}]}' > web-installer/manifest-esp32-cyd.json
+          printf '%s\n' '{"name":"WLED Touch Remote — ESP32-P4 (JC4880P443)","version":"main","new_install_improv":true,"builds":[{"chipFamily":"ESP32-P4","parts":[{"path":"firmware/wled-touch-remote-jc4880p443.bin","offset":0}]}]}' > web-installer/manifest-jc4880p443.json
+          printf '%s\n' '{"name":"WLED Touch Remote","tag_name":"main"}' > web-installer/release.json
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: web-installer
-
-      - name: Deploy to GitHub Pages
+      - uses: actions/deploy-pages@v5
         id: deploy
-        uses: actions/deploy-pages@v5

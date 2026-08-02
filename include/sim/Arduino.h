@@ -41,7 +41,11 @@ inline uint32_t millis() {
 }
 
 inline void delay(uint32_t ms) {
+#ifdef __EMSCRIPTEN__
+  (void)ms;
+#else
   std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+#endif
 }
 
 class SerialClass {

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WLED Touch Simulator</title>
+    <style>
+      :root { color-scheme: light; }
+
+      body {
+        align-items: center;
+        background: linear-gradient(135deg, #f7f5ff, #edf0ff);
+        display: flex;
+        justify-content: center;
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      canvas {
+        aspect-ratio: 3 / 5;
+        background: #11111a;
+        box-shadow: 0 18px 42px rgba(72, 58, 120, 0.24);
+        display: block;
+        height: auto;
+        width: min(100vw, 60vh, 480px);
+      }
+
+      #loading {
+        align-items: center;
+        background: rgba(247, 245, 255, 0.94);
+        color: #5e5b71;
+        display: flex;
+        font: 600 14px/1.4 system-ui, sans-serif;
+        gap: 10px;
+        inset: 0;
+        justify-content: center;
+        position: fixed;
+      }
+
+      #loading[hidden] { display: none; }
+
+      #spinner {
+        animation: spin .75s linear infinite;
+        border: 3px solid #dcd7ff;
+        border-radius: 50%;
+        border-top-color: #7566d8;
+        height: 16px;
+        width: 16px;
+      }
+
+      #progress { display: none; }
+
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+    <div id="loading"><span id="spinner"></span><span id="status">Loading simulator…</span></div>
+    <progress id="progress" max="100" value="0"></progress>
+    <script>
+      const statusElement = document.getElementById('status');
+      const loadingElement = document.getElementById('loading');
+      const progressElement = document.getElementById('progress');
+      const canvasElement = document.getElementById('canvas');
+
+      canvasElement.addEventListener('webglcontextlost', (event) => {
+        event.preventDefault();
+        statusElement.textContent = 'Graphics context lost. Please reload.';
+        loadingElement.hidden = false;
+      });
+
+      var Module = {
+        canvas: canvasElement,
+        print: (...args) => console.log(...args),
+        printErr: (...args) => console.error(...args),
+        onRuntimeInitialized() {
+          loadingElement.hidden = true;
+        },
+        setStatus(text) {
+          if (!text) {
+            loadingElement.hidden = true;
+            return;
+          }
+
+          const match = text.match(/([^(]+)\((\d+(?:\.\d+)?)\/(\d+)\)/);
+          statusElement.textContent = match ? match[1].trim() : text;
+          progressElement.value = match ? Number(match[2]) : 0;
+          progressElement.max = match ? Number(match[3]) : 100;
+          loadingElement.hidden = false;
+        },
+        monitorRunDependencies(left) {
+          Module.setStatus(left ? `Preparing simulator… (${left})` : '');
+        },
+      };
+
+      window.onerror = () => {
+        statusElement.textContent = 'Unable to start the simulator. Check the browser console.';
+        loadingElement.hidden = false;
+      };
+    </script>
+    {{{ SCRIPT }}}
+  </body>
+</html>
