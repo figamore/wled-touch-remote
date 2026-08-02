@@ -44,8 +44,12 @@ jobs:
 
       - name: Build Wi-Fi firmware
         run: |
+          set -euo pipefail
+          mkdir -p web-installer/build
           pio run -e esp32-cyd
+          cp -a .pio/build/esp32-cyd web-installer/build/esp32-cyd
           pio run -e jc4880p443
+          cp -a .pio/build/jc4880p443 web-installer/build/jc4880p443
 
       - name: Package firmware for Web Serial
         run: |
@@ -58,15 +62,15 @@ jobs:
           fi
           python -m esptool --chip esp32 merge_bin --flash_mode dio --flash_freq 40m --flash_size 4MB \
             -o web-installer/firmware/wled-touch-remote-wifi.bin \
-            0x1000 .pio/build/esp32-cyd/bootloader.bin \
-            0x8000 .pio/build/esp32-cyd/partitions.bin \
+            0x1000 web-installer/build/esp32-cyd/bootloader.bin \
+            0x8000 web-installer/build/esp32-cyd/partitions.bin \
             0xE000 "$boot_app0" \
-            0x10000 .pio/build/esp32-cyd/firmware.bin
+            0x10000 web-installer/build/esp32-cyd/firmware.bin
           python -m esptool --chip esp32p4 merge_bin --flash_mode dio --flash_freq 40m --flash_size 16MB \
             -o web-installer/firmware/wled-touch-remote-jc4880p443.bin \
-            0x2000 .pio/build/jc4880p443/bootloader.bin \
-            0x8000 .pio/build/jc4880p443/partitions.bin \
-            0x10000 .pio/build/jc4880p443/firmware.bin
+            0x2000 web-installer/build/jc4880p443/bootloader.bin \
+            0x8000 web-installer/build/jc4880p443/partitions.bin \
+            0x10000 web-installer/build/jc4880p443/firmware.bin
           printf '%s\n' '{"name":"WLED Touch Remote — ESP32-CYD","version":"main","new_install_improv":true,"builds":[{"chipFamily":"ESP32","parts":[{"path":"firmware/wled-touch-remote-wifi.bin","offset":0}]}]}' > web-installer/manifest-esp32-cyd.json
           printf '%s\n' '{"name":"WLED Touch Remote — ESP32-P4 (JC4880P443)","version":"main","new_install_improv":true,"builds":[{"chipFamily":"ESP32-P4","parts":[{"path":"firmware/wled-touch-remote-jc4880p443.bin","offset":0}]}]}' > web-installer/manifest-jc4880p443.json
           printf '%s\n' '{"name":"WLED Touch Remote","tag_name":"main"}' > web-installer/release.json

@@ -39,8 +39,12 @@ jobs:
         env:
           WLED_TOUCH_VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
+          mkdir -p release-build
           pio run -e esp32-cyd
+          cp -a .pio/build/esp32-cyd release-build/esp32-cyd
           pio run -e jc4880p443
+          cp -a .pio/build/jc4880p443 release-build/jc4880p443
 
       - name: Package firmware
         run: |
@@ -59,7 +63,7 @@ jobs:
             flash_size="$3"
             bootloader_offset="$4"
             base="wled-touch-remote-${{ steps.version.outputs.tag }}-${env_name}"
-            build_dir=".pio/build/${env_name}"
+            build_dir="release-build/${env_name}"
 
             cp "${build_dir}/firmware.bin" "dist/${base}-firmware.bin"
 
