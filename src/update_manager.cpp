@@ -24,9 +24,11 @@
 namespace updater {
 namespace {
 
-// GitHub edge servers currently use either the Sectigo/UserTrust or DigiCert
-// chain. Keep both roots so DNS load-balancing cannot break OTA verification.
-// The updater never uses an insecure TLS mode; refresh these if GitHub changes CAs.
+// GitHub edge servers currently use the Sectigo/UserTrust, DigiCert, or Let's
+// Encrypt (ISRG Root X1) chain. Release assets redirect to a separately served
+// GitHub host, so keep all three roots to prevent DNS and redirect routing from
+// breaking OTA verification. The updater never uses an insecure TLS mode;
+// refresh these if GitHub changes CAs.
 constexpr char kGithubRootCa[] = R"pem(-----BEGIN CERTIFICATE-----
 MIICjzCCAhWgAwIBAgIQXIuZxVqUxdJxVt7NiYDMJjAKBggqhkjOPQQDAzCBiDEL
 MAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJzZXkxFDASBgNVBAcTC0plcnNl
@@ -64,6 +66,37 @@ Fdtom/DzMNU+MeKNhJ7jitralj41E6Vf8PlwUHBHQRFXGU7Aj64GxJUTFy8bJZ91
 8rGOmaFvE7FBcf6IKshPECBV1/MUReXgRPTqh5Uykw7+U0b6LJ3/iyK5S9kJRaTe
 pLiaWN0bfVKfjllDiIGknibVb63dDcY3fe0Dkhvld1927jyNxF1WW6LZZm6zNTfl
 MrY=
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
+h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
+0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
+A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
+T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
+B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
+B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
+KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
+OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
+jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
+qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
+rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
+HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
+hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
+ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
+3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
+NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
+ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
+TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
+jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
+oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
+4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
+mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
+emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )pem";
 
@@ -244,6 +277,7 @@ bool fetchRelease(ReleaseChoice& result) {
   }
   SemVer installed;
   if (!parseSemVer(kAppVersion, installed)) { setFailure(Failure::kInvalidRelease, "The installed firmware version is invalid."); return false; }
+  Serial.printf("[UPDATE] installed version: %s\n", kAppVersion);
   bool newer = false, found = false;
   SemVer selected;
   for (JsonObject release : document.as<JsonArray>()) {
@@ -252,7 +286,13 @@ bool fetchRelease(ReleaseChoice& result) {
     if (release["draft"].as<bool>() || release["prerelease"].as<bool>()) continue;
     const char* tag = release["tag_name"] | "";
     SemVer candidate;
-    if (!parseSemVer(tag, candidate) || compareSemVer(candidate, installed) <= 0) continue;
+    if (!parseSemVer(tag, candidate)) {
+      Serial.printf("[UPDATE] ignored release with an invalid tag: %s\n", tag);
+      continue;
+    }
+    const int comparison = compareSemVer(candidate, installed);
+    Serial.printf("[UPDATE] release %s compared with %s: %d\n", tag, kAppVersion, comparison);
+    if (comparison <= 0) continue;
     newer = true;
     char expected_asset[112];
     std::snprintf(expected_asset, sizeof(expected_asset), "wled-touch-remote-%s-%s-firmware.bin", tag, kBuildTarget);
@@ -264,7 +304,10 @@ bool fetchRelease(ReleaseChoice& result) {
     const char* digest = asset["digest"] | "";
     const uint32_t size = asset["size"] | 0U;
     char digest_hex[65] = {};
-    if (!asset_url[0] || !size || !expectedDigest(digest, digest_hex, sizeof(digest_hex))) continue;
+    if (!asset_url[0] || !size || !expectedDigest(digest, digest_hex, sizeof(digest_hex))) {
+      Serial.printf("[UPDATE] release %s has no verified %s firmware asset\n", tag, kBuildTarget);
+      continue;
+    }
     if (found && compareSemVer(candidate, selected) <= 0) continue;
     found = true; selected = candidate;
     copyText(result.version, sizeof(result.version), tag[0] == 'v' ? tag + 1 : tag);
@@ -287,6 +330,48 @@ void publishAvailable(const ReleaseChoice& release) {
   copyText(g_snapshot.message, sizeof(g_snapshot.message), "A verified firmware update is available.");
   xSemaphoreGive(g_lock);
 }
+class FirmwareSink final : public Stream {
+ public:
+  FirmwareSink(mbedtls_sha256_context& sha, uint32_t expected_size) : sha_(sha), expected_size_(expected_size) {}
+
+  size_t write(uint8_t byte) override { return write(&byte, 1); }
+  size_t write(const uint8_t* data, size_t size) override {
+    if (!size) return 0;
+    if (write_failed_ || no_network_ || size > expected_size_ - written_) {
+      write_failed_ = true;
+      return 0;
+    }
+    if (!wifilink::connected()) {
+      no_network_ = true;
+      return 0;
+    }
+    if (Update.write(const_cast<uint8_t*>(data), size) != size) {
+      write_failed_ = true;
+      return 0;
+    }
+    mbedtls_sha256_update(&sha_, data, size);
+    written_ += size;
+    xSemaphoreTake(g_lock, portMAX_DELAY);
+    g_snapshot.progress = static_cast<uint8_t>((uint64_t(written_) * 100U) / expected_size_);
+    xSemaphoreGive(g_lock);
+    return size;
+  }
+
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+
+  uint32_t written() const { return written_; }
+  bool noNetwork() const { return no_network_; }
+  bool writeFailed() const { return write_failed_; }
+
+ private:
+  mbedtls_sha256_context& sha_;
+  const uint32_t expected_size_;
+  uint32_t written_ = 0;
+  bool no_network_ = false;
+  bool write_failed_ = false;
+};
 void downloadInstall(const ReleaseChoice& release) {
   char reason[160] = {};
   if (!safeToInstall(reason, sizeof(reason))) { setFailure(wifilink::connected() ? Failure::kUnsafe : Failure::kNoNetwork, reason); return; }
@@ -297,17 +382,17 @@ void downloadInstall(const ReleaseChoice& release) {
   if (response != HTTP_CODE_OK || length <= 0 || uint32_t(length) != release.size) { http.end(); setFailure(Failure::kDownload, "The firmware download was incomplete or unexpectedly sized."); return; }
   if (!Update.begin(release.size, U_FLASH)) { http.end(); setFailure(Failure::kInstall, "Not enough update space is available on this device."); return; }
   mbedtls_sha256_context sha; mbedtls_sha256_init(&sha); mbedtls_sha256_starts(&sha, 0);
-  NetworkClient& stream = http.getStream(); uint8_t buffer[2048]; uint32_t written = 0; bool failed = false;
-  while (written < release.size) {
-    if (!wifilink::connected()) { setFailure(Failure::kNoNetwork, "Wi-Fi disconnected while downloading the update."); failed = true; break; }
-    const size_t wanted = min<size_t>(sizeof(buffer), release.size - written);
-    const size_t received = stream.readBytes(buffer, wanted);
-    if (!received || Update.write(buffer, received) != received) { setFailure(Failure::kDownload, "The firmware download failed before it was complete."); failed = true; break; }
-    mbedtls_sha256_update(&sha, buffer, received); written += received;
-    xSemaphoreTake(g_lock, portMAX_DELAY); g_snapshot.progress = static_cast<uint8_t>((uint64_t(written) * 100U) / release.size); xSemaphoreGive(g_lock);
-  }
+  FirmwareSink sink(sha, release.size);
+  const int transferred = http.writeToStream(&sink);
   http.end(); uint8_t digest[32] = {}; mbedtls_sha256_finish(&sha, digest); mbedtls_sha256_free(&sha);
-  if (failed) { Update.abort(); return; }
+  if (sink.noNetwork()) { Update.abort(); setFailure(Failure::kNoNetwork, "Wi-Fi disconnected while downloading the update."); return; }
+  if (sink.writeFailed()) { Update.abort(); setFailure(Failure::kInstall, "Writing the firmware update to flash failed."); return; }
+  if (transferred != static_cast<int>(release.size) || sink.written() != release.size) {
+    Serial.printf("[UPDATE] firmware transfer incomplete: expected %lu bytes, received %d / wrote %lu\n",
+                  static_cast<unsigned long>(release.size), transferred,
+                  static_cast<unsigned long>(sink.written()));
+    Update.abort(); setFailure(Failure::kDownload, "The firmware download failed before it was complete."); return;
+  }
   setState(State::kVerifying, "Verifying firmware...");
   char actual[65] = {}; for (size_t i = 0; i < sizeof(digest); ++i) std::snprintf(actual + i * 2, 3, "%02x", digest[i]);
   if (strcmp(actual, release.sha256)) { Update.abort(); setFailure(Failure::kVerification, "Firmware verification failed. Your current software is unchanged."); return; }
