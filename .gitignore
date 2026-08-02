@@ -7,5 +7,8 @@
 *.sim-prefs
 *.bmp
 .wled-preview-cache.json
+/web-installer/simulator/
+__pycache__/
 include/generated/version.h
+include/generated/hosted_c6_firmware_asm.h
 notes.md
