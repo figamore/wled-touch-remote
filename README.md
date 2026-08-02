@@ -4,7 +4,9 @@ WLED Touch Remote is a dedicated touchscreen controller for WLED over your local
 
 It works with current WLED firmware and requires no custom WLED build or controller-side configuration. The remote can run from 5 V or, on supported capacitive displays, from a Li-Ion battery cell. See the [bill of materials](#bill-of-materials).
 
-![Display](screenshots/case/esp32-cyd-and-esp32-p4.jpg)
+<p align="center">
+  <img src="screenshots/case/esp32-cyd-and-esp32-p4.jpg" alt="ESP32-CYD and ESP32-P4 displays" width="720" />
+</p>
 
 ## Features
 
@@ -17,7 +19,9 @@ It works with current WLED firmware and requires no custom WLED build or control
 - On-device settings for screen orientation and inactivity behavior
 - Web installer support for browser-based flashing
 
-![Effects](screenshots/esp32-cyd/esp32-cyd-fx.png)
+<p align="center">
+  <img src="screenshots/esp32-cyd/esp32-cyd-fx.png" alt="Effects" width="620" />
+</p>
 
 ## Screenshots
 
@@ -86,7 +90,9 @@ Open **Settings → Software Update → Check for Updates** to compare the insta
 
 Keep the remote powered and connected to Wi-Fi during installation. A download, validation, or install failure aborts the pending OTA image and leaves the currently running firmware intact.
 
-![Settings](screenshots/esp32-p4/esp32-p4-settings.png)
+<p align="center">
+  <img src="screenshots/esp32-p4/esp32-p4-settings.png" alt="Settings" width="620" />
+</p>
 
 ## Supported hardware
 
@@ -113,7 +119,9 @@ Some currently available capacitive CYDs:
 - <https://www.amazon.com/DIYmalls-Touchscreen-ESP-WROOM-32-Development-JC2432W328C>
 - <https://www.aliexpress.us/item/3256806545687380.html>
 
-![Capacitive CYD](screenshots/capacitive-cyd.png)
+<p align="center">
+  <img src="screenshots/capacitive-cyd.png" alt="Capacitive CYD" width="480" />
+</p>
 
 If you can source the ESP32-P4, it will provide a nicer experience due to its larger and more powerful display:
 - <https://www.aliexpress.us/item/3256809431944589.html>
@@ -136,11 +144,15 @@ Choose one of the two case styles:
 
 - **Slim case:** A clean remote without an internal battery, suited to a wall or control cabinet with continuous USB-C or 5 V power.
 
-  ![Slim case](screenshots/case/FigCyd-Standard.jpg)
+  <p align="center">
+    <img src="screenshots/case/FigCyd-Standard.jpg" alt="Slim case" width="620" />
+  </p>
 
 - **Battery case:** A portable build with an 18650 Li-Ion cell and holder.
 
-  ![Battery case](screenshots/case/FigCyd-Battery-1.jpg)
+  <p align="center">
+    <img src="screenshots/case/FigCyd-Battery-1.jpg" alt="Battery case" width="620" />
+  </p>
 
 Assembly:
 
@@ -156,12 +168,16 @@ For the slim case, you can stop here. For the battery case:
 2. Free the side power-button piece and make sure it moves smoothly before installing the CYD.
 3. Install the 18650 holder and route the wires so they do not pinch when the case closes.
 
-![Case supports](screenshots/case/Remove-button-support.jpg)
-![Battery case interior](screenshots/case/FigCyd-Battery-Internal.jpg)
+<p align="center">
+  <img src="screenshots/case/Remove-button-support.jpg" alt="Case supports" width="48%" />
+  <img src="screenshots/case/FigCyd-Battery-Internal.jpg" alt="Battery case interior" width="48%" />
+</p>
 
 The slim case can be powered through USB-C or through the board's `GND` and `5V` connector.
 
-![Slim case power wiring](screenshots/case/FigCyd-Internal.jpg)
+<p align="center">
+  <img src="screenshots/case/FigCyd-Internal.jpg" alt="Slim case power wiring" width="620" />
+</p>
 
 ### Battery operation
 

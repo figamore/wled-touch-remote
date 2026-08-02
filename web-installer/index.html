@@ -243,10 +243,9 @@
       }
       .device-option img {
         display: block;
-        width: 100%;
-        aspect-ratio: 4 / 3;
-        object-fit: cover;
-        margin-top: 0.45rem;
+        width: min(100%, 8.75rem);
+        height: auto;
+        margin: 0.45rem auto 0;
         border: 1px solid var(--border);
         border-radius: 6px;
       }
@@ -553,13 +552,13 @@
               <input type="radio" name="device" value="manifest-esp32-cyd.json" checked />
               <span class="device-name">ESP32-CYD</span>
               <span class="device-radio" aria-hidden="true"></span>
-              <img src="https://placehold.co/320x240/f6f6f5/57575e?text=ESP32-CYD" alt="Placeholder for an ESP32-CYD board" />
+              <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/case/esp32-cyd-back.png" alt="ESP32 CYD" />
             </label>
             <label class="device-option">
               <input type="radio" name="device" value="manifest-jc4880p443.json" />
               <span class="device-name">ESP32-P4 (JC4880P443)</span>
               <span class="device-radio" aria-hidden="true"></span>
-              <img src="https://placehold.co/320x240/f6f6f5/57575e?text=ESP32-P4" alt="Placeholder for an ESP32-P4 JC4880P443 board" />
+              <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/case/esp32-p4-back.png" alt="ESP32-P4" />
             </label>
           </div>
 
