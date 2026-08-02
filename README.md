@@ -4,6 +4,10 @@ WLED Touch Remote is a dedicated touchscreen controller for WLED over your local
 
 It works with current WLED firmware and requires no custom WLED build or controller-side configuration. The remote can run from 5 V or, on supported capacitive displays, from a Li-Ion battery cell. See the [bill of materials](#bill-of-materials).
 
+## Support the project
+
+If you enjoy WLED Touch Remote, please consider [sponsoring its development](https://github.com/sponsors/figamore). It has taken many hours of development and testing to build, and donations help fund ongoing improvements, new features, and wider hardware support.
+
 <p align="center">
   <img src="screenshots/case/esp32-cyd-and-esp32-p4.jpg" alt="ESP32-CYD and ESP32-P4 displays" width="720" />
 </p>
