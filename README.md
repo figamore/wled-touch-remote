@@ -4,6 +4,8 @@ WLED Touch Remote is a dedicated touchscreen controller for WLED over your local
 
 It works with current WLED firmware and requires no custom WLED build or controller-side configuration. The remote can run from 5 V or, on supported capacitive displays, from a Li-Ion battery cell. See the [bill of materials](#bill-of-materials).
 
+> ## [▶ Try the interactive simulator in your browser for a preview](https://figamore.github.io/wled-touch-remote/simulator/jc4880p443.html)
+
 ## Support the project
 
 If you enjoy WLED Touch Remote, please consider [sponsoring its development](https://github.com/sponsors/figamore). It has taken many hours of development and testing to build, and donations help fund ongoing improvements, new features, and wider hardware support.
