@@ -399,9 +399,6 @@ void downloadInstall(const ReleaseChoice& release) {
   setState(State::kInstalling, "Installing verified firmware...");
   if (!Update.end(true)) { Update.abort(); setFailure(Failure::kInstall, "Installation could not finish. Your current software is unchanged."); return; }
   setState(State::kSuccess, "Firmware installed successfully.");
-  vTaskDelay(pdMS_TO_TICKS(150));
-  setState(State::kRestarting, "Update installed. Restarting the remote...");
-  vTaskDelay(pdMS_TO_TICKS(700)); displayRestart();
 }
 void checkTask(void*) {
   ReleaseChoice choice;

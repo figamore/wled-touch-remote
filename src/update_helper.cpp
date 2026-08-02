@@ -19,6 +19,7 @@ bool g_check_started = false;
 uint32_t g_started_at = 0;
 updater::Snapshot g_seen;
 lv_obj_t* g_message = nullptr;
+lv_obj_t* g_message_view = nullptr;
 lv_obj_t* g_primary = nullptr;
 lv_obj_t* g_secondary = nullptr;
 lv_obj_t* g_primary_label = nullptr;
@@ -68,6 +69,7 @@ void onPrimary(lv_event_t*) {
   const updater::Snapshot update = updater::snapshot();
   if (update.state == updater::State::kUpdateAvailable) updater::installAvailableUpdate();
   else if (update.state == updater::State::kFailed) updater::checkForUpdates();
+  else if (update.state == updater::State::kSuccess) displayRestart();
   else if (update.state == updater::State::kUpToDate) restartNormal();
 }
 
@@ -105,6 +107,8 @@ void render() {
       break;
   }
   lv_label_set_text(g_message, message);
+  // Each state change starts its message at the top; only this view scrolls.
+  if (g_message_view) lv_obj_scroll_to_y(g_message_view, 0, LV_ANIM_OFF);
 
   const bool working = updater::busy();
   if (update.state == updater::State::kUpdateAvailable) {
@@ -115,6 +119,9 @@ void render() {
     setButton(g_secondary, g_secondary_label, "Back", true, !working);
   } else if (update.state == updater::State::kUpToDate) {
     setButton(g_primary, g_primary_label, "Back", true);
+    setButton(g_secondary, g_secondary_label, "", false);
+  } else if (update.state == updater::State::kSuccess) {
+    setButton(g_primary, g_primary_label, "Continue", true);
     setButton(g_secondary, g_secondary_label, "", false);
   } else {
     setButton(g_primary, g_primary_label, "", false);
@@ -153,26 +160,48 @@ void begin() {
 
   lv_obj_t* panel = lv_obj_create(screen);
   lv_obj_set_size(panel, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(panel, uiScaled(20, 40), LV_PART_MAIN);
   lv_obj_set_style_bg_color(panel, lv_color_hex(kColorSurface), LV_PART_MAIN);
   lv_obj_set_style_border_width(panel, 0, LV_PART_MAIN);
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+  const lv_coord_t title_height = lv_font_get_line_height(UI_FONT_TITLE);
+  const lv_coord_t actions_height = uiScaled(48, 64);
+  const lv_coord_t gap = uiScaled(12, 20);
+  const lv_coord_t message_height = kScreenHeight - 2 * uiScaled(20, 40) - title_height - actions_height - 2 * gap;
 
   lv_obj_t* title = lv_label_create(panel);
   lv_label_set_text(title, "Software Update");
   lv_obj_set_style_text_font(title, UI_FONT_TITLE, LV_PART_MAIN);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
-  g_message = lv_label_create(panel);
+  // Keep long release notes contained between the fixed title and actions.
+  // The panel itself never scrolls, preventing notes from moving behind the
+  // Back/Install buttons.
+  g_message_view = lv_obj_create(panel);
+  lv_obj_set_size(g_message_view, LV_PCT(100), message_height);
+  lv_obj_align(g_message_view, LV_ALIGN_TOP_MID, 0, title_height + gap);
+  lv_obj_set_style_pad_all(g_message_view, uiScaled(8, 14), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(g_message_view, lv_color_hex(kColorSurfaceRaised), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(g_message_view, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(g_message_view, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(g_message_view, lv_color_hex(kColorBorder), LV_PART_MAIN);
+  lv_obj_set_style_radius(g_message_view, 9, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(g_message_view, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(g_message_view, LV_SCROLLBAR_MODE_AUTO);
+
+  g_message = lv_label_create(g_message_view);
   lv_obj_set_width(g_message, LV_PCT(100));
   lv_label_set_long_mode(g_message, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(g_message, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
   lv_obj_t* actions = lv_obj_create(panel);
   lv_obj_remove_style_all(actions);
-  lv_obj_set_size(actions, LV_PCT(100), uiScaled(48, 64));
+  lv_obj_set_size(actions, LV_PCT(100), actions_height);
+  lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
   g_secondary = lv_btn_create(actions);
   styleUpdateButton(g_secondary, false);
   lv_obj_set_size(g_secondary, uiScaled(120, 200), LV_PCT(100));
