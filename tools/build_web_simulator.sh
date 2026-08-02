@@ -27,6 +27,11 @@ if ! command -v em++ >/dev/null 2>&1; then
   exit 1
 fi
 
+# The browser build invokes Emscripten directly instead of PlatformIO, so run
+# the normal pre-build generator explicitly.  CI starts from a clean checkout
+# where this ignored generated header does not yet exist.
+python3 scripts/git_version.py
+
 lvgl_dir=".pio/libdeps/macos/lvgl"
 if [ ! -f "$lvgl_dir/lvgl.h" ]; then
   echo "LVGL dependency not found at $lvgl_dir. Run: pio pkg install -e macos" >&2
