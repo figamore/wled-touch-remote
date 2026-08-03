@@ -22,6 +22,10 @@ lv_obj_t* header_connection_dot = nullptr;
 lv_obj_t* header_activity_spinner = nullptr;
 lv_obj_t* header_wifi_bars[4] = {nullptr, nullptr, nullptr, nullptr};
 lv_obj_t* header_wifi_offline_mark = nullptr;
+uint32_t header_dot_color = UINT32_MAX;
+int8_t header_wifi_bars_lit = -1;
+uint32_t header_wifi_color = UINT32_MAX;
+int8_t header_wifi_offline = -1;
 constexpr uint8_t kFxTabIndex = 2;
 constexpr uint8_t kColorsTabIndex = 3;
 #if WLED_CYD_ENABLE_SHUTDOWN
@@ -557,6 +561,18 @@ void updateConnLabel() {
 
 
 // Updates the compact top-bar target name and summarizes connection health with a status dot.
+void setHeaderDotColor(uint32_t color) {
+  if (!header_connection_dot || color == header_dot_color) return;
+  header_dot_color = color;
+  lv_obj_set_style_bg_color(header_connection_dot, lv_color_hex(color), LV_PART_MAIN);
+}
+
+void setHiddenIfChanged(lv_obj_t* object, bool hidden) {
+  if (!object || lv_obj_has_flag(object, LV_OBJ_FLAG_HIDDEN) == hidden) return;
+  if (hidden) lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+  else lv_obj_clear_flag(object, LV_OBJ_FLAG_HIDDEN);
+}
+
 void updateHeaderTarget() {
   if (!header_target_label || !header_connection_dot) return;
 
@@ -565,7 +581,7 @@ void updateHeaderTarget() {
     if (wifilink::scanning() || wifilink::scanQueued()) {
       lv_label_set_text(header_target_label, "Wi-Fi scan");
       dotColor = kColorWarn;
-      lv_obj_set_style_bg_color(header_connection_dot, lv_color_hex(dotColor), LV_PART_MAIN);
+      setHeaderDotColor(dotColor);
       return;
     }
     const wifilink::Status status = wifilink::status();
@@ -620,7 +636,7 @@ void updateHeaderTarget() {
     else lv_label_set_text(header_target_label, "WLED");
     if (device.online) dotColor = kColorOk;
   }
-  lv_obj_set_style_bg_color(header_connection_dot, lv_color_hex(dotColor), LV_PART_MAIN);
+  setHeaderDotColor(dotColor);
 }
 
 // One quiet top-bar spinner covers connection work, state loading, and queued
@@ -635,13 +651,8 @@ void updateActivityIndicator() {
                          wledStatus == wled::ConnectionStatus::kConnecting ||
                          wledStatus == wled::ConnectionStatus::kReconnecting);
   const bool active = wifiBusy || wledBusy || wled::loading() || wled::commandsPending();
-  if (active) {
-    lv_obj_clear_flag(header_activity_spinner, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(header_connection_dot, LV_OBJ_FLAG_HIDDEN);
-  } else {
-    lv_obj_add_flag(header_activity_spinner, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(header_connection_dot, LV_OBJ_FLAG_HIDDEN);
-  }
+  setHiddenIfChanged(header_activity_spinner, !active);
+  setHiddenIfChanged(header_connection_dot, active);
 }
 
 void updateWifiIndicator() {
@@ -663,13 +674,23 @@ void updateWifiIndicator() {
   } else {
     offline = true;
   }
-  for (uint8_t i = 0; i < 4; ++i) {
-    const bool lit = i < bars;
-    lv_obj_set_style_bg_color(header_wifi_bars[i], lv_color_hex(lit ? color : kColorTextMuted), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(header_wifi_bars[i], lit ? LV_OPA_COVER : LV_OPA_70, LV_PART_MAIN);
+  if (bars != header_wifi_bars_lit || color != header_wifi_color) {
+    for (uint8_t i = 0; i < 4; ++i) {
+      const bool lit = i < bars;
+      const bool was_lit = i < header_wifi_bars_lit;
+      // Unlit bars keep their muted style unless their state changed. Updating
+      // an LVGL style with the same value still invalidates that object.
+      if (header_wifi_bars_lit >= 0 && lit == was_lit && (!lit || color == header_wifi_color)) continue;
+      lv_obj_set_style_bg_color(header_wifi_bars[i], lv_color_hex(lit ? color : kColorTextMuted), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(header_wifi_bars[i], lit ? LV_OPA_COVER : LV_OPA_70, LV_PART_MAIN);
+    }
+    header_wifi_bars_lit = bars;
+    header_wifi_color = color;
   }
-  if (offline) lv_obj_clear_flag(header_wifi_offline_mark, LV_OBJ_FLAG_HIDDEN);
-  else lv_obj_add_flag(header_wifi_offline_mark, LV_OBJ_FLAG_HIDDEN);
+  if (offline != header_wifi_offline) {
+    header_wifi_offline = offline;
+    setHiddenIfChanged(header_wifi_offline_mark, !offline);
+  }
 }
 
 // Shows the focused WLED or current multi-device target in the Settings target row.
