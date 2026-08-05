@@ -1267,7 +1267,7 @@ void onWifiPasswordInput(lv_event_t* event) {
   closeWifiPasswordDialog(nullptr);
   closeWifiDialog(nullptr);
   updateWifiLabel();
-  showWifiJoinDialog();
+  if (!wifilink::accessPointEnabled()) showWifiJoinDialog();
 }
 
 // Same on-screen keyboard pattern as the controller/preset name dialogs.
@@ -1280,7 +1280,7 @@ void showWifiPasswordDialog(const char* ssid, bool secured, uint8_t channel) {
     wifilink::saveCredentials(ssid, "", channel);
     closeWifiDialog(nullptr);
     updateWifiLabel();
-    showWifiJoinDialog();
+    if (!wifilink::accessPointEnabled()) showWifiJoinDialog();
     return;
   }
 

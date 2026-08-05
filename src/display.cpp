@@ -85,7 +85,7 @@ uint8_t gt911_address = JC4880_TOUCH_ADDR;
 SPIClass panel_spi(HSPI);
 SPIClass touch_spi(VSPI);
 esp_lcd_panel_io_handle_t cyd_panel_io = nullptr;
-volatile lv_disp_drv_t* cyd_flushing_disp = nullptr;
+lv_disp_drv_t* volatile cyd_flushing_disp = nullptr;
 volatile bool cyd_dma_done = true;
 enum class CydProfile : uint8_t { kSt7789Cst816s, kIli9341Ft5x06, kIli9341Xpt2046, kSt7789Xpt2046 };
 CydProfile cyd_profile = CydProfile::kSt7789Cst816s;
@@ -164,7 +164,7 @@ void initSpiPanel() {
 }
 
 bool onCydColorTransferDone(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void*) {
-  lv_disp_drv_t* disp = const_cast<lv_disp_drv_t*>(cyd_flushing_disp);
+  lv_disp_drv_t* disp = cyd_flushing_disp;
   if (disp) {
     cyd_flushing_disp = nullptr;
     lv_disp_flush_ready(disp);
@@ -253,8 +253,48 @@ void swapRgb565Bytes(lv_color_t* pixels, size_t count) {
   }
 }
 
-void waitForCydDma() {
-  while (!cyd_dma_done) delay(1);
+bool waitForCydDma() {
+  constexpr uint32_t kTimeoutMs = 1000;
+  const uint32_t started = millis();
+  while (!cyd_dma_done) {
+    if (millis() - started >= kTimeoutMs) {
+      Serial.println("Display DMA wait timed out");
+      return false;
+    }
+    delay(1);
+  }
+  return true;
+}
+
+void drawCydPixels(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint16_t* pixels) {
+  if (cyd_panel_io) {
+    if (!waitForCydDma()) return;
+    for (uint16_t row = 0; row < height; row += kLvglBufferLines) {
+      const uint16_t lines = min<uint16_t>(kLvglBufferLines, height - row);
+      const size_t pixel_count = size_t(width) * lines;
+      for (size_t i = 0; i < pixel_count; ++i) {
+        draw_buf_1[i].full = __builtin_bswap16(pixels[size_t(row) * width + i]);
+      }
+      setCydDmaWindow(x, y + row, x + width - 1, y + row + lines - 1);
+      cyd_dma_done = false;
+      const esp_err_t error = esp_lcd_panel_io_tx_color(
+          cyd_panel_io, 0x2C, draw_buf_1, pixel_count * sizeof(lv_color_t));
+      if (error != ESP_OK) {
+        cyd_dma_done = true;
+        Serial.printf("Display DMA direct draw failed: %s\n", esp_err_to_name(error));
+        return;
+      }
+      if (!waitForCydDma()) return;
+    }
+    return;
+  }
+
+  panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));
+  spiSetWindow(x, y, x + width - 1, y + height - 1);
+  digitalWrite(CYD_TFT_CS, LOW); digitalWrite(CYD_TFT_DC, HIGH);
+  panel_spi.writePixels(pixels, size_t(width) * height * sizeof(uint16_t));
+  digitalWrite(CYD_TFT_CS, HIGH);
+  panel_spi.endTransaction();
 }
 
 bool i2cRead(uint8_t address, uint8_t reg, uint8_t* dst, size_t length) {
@@ -555,12 +595,7 @@ void drawSplashTextRow(uint16_t x, uint16_t y, uint16_t width) {
                    width * sizeof(uint16_t));
   }
 #else
-  panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));
-  spiSetWindow(x, y, x + width - 1, y);
-  digitalWrite(CYD_TFT_CS, LOW); digitalWrite(CYD_TFT_DC, HIGH);
-  panel_spi.writePixels(splash_text_row, width * sizeof(uint16_t));
-  digitalWrite(CYD_TFT_CS, HIGH);
-  panel_spi.endTransaction();
+  drawCydPixels(x, y, width, 1, splash_text_row);
 #endif
 }
 
@@ -627,12 +662,7 @@ void drawDisplaySplash() {
   cacheWriteback(dsi_framebuffer + y0 * kScreenWidth,
                  size_t(kWledLogoHeight) * kScreenWidth * sizeof(uint16_t));
 #else
-  panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));
-  spiSetWindow(x0, y0, x0 + kWledLogoWidth - 1, y0 + kWledLogoHeight - 1);
-  digitalWrite(CYD_TFT_CS, LOW); digitalWrite(CYD_TFT_DC, HIGH);
-  panel_spi.writePixels(kWledLogoPixels, kWledLogoPixelCount * sizeof(uint16_t));
-  digitalWrite(CYD_TFT_CS, HIGH);
-  panel_spi.endTransaction();
+  drawCydPixels(x0, y0, kWledLogoWidth, kWledLogoHeight, kWledLogoPixels);
 #endif
   drawSplashVersionLabel(y0);
   splash_started_ms = millis();
@@ -685,8 +715,12 @@ void flushDisplay(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_
     setCydDmaWindow(area->x1, area->y1, area->x2, area->y2);
     cyd_dma_done = false;
     cyd_flushing_disp = disp;
-    const esp_err_t error = esp_lcd_panel_io_tx_color(
+    esp_err_t error = esp_lcd_panel_io_tx_color(
         cyd_panel_io, 0x2C, color_p, pixel_count * sizeof(*color_p));
+    if (error != ESP_OK) {
+      error = esp_lcd_panel_io_tx_color(
+          cyd_panel_io, 0x2C, color_p, pixel_count * sizeof(*color_p));
+    }
     if (error == ESP_OK) {
       // The DMA completion callback releases this LVGL buffer. Do not mark it
       // ready here: LVGL is free to render into the second buffer meanwhile.
@@ -828,7 +862,7 @@ void displayClear(uint16_t rgb565) {
   cacheWriteback(dsi_framebuffer, size_t(kScreenWidth) * kScreenHeight * sizeof(uint16_t));
 #else
   if (cyd_panel_io) {
-    waitForCydDma();
+    if (!waitForCydDma()) return;
     const uint16_t wire_color = __builtin_bswap16(rgb565);
     for (size_t i = 0; i < size_t(kScreenWidth) * kLvglBufferLines; ++i) {
       draw_buf_1[i].full = wire_color;
@@ -844,7 +878,7 @@ void displayClear(uint16_t rgb565) {
       }
       // This buffer is deliberately reused for each strip, so wait here. Full
       // clears are rare; interactive LVGL redraws use both buffers asynchronously.
-      waitForCydDma();
+      if (!waitForCydDma()) return;
     }
   } else {
     panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));

@@ -1886,6 +1886,7 @@ void pumpTransactions(uint32_t now) {
       g_transactionCount--;
       continue;
     }
+    transaction.targets &= uint8_t((1U << g_deviceCount) - 1U);
     bool dispatched = false;
     for (size_t index = 0; index < g_deviceCount; ++index) {
       const uint8_t bit = uint8_t(1U << index);

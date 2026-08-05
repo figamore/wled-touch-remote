@@ -165,11 +165,12 @@ def make_color_wheel_rgb565(size, background):
 
     for y in range(size):
         for x_pos in range(size):
-            dx = x_pos + 0.5 - center
-            dy = y + 0.5 - center
+            dx = x_pos - center
+            dy = y - center
             distance = math.sqrt(dx * dx + dy * dy)
             if distance > radius:
                 red, green, blue = float(bg_r), float(bg_g), float(bg_b)
+                dither = 0.0
             else:
                 hue = (math.atan2(dy, dx) + math.pi / 2.0) * (180.0 / math.pi)
                 if hue < 0.0:
@@ -193,8 +194,8 @@ def make_color_wheel_rgb565(size, background):
                 red = (1.0 - saturation + saturation * primary_r) * 255.0
                 green = (1.0 - saturation + saturation * primary_g) * 255.0
                 blue = (1.0 - saturation + saturation * primary_b) * 255.0
+                dither = bayer[y & 3][x_pos & 3] / 16.0 - 0.46875
 
-            dither = bayer[y & 3][x_pos & 3] / 16.0 - 0.46875
             red = min(255, max(0, int(red + dither * 8.0 + 0.5)))
             green = min(255, max(0, int(green + dither * 4.0 + 0.5)))
             blue = min(255, max(0, int(blue + dither * 8.0 + 0.5)))

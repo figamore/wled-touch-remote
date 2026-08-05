@@ -1156,10 +1156,12 @@ bool setAccessPoint(bool enabled, const char* name, const char* password) {
     Serial.println("[WIFI] rejected invalid mobile access point settings");
     return false;
   }
+  const bool stateChanged = enabled != g_accessPointEnabled;
   g_accessPointName.assign(requestedName, nameLength);
   g_accessPointPassword.assign(requestedPassword, passwordLength);
   g_accessPointEnabled = enabled;
   persistAccessPointConfiguration();
+  if (!stateChanged) return true;
 #if !WLED_TOUCH_SIMULATOR
   // Force the next client-list observation to be reported after the AP is
   // recreated, even if DHCP hands out the same address as before.
