@@ -2673,37 +2673,30 @@ void createPresetsTab(lv_obj_t* tab) {
   lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(tab, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_row(tab, 8, LV_PART_MAIN);
-  configurePageScroll(tab, false);
+  // Keep the add action with the preset rows instead of reserving permanent
+  // space for it at the top of the page.
+  configurePageScroll(tab, true);
   lv_obj_t* panel = createPanel(tab);
-  lv_obj_set_size(panel, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_size(panel, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(panel, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_row(panel, 10, LV_PART_MAIN);
-  add_preset_button = lv_btn_create(panel);
-  styleButton(add_preset_button);
-  lv_obj_set_size(add_preset_button, LV_PCT(100), uiScaled(38, 54));
-  lv_obj_add_event_cb(add_preset_button, openNewPresetNameDialog, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* addLabel = lv_label_create(add_preset_button);
-  lv_label_set_text(addLabel, LV_SYMBOL_PLUS "  Add preset");
-  lv_obj_center(addLabel);
   preset_empty_hint = lv_label_create(panel);
   lv_obj_set_width(preset_empty_hint, LV_PCT(100));
   lv_label_set_long_mode(preset_empty_hint, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(preset_empty_hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_add_style(preset_empty_hint, &style_label_muted, LV_PART_MAIN);
   preset_table = lv_table_create(panel);
-  lv_obj_set_width(preset_table, LV_PCT(100));
-  lv_obj_set_flex_grow(preset_table, 1);
+  lv_obj_set_size(preset_table, LV_PCT(100), LV_SIZE_CONTENT);
   lv_table_set_col_cnt(preset_table, 2);
   const lv_coord_t edit_col_width = uiScaled(42, 62);
   lv_table_set_col_width(preset_table, 0, kScreenWidth - 52 - edit_col_width);
   lv_table_set_col_width(preset_table, 1, edit_col_width);
-  lv_obj_set_scroll_dir(preset_table, LV_DIR_VER);
-  lv_obj_set_scrollbar_mode(preset_table, LV_SCROLLBAR_MODE_AUTO);
-  lv_obj_add_flag(preset_table, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE |
-                                     LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC |
-                                     LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_set_scrollbar_mode(preset_table, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_clear_flag(preset_table, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM |
+                                     LV_OBJ_FLAG_SCROLL_ELASTIC);
+  lv_obj_add_flag(preset_table, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_pad_all(preset_table, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(preset_table, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_border_width(preset_table, 0, LV_PART_MAIN);
@@ -2720,6 +2713,13 @@ void createPresetsTab(lv_obj_t* tab) {
   lv_obj_set_style_border_width(preset_table, 0, LV_PART_ITEMS);
   lv_obj_add_event_cb(preset_table, onPresetTableClicked, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(preset_table, onPresetTableDrawPart, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+  add_preset_button = lv_btn_create(panel);
+  styleButton(add_preset_button);
+  lv_obj_set_size(add_preset_button, LV_PCT(100), uiScaled(38, 54));
+  lv_obj_add_event_cb(add_preset_button, openNewPresetNameDialog, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* addLabel = lv_label_create(add_preset_button);
+  lv_label_set_text(addLabel, LV_SYMBOL_PLUS "  Add preset");
+  lv_obj_center(addLabel);
   refreshPresetTable();
 }
 
