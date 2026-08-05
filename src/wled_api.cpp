@@ -192,6 +192,8 @@ struct AccessPointProbeResult {
   uint32_t ipv4;
   uint32_t networkGeneration;
   bool success;
+  bool hasMac;
+  uint8_t mac[6];
   char name[65];
 };
 QueueHandle_t g_accessPointProbeJobs = nullptr;
@@ -544,7 +546,11 @@ MdnsHostResolution g_mdnsHostResolutions[kMaxDevices];
 
 std::string ipToString(uint32_t address) { return std::string(IPAddress(address).toString().c_str()); }
 
-bool isWled(uint32_t ipv4, std::string& name) {
+bool parseMacAddress(const char* text, uint8_t* mac);
+
+bool isWled(uint32_t ipv4, std::string& name, uint8_t* mac = nullptr,
+            bool* hasMac = nullptr) {
+  if (hasMac) *hasMac = false;
   HTTPClient http;
   if (!http.begin(ipToString(ipv4).c_str(), kWledPort, "/json/info")) return false;
   http.setConnectTimeout(kSocketConnectTimeoutMs);
@@ -554,6 +560,10 @@ bool isWled(uint32_t ipv4, std::string& name) {
     JsonDocument doc;
     if (!deserializeJson(doc, http.getStream()) && doc["ver"].is<const char*>()) {
       if (doc["name"].is<const char*>()) name = doc["name"].as<const char*>();
+      if (mac && doc["mac"].is<const char*>()) {
+        const bool parsed = parseMacAddress(doc["mac"].as<const char*>(), mac);
+        if (hasMac) *hasMac = parsed;
+      }
       http.end();
       return true;
     }
@@ -632,7 +642,8 @@ void pumpAccessPointProbeResults(uint32_t now) {
       }
       continue;
     }
-    DeviceSlot* device = rememberDevice(result.ipv4, result.name, now);
+    DeviceSlot* device = rememberDevice(result.ipv4, result.name, now,
+                                        result.hasMac ? result.mac : nullptr);
     if (!device) continue;
     device->model.online = true;
     device->lastSeen = now;
@@ -1354,7 +1365,7 @@ void accessPointProbeTask(void*) {
     result.networkGeneration = job.networkGeneration;
     if (job.networkGeneration == g_networkGeneration) {
       std::string name;
-      result.success = isWled(job.ipv4, name);
+      result.success = isWled(job.ipv4, name, result.mac, &result.hasMac);
       snprintf(result.name, sizeof(result.name), "%s", name.c_str());
     }
     xQueueSend(g_accessPointProbeResults, &result, portMAX_DELAY);

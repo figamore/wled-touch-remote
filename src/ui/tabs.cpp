@@ -3153,6 +3153,7 @@ void updateFirmwareUpdateUi() {}
 static void onConnRefreshTick(lv_timer_t*) {
   if (main_tabs && lv_tabview_get_tab_act(main_tabs) != kSettingsTabIndex) return;
   updateConnLabel();
+  updateAccessPointLabel();
 }
 
 // Two lines say what the remote is talking to and over what link; the rows below

@@ -278,6 +278,22 @@ constexpr uint32_t kHostedRpcTimeoutMs = 3000;
 constexpr uint8_t kHostedRpcTimeoutLimit = 3;
 uint8_t g_hostedRpcTimeouts = 0;
 
+bool configureAccessPointRadio(bool enabled, const char* ssid, const char* password) {
+  if (!enabled) {
+    // Changing the mode stops the AP. WiFi.softAPdisconnect(true) is not a
+    // simple conditional teardown: Arduino first calls AP.clear(), which
+    // enables an AP when none is running. On ESP-Hosted that briefly requests
+    // AP+STA mode and can leave the P4 waiting forever for the C6 RPC.
+    return WiFi.mode(WIFI_STA);
+  }
+
+  // Recreate an existing AP (for an SSID/password edit) by moving through STA
+  // mode. Both transitions remain exclusive; in particular, never use
+  // softAPdisconnect() to manufacture an intermediate AP+STA state.
+  if (!WiFi.mode(WIFI_STA) || !WiFi.mode(WIFI_AP)) return false;
+  return WiFi.softAP(ssid, password);
+}
+
 void runRadioJob(const RadioJob& job) {
   if (job.kind == RadioJobKind::kConnect) {
     if (job.connectionGeneration != g_radioConnectionGeneration) return;
@@ -318,18 +334,9 @@ void runRadioJob(const RadioJob& job) {
     RadioResult result;
     result.kind = job.kind;
     result.accessPointGeneration = job.accessPointGeneration;
-    if (job.accessPointEnabled) {
-      // softAP() does not reliably replace an already-running SSID on every
-      // Arduino-ESP32 target, so explicitly recreate it when the user renames
-      // the mobile network.
-      WiFi.disconnect();
-      WiFi.softAPdisconnect(true);
-      WiFi.mode(WIFI_AP);
-      result.accessPointRunning = WiFi.softAP(job.ssid, job.password);
-    } else {
-      WiFi.softAPdisconnect(true);
-      WiFi.mode(WIFI_STA);
-    }
+    result.accessPointRunning = job.accessPointEnabled &&
+                                configureAccessPointRadio(true, job.ssid, job.password);
+    if (!job.accessPointEnabled) configureAccessPointRadio(false, nullptr, nullptr);
     if (g_radioResults) xQueueSend(g_radioResults, &result, portMAX_DELAY);
   } else {
 #if WLED_BOARD == WLED_BOARD_JC4880P443
@@ -430,18 +437,10 @@ void applyAccessPointConfiguration() {
   g_accessPointApplyPending = true;
   g_accessPointJobQueued = queueAccessPointConfiguration();
 #else
-  if (g_accessPointEnabled) {
-    // Recreate rather than reconfigure in place so a renamed SSID is visible
-    // immediately on every supported ESP32 radio.
-    WiFi.disconnect();
-    WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_AP);
-    g_accessPointRunning = WiFi.softAP(g_accessPointName.c_str(), g_accessPointPassword.c_str());
-  } else {
-    WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_STA);
-    g_accessPointRunning = false;
-  }
+  g_accessPointRunning = g_accessPointEnabled &&
+                         configureAccessPointRadio(true, g_accessPointName.c_str(),
+                                                   g_accessPointPassword.c_str());
+  if (!g_accessPointEnabled) configureAccessPointRadio(false, nullptr, nullptr);
   Serial.printf("[WIFI] mobile access point %s%s\n",
                 g_accessPointRunning ? "started: " : "stopped",
                 g_accessPointRunning ? g_accessPointName.c_str() : "");
