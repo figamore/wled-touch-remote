@@ -38,6 +38,7 @@ If you enjoy WLED Touch Remote, please consider [sponsoring its development](htt
 - Colors, effects, palettes, speed, and intensity controls
 - Live LED preview and responsive state updates from the selected controller
 - Automatic discovery of WLED controllers on the local network, with manual IP-address entry when discovery is unavailable
+- Optional built-in mobile hotspot for WLED setups without an existing Wi-Fi network
 - Control of one or all discovered controllers
 - On-device settings for screen orientation and inactivity behavior
 - Web installer support for browser-based flashing
@@ -91,12 +92,19 @@ The easiest option is the [web installer](https://figamore.github.io/wled-touch-
 
 The remote and WLED controller must be on the same routed local network.
 
+### Mobile setups without Wi-Fi
+
+For a portable installation, open **Settings → Mobile hotspot**, enable it, and optionally edit the displayed SSID and password.
+
+Configure each WLED controller to join that network, then select it from **Control Target** (or enter its address with **WLED IP** if discovery is unavailable). Enabling the hotspot disconnects the remote from its saved Wi-Fi; disabling it stops the hotspot and reconnects to the saved network.
+
 ## Settings
 
 The Settings tab lets you change:
 
 - The controller or controllers to control
 - Wi-Fi network
+- Mobile hotspot name and on/off state
 - Display orientation
 - Inactivity behavior:
    * Always on

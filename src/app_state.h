@@ -66,9 +66,14 @@ constexpr const char* kPrefsWifiPassKey = "wifiPass";
 // 2.4 GHz scan on the next boot.  It is only a hint: wifi_link falls back to
 // an all-channel attempt if the router has moved it.
 constexpr const char* kPrefsWifiChannelKey = "wifiChan";
+constexpr const char* kPrefsAccessPointEnabledKey = "apEnabled";
+constexpr const char* kPrefsAccessPointNameKey = "apName";
+constexpr const char* kPrefsAccessPointPassKey = "apPass";
 
 constexpr size_t kMaxSsidLength = 32;
 constexpr size_t kMaxWifiPassLength = 63;
+constexpr const char* kDefaultAccessPointName = "WledRemote";
+constexpr const char* kDefaultAccessPointPassword = "wled1234";
 
 // ── Colors ──────────────────────────────────────────────────────────────────
 

@@ -119,6 +119,7 @@ enum class RequestKey : uint8_t {
 struct Transaction {
   char json[kMaxRequestLength] = {};
   RequestKey key = RequestKey::kRaw;
+  uint32_t networkGeneration = 0;
   bool targetMainSegment = false;
   uint8_t targets = 0;
   uint8_t attempts[kMaxDevices] = {};
@@ -148,12 +149,24 @@ uint32_t g_connectionRev = 0;
 uint32_t g_discoveryStartedAt = 0;
 uint32_t g_connectionLostAt = 0;
 bool g_wifiWasConnected = false;
+// AP and STA are mutually exclusive, but both count as a usable local link.
+// Keep the active SSID separately so switching between them starts a fresh
+// discovery epoch even though wifilink::connected() never went false.
+std::string g_activeNetworkSsid;
+bool g_activeNetworkIsAccessPoint = false;
+// Every queued command/probe is tagged with this value. Work from an earlier
+// local network may complete after a mode change, but can never affect it.
+volatile uint32_t g_networkGeneration = 1;
 bool g_hadWledConnection = false;
 std::string g_wledConnectionSsid;
 uint32_t g_lastPoll = 0;
 uint32_t g_lastDiscover = 0;
 bool g_scanRequested = true;
 bool g_fullScanRequested = false;
+uint32_t g_nextAccessPointClientProbeAt = 0;
+size_t g_nextAccessPointClientProbe = 0;
+uint32_t g_lastAccessPointProbeFailure = 0;
+uint32_t g_lastAccessPointProbeFailureAt = 0;
 uint32_t g_nextPresetFetch = 0;
 uint8_t g_presetFetchAttempts = 0;
 // Bumped whenever the cached preset catalog is invalidated (preset saved,
@@ -166,13 +179,26 @@ uint8_t g_transactionWrite = 0;
 uint8_t g_transactionCount = 0;
 
 #if !WLED_TOUCH_SIMULATOR
-struct HttpCommandJob { uint32_t ipv4; char payload[kMaxRequestLength]; };
-struct HttpCommandResult { bool success; };
+struct HttpCommandJob { uint32_t ipv4; uint32_t networkGeneration; char payload[kMaxRequestLength]; };
+struct HttpCommandResult { uint32_t networkGeneration; bool success; };
 QueueHandle_t g_httpCommandJobs = nullptr;
 QueueHandle_t g_httpCommandResults = nullptr;
 bool g_httpCommandInFlight = false;
+uint32_t g_httpCommandGeneration = 0;
 uint8_t g_httpCommandTarget = 0;
 char g_httpCommandPayload[kMaxRequestLength] = {};
+struct AccessPointProbeJob { uint32_t ipv4; uint32_t networkGeneration; };
+struct AccessPointProbeResult {
+  uint32_t ipv4;
+  uint32_t networkGeneration;
+  bool success;
+  char name[65];
+};
+QueueHandle_t g_accessPointProbeJobs = nullptr;
+QueueHandle_t g_accessPointProbeResults = nullptr;
+bool g_accessPointProbeInFlight = false;
+uint32_t g_accessPointProbeAddress = 0;
+uint32_t g_accessPointProbeGeneration = 0;
 #endif
 
 void deviceAliasKey(const uint8_t* id, char* key, size_t keySize) {
@@ -345,7 +371,8 @@ bool queueTransaction(const char* json, RequestKey key, bool targetMain = false)
   if (!targets || !length || length >= kMaxRequestLength) return false;
   for (uint8_t i = 0; i < g_transactionCount; ++i) {
     Transaction& queued = g_transactions[(g_transactionRead + i) % kTransactionQueueSize];
-    if (queued.key == key && queued.targets == targets && queued.targetMainSegment == targetMain) {
+    if (queued.networkGeneration == g_networkGeneration && queued.key == key &&
+        queued.targets == targets && queued.targetMainSegment == targetMain) {
       memcpy(queued.json, json, length + 1);
       return true;
     }
@@ -358,6 +385,7 @@ bool queueTransaction(const char* json, RequestKey key, bool targetMain = false)
   transaction = Transaction{};
   memcpy(transaction.json, json, length + 1);
   transaction.key = key;
+  transaction.networkGeneration = g_networkGeneration;
   transaction.targetMainSegment = targetMain;
   transaction.targets = targets;
   g_transactionWrite = (g_transactionWrite + 1) % kTransactionQueueSize;
@@ -430,7 +458,7 @@ bool g_mdnsStaBindAttempted = false;
 #if ESP_IDF_VERSION_MAJOR >= 5
 // MDNS.begin() is deliberately deferred until Wi-Fi has an address. The
 // Arduino wrapper does not replay the already-delivered GOT_IP event though,
-// so bind the pre-defined STA netif explicitly. This is the supported mDNS
+// so bind the predefined STA netif explicitly. This is the supported mDNS
 // lifecycle action for an interface that became available before mdns_init().
 void bindMdnsToConnectedSta() {
   if (g_mdnsStaBound || g_mdnsStaBindAttempted) return;
@@ -467,10 +495,9 @@ uint32_t g_nextMdnsStartAttempt = 0;
 #if WLED_BOARD == WLED_BOARD_JC4880P443
 // ESP-Hosted on this board carries unicast traffic reliably, but multicast
 // received by the C6 radio never reaches the P4, so DNS-SD replies sent to
-// 224.0.0.251 are lost.  RFC 6762 §6.7 legacy queries are built for exactly
+// 224.0.0.251 are lost. RFC 6762 §6.7 legacy queries are built for exactly
 // this client: a query sent from a source port other than 5353 must be
-// answered with a unicast response addressed straight back to the querier,
-// which traverses the hosted link like any other packet.
+// answered with a unicast response addressed straight back to the querier.
 constexpr uint16_t kMdnsPort = 5353;
 constexpr uint16_t kLegacyMdnsSourcePort = 5359;
 constexpr uint16_t kLegacySweepSourcePort = 5360;
@@ -504,7 +531,7 @@ struct LegacySweepResult {
 
 QueueHandle_t g_legacySweepJobs = nullptr;
 QueueHandle_t g_legacySweepResults = nullptr;
-#endif
+#endif  // WLED_BOARD == WLED_BOARD_JC4880P443
 
 
 struct MdnsHostResolution {
@@ -579,6 +606,70 @@ bool rememberMdnsDevice(uint32_t ipv4, const char* hostname, const uint8_t* mac,
   if (!device) return false;
   if (!device->model.online) { device->model.online = true; g_deviceRev++; }
   return addressIndex < 0 || identityChanged;
+}
+
+// The remote is the AP's DHCP server, so this is more reliable than waiting
+// for a controller to send an mDNS announcement. HTTP identification runs on
+// a worker; this loop task only submits one exact DHCP client at a time.
+void pumpAccessPointProbeResults(uint32_t now) {
+#if !WLED_TOUCH_SIMULATOR
+  if (!g_accessPointProbeResults) return;
+  AccessPointProbeResult result;
+  while (xQueueReceive(g_accessPointProbeResults, &result, 0) == pdTRUE) {
+    if (!g_accessPointProbeInFlight || result.ipv4 != g_accessPointProbeAddress ||
+        result.networkGeneration != g_accessPointProbeGeneration) {
+      continue;
+    }
+    g_accessPointProbeInFlight = false;
+    if (!wifilink::accessPointActive() || result.networkGeneration != g_networkGeneration) continue;
+    if (!result.success) {
+      if (result.ipv4 != g_lastAccessPointProbeFailure ||
+          now - g_lastAccessPointProbeFailureAt >= 10000) {
+        g_lastAccessPointProbeFailure = result.ipv4;
+        g_lastAccessPointProbeFailureAt = now;
+        Serial.printf("[WIFI] hotspot client %s did not answer WLED /json/info\n",
+                      ipToString(result.ipv4).c_str());
+      }
+      continue;
+    }
+    DeviceSlot* device = rememberDevice(result.ipv4, result.name, now);
+    if (!device) continue;
+    device->model.online = true;
+    device->lastSeen = now;
+    saveRegistry();
+    g_deviceRev++;
+    Serial.printf("[WIFI] WLED found from hotspot client list: %s\n",
+                  ipToString(result.ipv4).c_str());
+  }
+#else
+  (void)now;
+#endif
+}
+
+void probeAccessPointClients(uint32_t now) {
+  if (!wifilink::accessPointActive() || int32_t(now - g_nextAccessPointClientProbeAt) < 0) return;
+ #if !WLED_TOUCH_SIMULATOR
+  if (g_accessPointProbeInFlight) return;
+ #endif
+  const std::vector<uint32_t> clients = wifilink::accessPointClientAddresses();
+  // The CYD receives exact AP client IPs from its DHCP-assignment event. Do
+  // not block the display with a speculative subnet sweep while that event is
+  // still pending.
+  if (clients.empty()) return;
+
+  const uint32_t address = clients[g_nextAccessPointClientProbe % clients.size()];
+  ++g_nextAccessPointClientProbe;
+  g_nextAccessPointClientProbeAt = now + 400;
+  const int knownDevice = deviceIndexForAddress(address);
+  if (!address || (knownDevice >= 0 && g_devices[knownDevice].model.online)) return;
+#if !WLED_TOUCH_SIMULATOR
+  if (!g_accessPointProbeJobs) return;
+  const AccessPointProbeJob job{address, g_networkGeneration};
+  if (xQueueSend(g_accessPointProbeJobs, &job, 0) != pdTRUE) return;
+  g_accessPointProbeInFlight = true;
+  g_accessPointProbeAddress = address;
+  g_accessPointProbeGeneration = job.networkGeneration;
+#endif
 }
 
 #if ESP_IDF_VERSION_MAJOR >= 5
@@ -994,8 +1085,8 @@ void pumpLegacyMdnsDiscovery(uint32_t now) {
                   fast ? " (initial fast pass)" : "");
   }
 }
-#endif
-#endif
+#endif  // WLED_BOARD == WLED_BOARD_JC4880P443
+#endif  // ESP_IDF_VERSION_MAJOR >= 5
 
 // presets.json is fetched over blocking HTTP with timeouts long enough to
 // freeze touch and rendering for seconds if run from loop().  The transfer
@@ -1231,14 +1322,15 @@ void httpCommandTask(void*) {
     if (xQueueReceive(g_httpCommandJobs, &job, portMAX_DELAY) != pdTRUE) continue;
     HTTPClient http;
     bool success = false;
-    if (http.begin(ipToString(job.ipv4).c_str(), kWledPort, "/json/state")) {
+    if (job.networkGeneration == g_networkGeneration &&
+        http.begin(ipToString(job.ipv4).c_str(), kWledPort, "/json/state")) {
       http.setConnectTimeout(kSocketConnectTimeoutMs);
       http.setTimeout(kSocketConnectTimeoutMs);
       http.addHeader("Content-Type", "application/json");
       success = http.POST(String(job.payload)) == HTTP_CODE_OK;
       http.end();
     }
-    const HttpCommandResult result{success};
+    const HttpCommandResult result{job.networkGeneration, success};
     xQueueSend(g_httpCommandResults, &result, portMAX_DELAY);
   }
 }
@@ -1251,6 +1343,32 @@ void startHttpCommandWorker() {
   if (g_httpCommandJobs) { vQueueDelete(g_httpCommandJobs); g_httpCommandJobs = nullptr; }
   if (g_httpCommandResults) { vQueueDelete(g_httpCommandResults); g_httpCommandResults = nullptr; }
   Serial.println("[WIFI] command worker unavailable; HTTP fallback disabled");
+}
+
+void accessPointProbeTask(void*) {
+  AccessPointProbeJob job;
+  for (;;) {
+    if (xQueueReceive(g_accessPointProbeJobs, &job, portMAX_DELAY) != pdTRUE) continue;
+    AccessPointProbeResult result{};
+    result.ipv4 = job.ipv4;
+    result.networkGeneration = job.networkGeneration;
+    if (job.networkGeneration == g_networkGeneration) {
+      std::string name;
+      result.success = isWled(job.ipv4, name);
+      snprintf(result.name, sizeof(result.name), "%s", name.c_str());
+    }
+    xQueueSend(g_accessPointProbeResults, &result, portMAX_DELAY);
+  }
+}
+
+void startAccessPointProbeWorker() {
+  g_accessPointProbeJobs = xQueueCreate(2, sizeof(AccessPointProbeJob));
+  g_accessPointProbeResults = xQueueCreate(2, sizeof(AccessPointProbeResult));
+  if (g_accessPointProbeJobs && g_accessPointProbeResults &&
+      xTaskCreate(accessPointProbeTask, "wledApProbe", 6144, nullptr, 1, nullptr) == pdPASS) return;
+  if (g_accessPointProbeJobs) { vQueueDelete(g_accessPointProbeJobs); g_accessPointProbeJobs = nullptr; }
+  if (g_accessPointProbeResults) { vQueueDelete(g_accessPointProbeResults); g_accessPointProbeResults = nullptr; }
+  Serial.println("[WIFI] hotspot probe worker unavailable");
 }
 
 void applyPresetFetchResult(PresetFetchResult& result, uint32_t now) {
@@ -1585,6 +1703,7 @@ bool collectMdns(mdns_result_t* results, uint32_t now) {
 
 void pumpDiscovery(uint32_t now) {
 #if ESP_IDF_VERSION_MAJOR >= 5
+  if (wifilink::accessPointActive()) return;
   pumpMdnsBrowse(now);
 #if WLED_BOARD == WLED_BOARD_JC4880P443
   // The hosted radio path loses multicast replies, so the browse alone cannot
@@ -1652,17 +1771,19 @@ void checkSocket(uint32_t now) {
   Serial.printf("[WIFI] connecting to WLED at %s\n", ipToString(g_devices[g_focusDevice].ipv4).c_str());
 }
 
-bool sendTo(size_t index, const char* payload) {
+bool sendTo(size_t index, const char* payload, uint32_t networkGeneration) {
   if (index >= g_deviceCount || !g_devices[index].ipv4) return false;
   if (index == g_wsDevice && g_wsConnected) return socketSendText(payload);
   if (!g_httpCommandJobs || g_httpCommandInFlight) return false;
   HttpCommandJob job{};
   job.ipv4 = g_devices[index].ipv4;
+  job.networkGeneration = networkGeneration;
   const size_t length = strnlen(payload, sizeof(job.payload));
   if (length == sizeof(job.payload)) return false;
   memcpy(job.payload, payload, length + 1);
   if (xQueueSend(g_httpCommandJobs, &job, 0) != pdTRUE) return false;
   g_httpCommandInFlight = true;
+  g_httpCommandGeneration = networkGeneration;
   g_httpCommandTarget = uint8_t(index);
   memcpy(g_httpCommandPayload, payload, length + 1);
   return true;
@@ -1712,14 +1833,19 @@ void loadSimulator() {
 #endif
 
 void pumpTransactions(uint32_t now) {
-  if (!g_transactionCount) return;
-  Transaction& transaction = g_transactions[g_transactionRead];
 #if !WLED_TOUCH_SIMULATOR
-  if (g_httpCommandInFlight && g_httpCommandResults) {
+  // Always drain results, even after a network switch emptied the transaction
+  // ring. Otherwise a stale completion could leave the single HTTP slot busy.
+  if (g_httpCommandResults) {
     HttpCommandResult result;
-    if (xQueueReceive(g_httpCommandResults, &result, 0) == pdTRUE) {
+    while (xQueueReceive(g_httpCommandResults, &result, 0) == pdTRUE) {
+      if (!g_httpCommandInFlight || result.networkGeneration != g_httpCommandGeneration) continue;
       g_httpCommandInFlight = false;
+      if (result.networkGeneration != g_networkGeneration || !g_transactionCount) continue;
+      Transaction& transaction = g_transactions[g_transactionRead];
+      if (transaction.networkGeneration != result.networkGeneration) continue;
       const size_t index = g_httpCommandTarget;
+      if (index >= g_deviceCount) continue;
       const uint8_t bit = uint8_t(1U << index);
       if (result.success) {
         transaction.targets &= uint8_t(~bit);
@@ -1736,36 +1862,49 @@ void pumpTransactions(uint32_t now) {
         g_transactionRead = (g_transactionRead + 1) % kTransactionQueueSize;
         g_transactionCount--;
       }
+      return;
     }
-    return;
   }
+  if (g_httpCommandInFlight) return;
 #endif
-  for (size_t index = 0; index < g_deviceCount; ++index) {
-    const uint8_t bit = uint8_t(1U << index);
-    if (!(transaction.targets & bit) || int32_t(now - transaction.retryAt[index]) < 0) continue;
-    char targeted[kMaxRequestLength];
-    const char* payload = transaction.json;
-    if (transaction.targetMainSegment && targetMainSegment(transaction.json, g_devices[index].model.mainSegmentId,
-                                                           targeted, sizeof(targeted))) payload = targeted;
+  while (g_transactionCount) {
+    Transaction& transaction = g_transactions[g_transactionRead];
+    if (transaction.networkGeneration != g_networkGeneration) {
+      transaction = Transaction{};
+      g_transactionRead = (g_transactionRead + 1) % kTransactionQueueSize;
+      g_transactionCount--;
+      continue;
+    }
+    bool dispatched = false;
+    for (size_t index = 0; index < g_deviceCount; ++index) {
+      const uint8_t bit = uint8_t(1U << index);
+      if (!(transaction.targets & bit) || int32_t(now - transaction.retryAt[index]) < 0) continue;
+      char targeted[kMaxRequestLength];
+      const char* payload = transaction.json;
+      if (transaction.targetMainSegment && targetMainSegment(transaction.json, g_devices[index].model.mainSegmentId,
+                                                             targeted, sizeof(targeted))) payload = targeted;
 #if !WLED_TOUCH_SIMULATOR
-    if (!sendTo(index, payload)) {
-      if (++transaction.attempts[index] < kMaxCommandAttempts) {
-        transaction.retryAt[index] = now + kCommandRetryMs;
-        return;
+      if (!sendTo(index, payload, transaction.networkGeneration)) {
+        if (++transaction.attempts[index] < kMaxCommandAttempts) {
+          transaction.retryAt[index] = now + kCommandRetryMs;
+          return;
+        }
+        g_devices[index].model.online = false;
+        g_deviceRev++;
       }
-      g_devices[index].model.online = false;
-      g_deviceRev++;
-    }
-    if (g_httpCommandInFlight) return;
+      if (g_httpCommandInFlight) return;
 #endif
-    transaction.targets &= uint8_t(~bit);
-    applyOptimistic(payload, bit);
-    break;  // one destination per loop keeps touch and display work responsive
+      transaction.targets &= uint8_t(~bit);
+      applyOptimistic(payload, bit);
+      dispatched = true;
+      break;  // one destination per loop keeps touch and display work responsive
+    }
+    if (transaction.targets) return;
+    transaction = Transaction{};
+    g_transactionRead = (g_transactionRead + 1) % kTransactionQueueSize;
+    g_transactionCount--;
+    if (dispatched) return;
   }
-  if (transaction.targets) return;
-  transaction = Transaction{};
-  g_transactionRead = (g_transactionRead + 1) % kTransactionQueueSize;
-  g_transactionCount--;
 }
 
 }  // namespace
@@ -1774,6 +1913,7 @@ void begin() {
 #if !WLED_TOUCH_SIMULATOR
   startPresetFetchWorker();
   startHttpCommandWorker();
+  startAccessPointProbeWorker();
 #endif
   Preferences prefs;
   if (prefs.begin(kPrefsNamespace, true)) {
@@ -1812,29 +1952,49 @@ void loop(uint32_t now) {
       markDevicesOffline();
       g_connectionLostAt = now;
       g_wifiWasConnected = false;
+      g_activeNetworkSsid.clear();
+      g_activeNetworkIsAccessPoint = false;
     }
     updateConnectionStatus(now);
     return;
   }
-  if (!g_wifiWasConnected) {
+  const std::string activeNetworkSsid = wifilink::connectedSsid();
+  const bool activeNetworkIsAccessPoint = wifilink::accessPointActive();
+  const bool networkChanged = !g_wifiWasConnected || g_activeNetworkSsid != activeNetworkSsid ||
+                              g_activeNetworkIsAccessPoint != activeNetworkIsAccessPoint;
+  if (networkChanged) {
+    if (g_wifiWasConnected) socketDisconnected(false);
     g_wifiWasConnected = true;
-    // Every association begins a new discovery epoch.  A controller seen on
-    // the previous LAN must never remain presented as found on this one.
+    g_activeNetworkSsid = activeNetworkSsid;
+    g_activeNetworkIsAccessPoint = activeNetworkIsAccessPoint;
+    if (++g_networkGeneration == 0) ++g_networkGeneration;
+    // The old network's targets may be unrelated devices at reused addresses.
+    // Tags below also protect work that was already handed to a worker.
+    g_transactionRead = 0;
+    g_transactionWrite = 0;
+    g_transactionCount = 0;
+#if !WLED_TOUCH_SIMULATOR
+    g_accessPointProbeInFlight = false;
+#endif
+    // Every association or mode switch begins a new discovery epoch. A
+    // controller seen on the previous AP/LAN must never remain presented as
+    // found on the newly active network.
     markDevicesOffline();
 #if ESP_IDF_VERSION_MAJOR >= 5
     if (g_mdnsBrowseQueue) xQueueReset(g_mdnsBrowseQueue);
 #endif
-    if (!g_wledConnectionSsid.empty() &&
-        g_wledConnectionSsid != wifilink::connectedSsid()) {
-      // A controller reached on another Wi-Fi network says nothing about the
-      // newly joined network. Start its discovery state from scratch.
-      g_hadWledConnection = false;
-      g_connectionLostAt = 0;
-    }
+    g_hadWledConnection = false;
+    g_connectionLostAt = 0;
     g_discoveryStartedAt = now;
     g_scanRequested = true;
+    if (wifilink::accessPointActive()) {
+      Serial.println("[WIFI] hotspot discovery: probing connected DHCP clients directly");
+    }
   }
-  if (!g_mdnsStarted && int32_t(now - g_nextMdnsStartAttempt) >= 0) {
+  // A mobile hotspot owns its client list, so no mDNS browse or subnet sweep
+  // is needed there. Keep mDNS strictly for normal station Wi-Fi discovery.
+  if (!wifilink::accessPointActive() && !g_mdnsStarted &&
+      int32_t(now - g_nextMdnsStartAttempt) >= 0) {
     g_mdnsStarted = MDNS.begin("wled-remote");
     if (g_mdnsStarted) {
       g_scanRequested = true;
@@ -1845,9 +2005,11 @@ void loop(uint32_t now) {
     }
   }
 #if ESP_IDF_VERSION_MAJOR >= 5
-  if (g_mdnsStarted) bindMdnsToConnectedSta();
+  if (g_mdnsStarted && !wifilink::accessPointActive()) bindMdnsToConnectedSta();
 #endif
-  if (g_mdnsStarted) pumpDiscovery(now);
+  if (g_mdnsStarted && !wifilink::accessPointActive()) pumpDiscovery(now);
+  pumpAccessPointProbeResults(now);
+  probeAccessPointClients(now);
   checkSocket(now);
   pumpSocket();
   if (g_wsConnected) {

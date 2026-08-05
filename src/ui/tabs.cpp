@@ -1510,6 +1510,197 @@ void openWifiDialog(lv_event_t*) {
   showWifiDialog();
 }
 
+// ── Mobile access point ─────────────────────────────────────────────────────
+
+lv_obj_t* access_point_label = nullptr;
+lv_obj_t* access_point_dialog = nullptr;
+lv_obj_t* access_point_switch = nullptr;
+lv_obj_t* access_point_name_value = nullptr;
+lv_obj_t* access_point_password_value = nullptr;
+lv_obj_t* access_point_editor_dialog = nullptr;
+lv_obj_t* access_point_editor_input = nullptr;
+
+enum class AccessPointEdit : uintptr_t { kName, kPassword };
+AccessPointEdit access_point_editing = AccessPointEdit::kName;
+
+void updateAccessPointLabel() {
+  if (!access_point_label) return;
+  if (wifilink::accessPointActive()) {
+    lv_label_set_text(access_point_label, wifilink::accessPointName().c_str());
+  } else if (wifilink::accessPointEnabled()) {
+    lv_label_set_text(access_point_label, "Starting...");
+  } else {
+    lv_label_set_text(access_point_label, "Off");
+  }
+}
+
+void onAccessPointDialogDeleted(lv_event_t*) {
+  access_point_dialog = nullptr;
+  access_point_switch = nullptr;
+  access_point_name_value = nullptr;
+  access_point_password_value = nullptr;
+}
+
+void closeAccessPointDialog(lv_event_t*) {
+  if (access_point_dialog) lv_obj_del_async(access_point_dialog);
+}
+
+void saveAccessPointEnabledState() {
+  if (!access_point_switch) return;
+  wifilink::setAccessPoint(lv_obj_has_state(access_point_switch, LV_STATE_CHECKED),
+                           wifilink::accessPointName().c_str(),
+                           wifilink::accessPointPassword().c_str());
+  updateAccessPointLabel();
+}
+
+void onAccessPointSwitchChanged(lv_event_t*) {
+  saveAccessPointEnabledState();
+}
+
+void updateAccessPointDialogValues() {
+  if (access_point_name_value) {
+    lv_label_set_text(access_point_name_value, wifilink::accessPointName().c_str());
+  }
+  if (access_point_password_value) {
+    lv_label_set_text(access_point_password_value, wifilink::accessPointPassword().c_str());
+  }
+}
+
+void onAccessPointEditorDeleted(lv_event_t*) {
+  access_point_editor_dialog = nullptr;
+  access_point_editor_input = nullptr;
+}
+
+void closeAccessPointEditor(lv_event_t*) {
+  if (access_point_editor_dialog) lv_obj_del_async(access_point_editor_dialog);
+}
+
+void rejectAccessPointEditor(const char* reason) {
+  if (!access_point_editor_input) return;
+  // Match the existing manual-IP validation feedback: keep the dialog open
+  // and make the correction needed visible in the input itself.
+  lv_textarea_set_text(access_point_editor_input, "");
+  lv_textarea_set_placeholder_text(access_point_editor_input, reason);
+}
+
+void onAccessPointEditorInput(lv_event_t* event) {
+  const lv_event_code_t code = lv_event_get_code(event);
+  if (code == LV_EVENT_CANCEL) {
+    closeAccessPointEditor(nullptr);
+    return;
+  }
+  if (code != LV_EVENT_READY || !access_point_editor_input) return;
+
+  const char* value = lv_textarea_get_text(access_point_editor_input);
+  const size_t length = strnlen(value, kMaxWifiPassLength + 1);
+  if (access_point_editing == AccessPointEdit::kName && !length) {
+    rejectAccessPointEditor("Hotspot SSID cannot be empty");
+    return;
+  }
+  if (access_point_editing == AccessPointEdit::kPassword &&
+      (length < 8 || length > kMaxWifiPassLength)) {
+    rejectAccessPointEditor("Password must be 8-63 characters");
+    return;
+  }
+
+  bool saved = false;
+  if (access_point_editing == AccessPointEdit::kName) {
+    saved = wifilink::setAccessPoint(wifilink::accessPointEnabled(), value,
+                                     wifilink::accessPointPassword().c_str());
+  } else {
+    saved = wifilink::setAccessPoint(wifilink::accessPointEnabled(), wifilink::accessPointName().c_str(), value);
+  }
+  if (!saved) {
+    rejectAccessPointEditor("Could not save hotspot settings");
+    return;
+  }
+  updateAccessPointLabel();
+  updateAccessPointDialogValues();
+  closeAccessPointEditor(nullptr);
+}
+
+void showAccessPointEditor(AccessPointEdit edit) {
+  if (access_point_editor_dialog) return;
+  access_point_editing = edit;
+  access_point_editor_dialog = createDialogShell(edit == AccessPointEdit::kName ? "Hotspot SSID" : "Hotspot password",
+                                                  closeAccessPointEditor);
+  lv_obj_add_event_cb(access_point_editor_dialog, onAccessPointEditorDeleted, LV_EVENT_DELETE, nullptr);
+
+  access_point_editor_input = lv_textarea_create(access_point_editor_dialog);
+  lv_obj_set_size(access_point_editor_input, kDialogWidth, kDialogInputHeight);
+  lv_obj_align(access_point_editor_input, LV_ALIGN_TOP_MID, 0, kDialogHeaderHeight + 8);
+  lv_textarea_set_one_line(access_point_editor_input, true);
+  const bool editingName = edit == AccessPointEdit::kName;
+  lv_textarea_set_max_length(access_point_editor_input, editingName ? kMaxSsidLength : kMaxWifiPassLength);
+  lv_textarea_set_text(access_point_editor_input,
+                       editingName ? wifilink::accessPointName().c_str()
+                                   : wifilink::accessPointPassword().c_str());
+  lv_obj_add_event_cb(access_point_editor_input, onAccessPointEditorInput, LV_EVENT_READY, nullptr);
+  lv_obj_add_event_cb(access_point_editor_input, onAccessPointEditorInput, LV_EVENT_CANCEL, nullptr);
+  createDialogKeyboard(access_point_editor_dialog, access_point_editor_input);
+}
+
+void onAccessPointEdit(lv_event_t* event) {
+  showAccessPointEditor(static_cast<AccessPointEdit>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(event))));
+}
+
+void createAccessPointValueRow(lv_obj_t* parent, const char* name, lv_obj_t** value_out,
+                               AccessPointEdit edit, lv_coord_t y) {
+  lv_obj_t* row = lv_obj_create(parent);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, kDialogWidth - 24, uiScaled(34, 52));
+  lv_obj_align(row, LV_ALIGN_TOP_MID, 0, y);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_border_color(row, lv_color_hex(kColorBorder), LV_PART_MAIN);
+  lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(row, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(row, 4, LV_PART_MAIN);
+
+  lv_obj_t* name_label = lv_label_create(row);
+  lv_label_set_text(name_label, name);
+  lv_obj_add_style(name_label, &style_label_muted, LV_PART_MAIN);
+
+  *value_out = lv_label_create(row);
+  lv_obj_set_width(*value_out, uiScaled(122, 260));
+  lv_label_set_long_mode(*value_out, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(*value_out, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+  lv_obj_set_style_text_color(*value_out, lv_color_hex(kColorText), LV_PART_MAIN);
+
+  lv_obj_t* edit_button = lv_btn_create(row);
+  styleButton(edit_button);
+  lv_obj_set_size(edit_button, uiScaled(32, 48), uiScaled(26, 40));
+  lv_obj_add_event_cb(edit_button, onAccessPointEdit, LV_EVENT_CLICKED,
+                      reinterpret_cast<void*>(static_cast<uintptr_t>(edit)));
+  lv_obj_t* edit_label = lv_label_create(edit_button);
+  lv_label_set_text(edit_label, LV_SYMBOL_EDIT);
+  lv_obj_center(edit_label);
+}
+
+void openAccessPointDialog(lv_event_t*) {
+  if (access_point_dialog) return;
+  access_point_dialog = createDialogShell("Mobile hotspot", closeAccessPointDialog);
+  lv_obj_add_event_cb(access_point_dialog, onAccessPointDialogDeleted, LV_EVENT_DELETE, nullptr);
+
+  lv_obj_t* enabled_label = lv_label_create(access_point_dialog);
+  lv_label_set_text(enabled_label, "Enable local Wi-Fi");
+  lv_obj_add_style(enabled_label, &style_label_muted, LV_PART_MAIN);
+  lv_obj_align(enabled_label, LV_ALIGN_TOP_LEFT, 12, kDialogHeaderHeight + uiScaled(8, 14));
+
+  access_point_switch = lv_switch_create(access_point_dialog);
+  lv_obj_set_size(access_point_switch, uiScaled(46, 72), uiScaled(24, 38));
+  lv_obj_align(access_point_switch, LV_ALIGN_TOP_RIGHT, -12, kDialogHeaderHeight + uiScaled(5, 10));
+  if (wifilink::accessPointEnabled()) lv_obj_add_state(access_point_switch, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(access_point_switch, onAccessPointSwitchChanged, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  createAccessPointValueRow(access_point_dialog, "SSID", &access_point_name_value, AccessPointEdit::kName,
+                            kDialogHeaderHeight + uiScaled(46, 82));
+  createAccessPointValueRow(access_point_dialog, "Password", &access_point_password_value,
+                            AccessPointEdit::kPassword, kDialogHeaderHeight + uiScaled(86, 146));
+  updateAccessPointDialogValues();
+}
+
 void onTargetRename(lv_event_t* event) {
   const size_t index = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
   closeTargetDialog(nullptr);
@@ -2997,6 +3188,9 @@ void createConnectionPanel(lv_obj_t* tab) {
 
   createSettingsRow(panel, "Wi-Fi network", openWifiDialog, false, &wifi_label);
   updateWifiLabel();
+
+  createSettingsRow(panel, "Mobile hotspot", openAccessPointDialog, false, &access_point_label);
+  updateAccessPointLabel();
 
   if (!conn_refresh_timer) {
     conn_refresh_timer = lv_timer_create(onConnRefreshTick, 2000, nullptr);

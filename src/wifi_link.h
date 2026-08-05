@@ -55,6 +55,20 @@ void retryConnection();
 void resumeReconnect();
 void forgetCredentials();
 
+// Optional local Wi-Fi network for mobile WLED installations. It is a WPA2
+// 2.4 GHz access point; WLED controllers join it directly and receive an IP
+// address from the remote. Enabling it pauses station Wi-Fi until disabled.
+bool accessPointEnabled();
+bool accessPointActive();
+std::string accessPointName();
+std::string accessPointPassword();
+// DHCP-assigned IPv4 addresses of clients currently joined to the remote's
+// access point. This is empty while hotspot mode is inactive.
+std::vector<uint32_t> accessPointClientAddresses();
+// Returns false without changing the saved configuration when the SSID or
+// WPA2 password is invalid.
+bool setAccessPoint(bool enabled, const char* name, const char* password);
+
 // Scans run asynchronously; results() is valid once scanning() goes false.
 // Returns true only once the request is accepted. Returns false while the
 // station is associating or when the radio cannot accept the request.

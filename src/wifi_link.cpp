@@ -38,6 +38,26 @@ std::string g_ssid;
 std::string g_password;
 uint8_t g_channel = 0;
 std::string g_savedSsid;
+bool g_accessPointEnabled = false;
+bool g_accessPointRunning = false;
+bool g_accessPointApplyPending = false;
+bool g_accessPointJobQueued = false;
+uint32_t g_accessPointConfigurationGeneration = 0;
+std::string g_accessPointName = kDefaultAccessPointName;
+std::string g_accessPointPassword = kDefaultAccessPointPassword;
+#if !WLED_TOUCH_SIMULATOR
+int g_lastAccessPointClientCount = -1;
+uint32_t g_lastAccessPointClientFingerprint = UINT32_MAX;
+bool g_accessPointClientListErrorLogged = false;
+constexpr size_t kMaxAccessPointClientLeases = 10;
+struct AccessPointClientLease {
+  uint8_t mac[6] = {};
+  uint32_t address = 0;
+};
+portMUX_TYPE g_accessPointClientLock = portMUX_INITIALIZER_UNLOCKED;
+AccessPointClientLease g_accessPointClientLeases[kMaxAccessPointClientLeases];
+size_t g_accessPointClientLeaseCount = 0;
+#endif
 uint32_t g_attemptStarted = 0;
 uint32_t g_retryAt = 0;
 uint8_t g_failures = 0;
@@ -60,19 +80,78 @@ bool g_scanStartFailureLogged = false;
 uint32_t g_scanRetryAt = 0;
 bool g_hasScanned = false;
 
+#if !WLED_TOUCH_SIMULATOR
+void clearAccessPointClientLeases() {
+  portENTER_CRITICAL(&g_accessPointClientLock);
+  g_accessPointClientLeaseCount = 0;
+  memset(g_accessPointClientLeases, 0, sizeof(g_accessPointClientLeases));
+  portEXIT_CRITICAL(&g_accessPointClientLock);
+}
+
+void rememberAccessPointClientLease(WiFiEvent_t, WiFiEventInfo_t info) {
+  const uint32_t address = info.wifi_ap_staipassigned.ip.addr;
+  if (!address) return;
+  const uint8_t* const mac = info.wifi_ap_staipassigned.mac;
+  portENTER_CRITICAL(&g_accessPointClientLock);
+  size_t index = g_accessPointClientLeaseCount;
+  for (size_t i = 0; i < g_accessPointClientLeaseCount; ++i) {
+    if (!memcmp(g_accessPointClientLeases[i].mac, mac, sizeof(g_accessPointClientLeases[i].mac))) {
+      index = i;
+      break;
+    }
+  }
+  if (index < kMaxAccessPointClientLeases) {
+    memcpy(g_accessPointClientLeases[index].mac, mac, sizeof(g_accessPointClientLeases[index].mac));
+    g_accessPointClientLeases[index].address = address;
+    if (index == g_accessPointClientLeaseCount) ++g_accessPointClientLeaseCount;
+  }
+  portEXIT_CRITICAL(&g_accessPointClientLock);
+}
+
+void removeAccessPointClientLease(WiFiEvent_t, WiFiEventInfo_t info) {
+  const uint8_t* const mac = info.wifi_ap_stadisconnected.mac;
+  portENTER_CRITICAL(&g_accessPointClientLock);
+  for (size_t i = 0; i < g_accessPointClientLeaseCount; ++i) {
+    if (memcmp(g_accessPointClientLeases[i].mac, mac, sizeof(g_accessPointClientLeases[i].mac))) continue;
+    const size_t last = --g_accessPointClientLeaseCount;
+    if (i != last) g_accessPointClientLeases[i] = g_accessPointClientLeases[last];
+    memset(&g_accessPointClientLeases[last], 0, sizeof(g_accessPointClientLeases[last]));
+    break;
+  }
+  portEXIT_CRITICAL(&g_accessPointClientLock);
+}
+#endif
+
 void loadCredentials() {
   char ssid[kMaxSsidLength + 1] = {};
   char password[kMaxWifiPassLength + 1] = {};
+  char accessPointName[kMaxSsidLength + 1] = {};
+  char accessPointPassword[kMaxWifiPassLength + 1] = {};
   Preferences prefs;
   if (prefs.begin(kPrefsNamespace, true)) {
     prefs.getString(kPrefsWifiSsidKey, ssid, sizeof(ssid));
     prefs.getString(kPrefsWifiPassKey, password, sizeof(password));
     g_channel = prefs.getUChar(kPrefsWifiChannelKey, 0);
+    g_accessPointEnabled = prefs.getBool(kPrefsAccessPointEnabledKey, false);
+    prefs.getString(kPrefsAccessPointNameKey, accessPointName, sizeof(accessPointName));
+    prefs.getString(kPrefsAccessPointPassKey, accessPointPassword, sizeof(accessPointPassword));
     prefs.end();
   }
   g_savedSsid = ssid;
   g_ssid = g_savedSsid;
   g_password = password;
+  if (accessPointName[0]) g_accessPointName = accessPointName;
+  if (accessPointPassword[0]) g_accessPointPassword = accessPointPassword;
+}
+
+void persistAccessPointConfiguration() {
+  Preferences prefs;
+  if (prefs.begin(kPrefsNamespace, false)) {
+    prefs.putBool(kPrefsAccessPointEnabledKey, g_accessPointEnabled);
+    prefs.putString(kPrefsAccessPointNameKey, g_accessPointName.c_str());
+    prefs.putString(kPrefsAccessPointPassKey, g_accessPointPassword.c_str());
+    prefs.end();
+  }
 }
 
 void persistActiveCredentials() {
@@ -130,7 +209,7 @@ Status statusForReason(uint8_t reason) {
 // C6 coprocessor; issued from loop() each one stalls touch and rendering for
 // the RPC round trip.  A dedicated worker owns those calls, and routing them
 // all through one queue preserves connect/disconnect ordering.
-enum class RadioJobKind : uint8_t { kConnect, kDisconnect, kStopScan, kStartScan, kHarvestScan, kConfigureConnected, kSampleStats };
+enum class RadioJobKind : uint8_t { kConnect, kDisconnect, kStopScan, kStartScan, kHarvestScan, kConfigureAccessPoint, kConfigureConnected, kSampleStats };
 constexpr size_t kMaxScanResults = 32;
 struct RadioScanNetwork {
   char ssid[kMaxSsidLength + 1] = {};
@@ -145,12 +224,16 @@ struct RadioJob {
   uint8_t channel = 0;
   uint32_t connectionGeneration = 0;
   uint32_t connectionAttempt = 0;
+  uint32_t accessPointGeneration = 0;
+  bool accessPointEnabled = false;
 };
 
 struct RadioResult {
   RadioJobKind kind = RadioJobKind::kDisconnect;
   uint32_t connectionGeneration = 0;
   uint32_t connectionAttempt = 0;
+  uint32_t accessPointGeneration = 0;
+  bool accessPointRunning = false;
   bool sleepDisabled = false;
   bool txPowerSet = false;
   int8_t txPower = 0;
@@ -229,6 +312,23 @@ void runRadioJob(const RadioJob& job) {
         network.channel = uint8_t(WiFi.channel(i));
       }
       WiFi.scanDelete();
+    }
+    if (g_radioResults) xQueueSend(g_radioResults, &result, portMAX_DELAY);
+  } else if (job.kind == RadioJobKind::kConfigureAccessPoint) {
+    RadioResult result;
+    result.kind = job.kind;
+    result.accessPointGeneration = job.accessPointGeneration;
+    if (job.accessPointEnabled) {
+      // softAP() does not reliably replace an already-running SSID on every
+      // Arduino-ESP32 target, so explicitly recreate it when the user renames
+      // the mobile network.
+      WiFi.disconnect();
+      WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_AP);
+      result.accessPointRunning = WiFi.softAP(job.ssid, job.password);
+    } else {
+      WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_STA);
     }
     if (g_radioResults) xQueueSend(g_radioResults, &result, portMAX_DELAY);
   } else {
@@ -312,6 +412,42 @@ bool queueHarvestScan() {
   return submitRadioJob(job);
 }
 
+bool queueAccessPointConfiguration() {
+  RadioJob job;
+  job.kind = RadioJobKind::kConfigureAccessPoint;
+  job.accessPointGeneration = g_accessPointConfigurationGeneration;
+  job.accessPointEnabled = g_accessPointEnabled;
+  snprintf(job.ssid, sizeof(job.ssid), "%s", g_accessPointName.c_str());
+  snprintf(job.password, sizeof(job.password), "%s", g_accessPointPassword.c_str());
+  return submitRadioJob(job);
+}
+
+void applyAccessPointConfiguration() {
+#if WLED_BOARD == WLED_BOARD_JC4880P443
+  // A full radio queue must not discard the requested AP configuration. Keep
+  // it pending and let loop() retry submission until the worker accepts it.
+  if (++g_accessPointConfigurationGeneration == 0) ++g_accessPointConfigurationGeneration;
+  g_accessPointApplyPending = true;
+  g_accessPointJobQueued = queueAccessPointConfiguration();
+#else
+  if (g_accessPointEnabled) {
+    // Recreate rather than reconfigure in place so a renamed SSID is visible
+    // immediately on every supported ESP32 radio.
+    WiFi.disconnect();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_AP);
+    g_accessPointRunning = WiFi.softAP(g_accessPointName.c_str(), g_accessPointPassword.c_str());
+  } else {
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    g_accessPointRunning = false;
+  }
+  Serial.printf("[WIFI] mobile access point %s%s\n",
+                g_accessPointRunning ? "started: " : "stopped",
+                g_accessPointRunning ? g_accessPointName.c_str() : "");
+#endif
+}
+
 #if WLED_BOARD == WLED_BOARD_JC4880P443
 bool queueConnectedConfiguration() {
   RadioJob job;
@@ -332,6 +468,16 @@ bool queueStatsSample() {
 void processRadioResults(uint32_t now_ms) {
   RadioResult result;
   while (g_radioResults && xQueueReceive(g_radioResults, &result, 0) == pdTRUE) {
+    if (result.kind == RadioJobKind::kConfigureAccessPoint) {
+      if (result.accessPointGeneration != g_accessPointConfigurationGeneration) continue;
+      g_accessPointApplyPending = false;
+      g_accessPointJobQueued = false;
+      g_accessPointRunning = result.accessPointRunning;
+      Serial.printf("[WIFI] mobile access point %s%s\n",
+                    g_accessPointRunning ? "started: " : "stopped",
+                    g_accessPointRunning ? g_accessPointName.c_str() : "");
+      continue;
+    }
     if (result.kind == RadioJobKind::kHarvestScan) {
       g_scanHarvestPending = false;
       if (result.scanCount >= 0) {
@@ -408,7 +554,7 @@ void processRadioResults(uint32_t now_ms) {
 }
 #endif
 
-void startAttempt(uint32_t now_ms, bool retrying = false) {
+void registerWifiEvents() {
   if (!g_eventsRegistered) {
     g_eventsRegistered = true;
     WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
@@ -422,7 +568,16 @@ void startAttempt(uint32_t now_ms, bool retrying = false) {
     WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t) {
       g_hasIp = true;
     }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+    WiFi.onEvent(rememberAccessPointClientLease, ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED);
+    WiFi.onEvent(removeAccessPointClientLease, ARDUINO_EVENT_WIFI_AP_STADISCONNECTED);
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t) {
+      clearAccessPointClientLeases();
+    }, ARDUINO_EVENT_WIFI_AP_STOP);
   }
+}
+
+void startAttempt(uint32_t now_ms, bool retrying = false) {
+  registerWifiEvents();
   g_disconnectReason = 0;
   g_hasIp = false;
   ++g_connectionAttempt;
@@ -575,6 +730,11 @@ const char* statusName(Status status) {
 void begin() {
   loadCredentials();
 #if WLED_TOUCH_SIMULATOR
+  if (g_accessPointEnabled) {
+    g_status = Status::kNoCredentials;
+    Serial.printf("[WIFI] simulator mobile access point: %s\n", g_accessPointName.c_str());
+    return;
+  }
   if (g_ssid.empty()) {
     g_ssid = "Studio Wi-Fi";
     g_savedSsid = g_ssid;
@@ -598,6 +758,19 @@ void begin() {
     Serial.println("[WIFI] radio worker unavailable; Wi-Fi operations will retry asynchronously");
   }
 #endif
+#if !WLED_TOUCH_SIMULATOR
+  // Register before starting the AP: the DHCP-assigned event is the exact
+  // client address source used by hotspot WLED discovery.
+  registerWifiEvents();
+  if (g_accessPointEnabled) applyAccessPointConfiguration();
+#endif
+  if (g_accessPointEnabled) {
+    // Mobile hotspot mode deliberately owns the radio.  Do not associate with
+    // a remembered router until the user turns the hotspot off again.
+    g_status = Status::kNoCredentials;
+    Serial.println("[WIFI] mobile access point enabled; saved Wi-Fi is paused");
+    return;
+  }
   if (g_ssid.empty()) {
     g_status = Status::kNoCredentials;
     Serial.println("[WIFI] no credentials stored; open Settings -> Wi-Fi to connect");
@@ -612,7 +785,13 @@ void loop(uint32_t now_ms) {
 #if !WLED_TOUCH_SIMULATOR
 #if WLED_BOARD == WLED_BOARD_JC4880P443
   processRadioResults(now_ms);
+  if (g_accessPointApplyPending && !g_accessPointJobQueued) {
+    g_accessPointJobQueued = queueAccessPointConfiguration();
+  }
 #endif
+  // AP and STA are intentionally exclusive. This keeps discovery scoped to
+  // exactly one local network and avoids channel-sharing surprises.
+  if (g_accessPointEnabled) return;
   if (g_restartPending) {
     // A disconnected station may not emit an event.  Waiting briefly handles
     // both that case and the normal asynchronous disconnect without racing it.
@@ -769,37 +948,47 @@ void loop(uint32_t now_ms) {
 }
 
 Status status() { return g_status; }
-bool connected() { return g_status == Status::kConnected; }
+bool connected() {
+#if WLED_TOUCH_SIMULATOR
+  return g_status == Status::kConnected || g_accessPointEnabled;
+#else
+  return g_status == Status::kConnected || g_accessPointRunning;
+#endif
+}
 bool busy() {
 #if WLED_TOUCH_SIMULATOR
   return false;
 #else
-  return g_scanning || g_scanPending || g_restartPending || g_status == Status::kConnecting ||
-         g_status == Status::kRetrying;
+  return g_accessPointApplyPending || g_scanning || g_scanPending || g_restartPending ||
+         g_status == Status::kConnecting || g_status == Status::kRetrying;
 #endif
 }
 
 std::string ipAddress() {
 #if WLED_TOUCH_SIMULATOR
-  return connected() ? "192.168.1.50" : "";
+  return g_status == Status::kConnected ? "192.168.1.50"
+                                        : (g_accessPointEnabled ? "192.168.4.1" : "");
 #else
-  return connected() ? g_ip : std::string();
+  if (g_status == Status::kConnected) return g_ip;
+  return g_accessPointRunning ? "192.168.4.1" : std::string();
 #endif
 }
 
 std::string connectedSsid() {
 #if WLED_TOUCH_SIMULATOR
-  return connected() ? g_ssid : std::string();
+  return g_status == Status::kConnected ? g_ssid
+                                        : (g_accessPointEnabled ? g_accessPointName : std::string());
 #else
-  return connected() ? g_connectedSsid : std::string();
+  if (g_status == Status::kConnected) return g_connectedSsid;
+  return g_accessPointRunning ? g_accessPointName : std::string();
 #endif
 }
 
 int rssi() {
 #if WLED_TOUCH_SIMULATOR
-  return connected() ? -52 : 0;
+  return g_status == Status::kConnected ? -52 : (g_accessPointEnabled ? -42 : 0);
 #else
-  return connected() ? g_rssi : 0;
+  return g_status == Status::kConnected ? g_rssi : (g_accessPointRunning ? -42 : 0);
 #endif
 }
 
@@ -824,6 +1013,15 @@ void saveCredentials(const char* ssid, const char* password, uint8_t channel) {
   g_userInitiatedConnection = true;
   g_waitingForUserDecision = false;
   g_setupAttempts = 0;
+
+  if (g_accessPointEnabled) {
+    // A Wi-Fi setup made while in mobile mode is remembered for later rather
+    // than interrupting the active WLED hotspot.
+    persistActiveCredentials();
+    g_status = Status::kNoCredentials;
+    Serial.println("[WIFI] saved Wi-Fi will connect when mobile hotspot is disabled");
+    return;
+  }
 
 #if !WLED_TOUCH_SIMULATOR
   restartForCredentials(millis());
@@ -880,8 +1078,114 @@ void forgetCredentials() {
   g_status = Status::kNoCredentials;
 }
 
+bool accessPointEnabled() { return g_accessPointEnabled; }
+
+bool accessPointActive() {
+#if WLED_TOUCH_SIMULATOR
+  return g_accessPointEnabled;
+#else
+  return g_accessPointRunning;
+#endif
+}
+
+std::string accessPointName() { return g_accessPointName; }
+
+std::string accessPointPassword() { return g_accessPointPassword; }
+
+std::vector<uint32_t> accessPointClientAddresses() {
+  std::vector<uint32_t> addresses;
+#if !WLED_TOUCH_SIMULATOR
+  if (!g_accessPointRunning) return addresses;
+
+  // This is the definitive path on the ESP32-CYD: the AP's own DHCP event
+  // delivers the address at the moment it is assigned. Unlike a later table
+  // query, it cannot race a half-populated lease record.
+  uint32_t leaseAddresses[kMaxAccessPointClientLeases] = {};
+  portENTER_CRITICAL(&g_accessPointClientLock);
+  const size_t leaseCount = g_accessPointClientLeaseCount;
+  for (size_t i = 0; i < leaseCount; ++i) {
+    leaseAddresses[i] = g_accessPointClientLeases[i].address;
+  }
+  portEXIT_CRITICAL(&g_accessPointClientLock);
+  addresses.reserve(leaseCount);
+  for (size_t i = 0; i < leaseCount; ++i) {
+    if (leaseAddresses[i]) addresses.push_back(leaseAddresses[i]);
+  }
+  if (!addresses.empty()) {
+    uint32_t clientFingerprint = uint32_t(addresses.size());
+    for (uint32_t address : addresses) clientFingerprint ^= address;
+    if (int(addresses.size()) != g_lastAccessPointClientCount ||
+        clientFingerprint != g_lastAccessPointClientFingerprint) {
+      g_lastAccessPointClientCount = int(addresses.size());
+      g_lastAccessPointClientFingerprint = clientFingerprint;
+      Serial.printf("[WIFI] hotspot DHCP client count: %d\n", int(addresses.size()));
+      for (uint32_t address : addresses) {
+        Serial.printf("[WIFI] hotspot client: %s\n", IPAddress(address).toString().c_str());
+      }
+    }
+    return addresses;
+  }
+
+  // Before an IP is assigned, retain the association count only to indicate
+  // that discovery should wait; never use it as a guessed destination.
+  wifi_sta_list_t stations = {};
+  const esp_err_t stationStatus = esp_wifi_ap_get_sta_list(&stations);
+  if (stationStatus != ESP_OK) {
+    if (!g_accessPointClientListErrorLogged) {
+      Serial.printf("[WIFI] could not enumerate hotspot clients: %s\n", esp_err_to_name(stationStatus));
+      g_accessPointClientListErrorLogged = true;
+    }
+    return addresses;
+  }
+  g_accessPointClientListErrorLogged = false;
+  if (stations.num != g_lastAccessPointClientCount) {
+    g_lastAccessPointClientCount = stations.num;
+    g_lastAccessPointClientFingerprint = 0;
+    Serial.printf("[WIFI] hotspot client count: %d; waiting for DHCP assignment\n", stations.num);
+  }
+#endif
+  return addresses;
+}
+
+bool setAccessPoint(bool enabled, const char* name, const char* password) {
+  const char* requestedName = name ? name : "";
+  const char* requestedPassword = password ? password : "";
+  const size_t nameLength = strnlen(requestedName, kMaxSsidLength + 1);
+  const size_t passwordLength = strnlen(requestedPassword, kMaxWifiPassLength + 1);
+  if (!nameLength || nameLength > kMaxSsidLength || passwordLength < 8 ||
+      passwordLength > kMaxWifiPassLength) {
+    Serial.println("[WIFI] rejected invalid mobile access point settings");
+    return false;
+  }
+  g_accessPointName.assign(requestedName, nameLength);
+  g_accessPointPassword.assign(requestedPassword, passwordLength);
+  g_accessPointEnabled = enabled;
+  persistAccessPointConfiguration();
+#if !WLED_TOUCH_SIMULATOR
+  // Force the next client-list observation to be reported after the AP is
+  // recreated, even if DHCP hands out the same address as before.
+  g_lastAccessPointClientCount = -1;
+  g_lastAccessPointClientFingerprint = UINT32_MAX;
+  clearAccessPointClientLeases();
+  // Clear the station view immediately. The AP configuration itself is queued
+  // on ESP-Hosted boards, and any following STA reconnect queues behind it.
+  g_restartPending = false;
+  g_hasIp = false;
+  clearLinkStats();
+  g_status = enabled || g_ssid.empty() ? Status::kNoCredentials : Status::kFailed;
+  if (!enabled && !g_ssid.empty()) g_retryAt = millis();
+  applyAccessPointConfiguration();
+#else
+  g_status = enabled || g_ssid.empty() ? Status::kNoCredentials : Status::kConnected;
+#endif
+  return true;
+}
+
 bool startScan() {
   if (g_scanning || g_scanPending) return true;
+  // A scan would require putting the AP radio into station mode and would
+  // disconnect mobile WLED controllers. Turn off the hotspot first.
+  if (g_accessPointEnabled) return false;
 #if WLED_TOUCH_SIMULATOR
   g_results = {{"Home-WiFi", -48, true, 6}, {"Home-WiFi-5G", -61, true, 11}, {"Guest", -77, false, 1}};
   g_hasScanned = true;
