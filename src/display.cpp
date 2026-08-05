@@ -14,6 +14,13 @@
 #include <Wire.h>
 #endif
 
+#if !WLED_TOUCH_SIMULATOR && WLED_BOARD != WLED_BOARD_JC4880P443
+#include <driver/spi_master.h>
+#include <esp_heap_caps.h>
+#include <esp_lcd_panel_io.h>
+#include <esp_lcd_io_spi.h>
+#endif
+
 #if WLED_BOARD == WLED_BOARD_JC4880P443 && !WLED_TOUCH_SIMULATOR
 #include <esp_cache.h>
 #include <esp_heap_caps.h>
@@ -36,8 +43,16 @@ lv_disp_draw_buf_t draw_buf;
 lv_color_t* p4_full_draw_buf = nullptr;
 lv_color_t p4_fallback_draw_buf_1[kScreenWidth * kLvglBufferLines];
 lv_color_t p4_fallback_draw_buf_2[kScreenWidth * kLvglBufferLines];
-#else
+#elif WLED_TOUCH_SIMULATOR
 lv_color_t draw_buf_1[kScreenWidth * kLvglBufferLines];
+lv_color_t draw_buf_2_storage[kScreenWidth * kLvglBufferLines];
+lv_color_t* draw_buf_2 = draw_buf_2_storage;
+#else
+// Keep two DMA-capable buffers so LVGL can draw the next strip while SPI is
+// transmitting the previous one. The old single-buffer, polling SPI path
+// stalled input for thousands of 64-byte FIFO transactions on every frame.
+DMA_ATTR lv_color_t draw_buf_1[kScreenWidth * kLvglBufferLines];
+lv_color_t* draw_buf_2 = nullptr;
 #endif
 
 bool display_hardware_ready = false;
@@ -69,6 +84,9 @@ uint8_t gt911_address = JC4880_TOUCH_ADDR;
 #else
 SPIClass panel_spi(HSPI);
 SPIClass touch_spi(VSPI);
+esp_lcd_panel_io_handle_t cyd_panel_io = nullptr;
+volatile lv_disp_drv_t* cyd_flushing_disp = nullptr;
+volatile bool cyd_dma_done = true;
 enum class CydProfile : uint8_t { kSt7789Cst816s, kIli9341Ft5x06, kIli9341Xpt2046, kSt7789Xpt2046 };
 CydProfile cyd_profile = CydProfile::kSt7789Cst816s;
 bool cyd_is_ili9341 = false;
@@ -143,6 +161,100 @@ void initSpiPanel() {
   spiCommand(CYD_PANEL_INVERT ? 0x21 : 0x20);
   spiCommand(0x29);
   panel_spi.endTransaction();
+}
+
+bool onCydColorTransferDone(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void*) {
+  lv_disp_drv_t* disp = const_cast<lv_disp_drv_t*>(cyd_flushing_disp);
+  if (disp) {
+    cyd_flushing_disp = nullptr;
+    lv_disp_flush_ready(disp);
+  }
+  // Publish completion only after LVGL has released the buffer. Rare direct
+  // panel operations wait on this flag before reusing that same memory.
+  cyd_dma_done = true;
+  return false;
+}
+
+bool initCydDmaTransport() {
+  // Arduino SPI's framebuffer writer is a polling, 64-byte FIFO loop. Hand
+  // the already-initialized panel bus to ESP-IDF so pixel payloads run through
+  // DMA and complete through LVGL's asynchronous flush callback instead.
+  draw_buf_2 = static_cast<lv_color_t*>(heap_caps_malloc(sizeof(draw_buf_1), MALLOC_CAP_DMA));
+  if (!draw_buf_2) {
+    Serial.println("Display SPI: second DMA buffer unavailable; using one buffer");
+  }
+
+  panel_spi.end();
+
+  spi_bus_config_t bus_config = {};
+  bus_config.mosi_io_num = CYD_TFT_MOSI;
+  bus_config.miso_io_num = CYD_TFT_MISO;
+  bus_config.sclk_io_num = CYD_TFT_SCLK;
+  bus_config.quadwp_io_num = -1;
+  bus_config.quadhd_io_num = -1;
+  bus_config.data4_io_num = -1;
+  bus_config.data5_io_num = -1;
+  bus_config.data6_io_num = -1;
+  bus_config.data7_io_num = -1;
+  bus_config.max_transfer_sz = sizeof(draw_buf_1);
+
+  esp_err_t error = spi_bus_initialize(HSPI_HOST, &bus_config, SPI_DMA_CH_AUTO);
+  const bool bus_initialized = error == ESP_OK;
+  if (bus_initialized) {
+    esp_lcd_panel_io_spi_config_t io_config = {};
+    io_config.cs_gpio_num = CYD_TFT_CS;
+    io_config.dc_gpio_num = CYD_TFT_DC;
+    io_config.spi_mode = 0;
+    io_config.pclk_hz = 55000000;
+    io_config.trans_queue_depth = 2;
+    io_config.on_color_trans_done = onCydColorTransferDone;
+    io_config.lcd_cmd_bits = 8;
+    io_config.lcd_param_bits = 8;
+    error = esp_lcd_new_panel_io_spi(HSPI_HOST, &io_config, &cyd_panel_io);
+  }
+
+  if (error == ESP_OK && cyd_panel_io) {
+    Serial.printf("Display SPI: DMA enabled with %s %u-byte buffer%s\n",
+                  draw_buf_2 ? "two" : "one", unsigned(sizeof(draw_buf_1)), draw_buf_2 ? "s" : "");
+    return true;
+  }
+
+  if (cyd_panel_io) {
+    esp_lcd_panel_io_del(cyd_panel_io);
+    cyd_panel_io = nullptr;
+  }
+  if (bus_initialized) spi_bus_free(HSPI_HOST);
+  panel_spi.begin(CYD_TFT_SCLK, CYD_TFT_MISO, CYD_TFT_MOSI, CYD_TFT_CS);
+  Serial.printf("Display SPI: DMA unavailable (%s); using polling fallback\n", esp_err_to_name(error));
+  return false;
+}
+
+void setCydDmaWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+  const uint8_t column[] = {uint8_t(x0 >> 8), uint8_t(x0), uint8_t(x1 >> 8), uint8_t(x1)};
+  const uint8_t row[] = {uint8_t(y0 >> 8), uint8_t(y0), uint8_t(y1 >> 8), uint8_t(y1)};
+  esp_lcd_panel_io_tx_param(cyd_panel_io, 0x2A, column, sizeof(column));
+  esp_lcd_panel_io_tx_param(cyd_panel_io, 0x2B, row, sizeof(row));
+}
+
+void swapRgb565Bytes(lv_color_t* pixels, size_t count) {
+  // LCD controllers consume RGB565 most-significant byte first, whereas LVGL
+  // stores each color as a native little-endian uint16_t on ESP32.
+  while (count >= 4) {
+    pixels[0].full = __builtin_bswap16(pixels[0].full);
+    pixels[1].full = __builtin_bswap16(pixels[1].full);
+    pixels[2].full = __builtin_bswap16(pixels[2].full);
+    pixels[3].full = __builtin_bswap16(pixels[3].full);
+    pixels += 4;
+    count -= 4;
+  }
+  while (count--) {
+    pixels->full = __builtin_bswap16(pixels->full);
+    ++pixels;
+  }
+}
+
+void waitForCydDma() {
+  while (!cyd_dma_done) delay(1);
 }
 
 bool i2cRead(uint8_t address, uint8_t reg, uint8_t* dst, size_t length) {
@@ -567,14 +679,32 @@ void flushDisplay(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_
   const uint16_t py0 = flip ? kScreenHeight - 1 - area->y2 : area->y1;
   cacheWriteback(dsi_framebuffer + py0 * kScreenWidth, size_t(height) * kScreenWidth * sizeof(uint16_t));
 #else
-  panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));
-  spiSetWindow(area->x1, area->y1, area->x2, area->y2);
-  digitalWrite(CYD_TFT_CS, LOW); digitalWrite(CYD_TFT_DC, HIGH);
-  // This API is specifically for RGB565 framebuffer data and performs the
-  // ESP32 SPI packing in bulk. Do not pre-swap the LVGL words here.
-  panel_spi.writePixels(color_p, size_t(width) * height * sizeof(*color_p));
-  digitalWrite(CYD_TFT_CS, HIGH);
-  panel_spi.endTransaction();
+  if (cyd_panel_io) {
+    const size_t pixel_count = size_t(width) * height;
+    swapRgb565Bytes(color_p, pixel_count);
+    setCydDmaWindow(area->x1, area->y1, area->x2, area->y2);
+    cyd_dma_done = false;
+    cyd_flushing_disp = disp;
+    const esp_err_t error = esp_lcd_panel_io_tx_color(
+        cyd_panel_io, 0x2C, color_p, pixel_count * sizeof(*color_p));
+    if (error == ESP_OK) {
+      // The DMA completion callback releases this LVGL buffer. Do not mark it
+      // ready here: LVGL is free to render into the second buffer meanwhile.
+      flush_ms_accum += millis() - started;
+      return;
+    }
+    cyd_flushing_disp = nullptr;
+    cyd_dma_done = true;
+    Serial.printf("Display DMA flush failed: %s\n", esp_err_to_name(error));
+  } else {
+    panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));
+    spiSetWindow(area->x1, area->y1, area->x2, area->y2);
+    digitalWrite(CYD_TFT_CS, LOW); digitalWrite(CYD_TFT_DC, HIGH);
+    // The polling fallback swaps RGB565 bytes while filling the SPI FIFO.
+    panel_spi.writePixels(color_p, size_t(width) * height * sizeof(*color_p));
+    digitalWrite(CYD_TFT_CS, HIGH);
+    panel_spi.endTransaction();
+  }
 #endif
   flush_ms_accum += millis() - started;
   lv_disp_flush_ready(disp);
@@ -647,9 +777,13 @@ void applyDisplayRotation() {
   // replacing the previous panel backend.
   static constexpr uint8_t kMadctlRotation[] = {0x00, 0x64, 0xD4, 0xB0};
   const uint8_t madctl = kMadctlRotation[rotation] | (CYD_PANEL_RGB_ORDER ? 0x00 : 0x08);
-  panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));
-  spiCommand(0x36, &madctl, 1);
-  panel_spi.endTransaction();
+  if (cyd_panel_io) {
+    esp_lcd_panel_io_tx_param(cyd_panel_io, 0x36, &madctl, 1);
+  } else {
+    panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));
+    spiCommand(0x36, &madctl, 1);
+    panel_spi.endTransaction();
+  }
 #endif
 }
 void displaySetBrightness(uint8_t brightness) {
@@ -693,12 +827,33 @@ void displayClear(uint16_t rgb565) {
   for (uint32_t i = 0; i < uint32_t(kScreenWidth) * kScreenHeight; ++i) dsi_framebuffer[i] = rgb565;
   cacheWriteback(dsi_framebuffer, size_t(kScreenWidth) * kScreenHeight * sizeof(uint16_t));
 #else
-  panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));
-  spiSetWindow(0, 0, kScreenWidth - 1, kScreenHeight - 1);
-  digitalWrite(CYD_TFT_CS, LOW); digitalWrite(CYD_TFT_DC, HIGH);
-  for (uint32_t i = 0; i < uint32_t(kScreenWidth) * kScreenHeight; ++i) panel_spi.write16(rgb565);
-  digitalWrite(CYD_TFT_CS, HIGH);
-  panel_spi.endTransaction();
+  if (cyd_panel_io) {
+    waitForCydDma();
+    const uint16_t wire_color = __builtin_bswap16(rgb565);
+    for (size_t i = 0; i < size_t(kScreenWidth) * kLvglBufferLines; ++i) {
+      draw_buf_1[i].full = wire_color;
+    }
+    for (uint16_t y = 0; y < kScreenHeight; y += kLvglBufferLines) {
+      const uint16_t lines = min<uint16_t>(kLvglBufferLines, kScreenHeight - y);
+      setCydDmaWindow(0, y, kScreenWidth - 1, y + lines - 1);
+      cyd_dma_done = false;
+      if (esp_lcd_panel_io_tx_color(cyd_panel_io, 0x2C, draw_buf_1,
+                                    size_t(kScreenWidth) * lines * sizeof(lv_color_t)) != ESP_OK) {
+        cyd_dma_done = true;
+        break;
+      }
+      // This buffer is deliberately reused for each strip, so wait here. Full
+      // clears are rare; interactive LVGL redraws use both buffers asynchronously.
+      waitForCydDma();
+    }
+  } else {
+    panel_spi.beginTransaction(SPISettings(55000000, MSBFIRST, SPI_MODE0));
+    spiSetWindow(0, 0, kScreenWidth - 1, kScreenHeight - 1);
+    digitalWrite(CYD_TFT_CS, LOW); digitalWrite(CYD_TFT_DC, HIGH);
+    for (uint32_t i = 0; i < uint32_t(kScreenWidth) * kScreenHeight; ++i) panel_spi.write16(rgb565);
+    digitalWrite(CYD_TFT_CS, HIGH);
+    panel_spi.endTransaction();
+  }
 #endif
 }
 
@@ -718,6 +873,9 @@ void initDisplay() {
   else displayClear();
   if (display_hardware_ready) displaySetBrightness(UI_ACTIVE_BRIGHTNESS);
   lv_init();
+#if !WLED_TOUCH_SIMULATOR && WLED_BOARD != WLED_BOARD_JC4880P443
+  initCydDmaTransport();
+#endif
 #if WLED_BOARD == WLED_BOARD_JC4880P443 && !WLED_TOUCH_SIMULATOR
   constexpr size_t p4_full_frame_pixels = size_t(kScreenWidth) * kScreenHeight;
   p4_full_draw_buf = static_cast<lv_color_t*>(
@@ -736,7 +894,7 @@ void initDisplay() {
   lv_disp_draw_buf_init(&draw_buf, p4_fallback_draw_buf_1, p4_fallback_draw_buf_2,
                         kScreenWidth * kLvglBufferLines);
 #else
-  lv_disp_draw_buf_init(&draw_buf, draw_buf_1, nullptr, kScreenWidth * kLvglBufferLines);
+  lv_disp_draw_buf_init(&draw_buf, draw_buf_1, draw_buf_2, kScreenWidth * kLvglBufferLines);
 #endif
   static lv_disp_drv_t disp_drv; lv_disp_drv_init(&disp_drv); disp_drv.hor_res = kScreenWidth; disp_drv.ver_res = kScreenHeight; disp_drv.flush_cb = flushDisplay; disp_drv.draw_buf = &draw_buf; lv_disp_drv_register(&disp_drv);
   static lv_indev_drv_t indev_drv; lv_indev_drv_init(&indev_drv); indev_drv.type = LV_INDEV_TYPE_POINTER; indev_drv.read_cb = readTouch; indev_drv.scroll_limit = 6; indev_drv.scroll_throw = 8; lv_indev_drv_register(&indev_drv);

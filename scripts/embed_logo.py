@@ -1,4 +1,5 @@
 from pathlib import Path
+import math
 import struct
 import zlib
 
@@ -149,6 +150,59 @@ def format_pixels(values):
     return chr(10).join(result)
 
 
+def make_color_wheel_rgb565(size, background):
+    """Generate the compact CYD hue/saturation disc as a flash asset."""
+    bayer = (
+        (0, 8, 2, 10),
+        (12, 4, 14, 6),
+        (3, 11, 1, 9),
+        (15, 7, 13, 5),
+    )
+    center = (size - 1) / 2.0
+    radius = center - 1.5
+    bg_r, bg_g, bg_b = background
+    pixels = []
+
+    for y in range(size):
+        for x_pos in range(size):
+            dx = x_pos + 0.5 - center
+            dy = y + 0.5 - center
+            distance = math.sqrt(dx * dx + dy * dy)
+            if distance > radius:
+                red, green, blue = float(bg_r), float(bg_g), float(bg_b)
+            else:
+                hue = (math.atan2(dy, dx) + math.pi / 2.0) * (180.0 / math.pi)
+                if hue < 0.0:
+                    hue += 360.0
+                saturation = min(1.0, distance / radius)
+                hue_region = hue / 60.0
+                blend = 1.0 - abs((hue_region % 2.0) - 1.0)
+                primary_r = primary_g = primary_b = 0.0
+                if hue_region < 1.0:
+                    primary_r, primary_g = 1.0, blend
+                elif hue_region < 2.0:
+                    primary_r, primary_g = blend, 1.0
+                elif hue_region < 3.0:
+                    primary_g, primary_b = 1.0, blend
+                elif hue_region < 4.0:
+                    primary_g, primary_b = blend, 1.0
+                elif hue_region < 5.0:
+                    primary_r, primary_b = blend, 1.0
+                else:
+                    primary_r, primary_b = 1.0, blend
+                red = (1.0 - saturation + saturation * primary_r) * 255.0
+                green = (1.0 - saturation + saturation * primary_g) * 255.0
+                blue = (1.0 - saturation + saturation * primary_b) * 255.0
+
+            dither = bayer[y & 3][x_pos & 3] / 16.0 - 0.46875
+            red = min(255, max(0, int(red + dither * 8.0 + 0.5)))
+            green = min(255, max(0, int(green + dither * 4.0 + 0.5)))
+            blue = min(255, max(0, int(blue + dither * 8.0 + 0.5)))
+            pixels.append(((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3))
+
+    return pixels
+
+
 logo_width, logo_height, logo_rgba_pixels = read_png_rgba(logo_source, "Startup logo")
 logo_pixels = flatten_to_rgb565(logo_rgba_pixels, (0x00, 0x00, 0x00))
 
@@ -161,6 +215,8 @@ qr_width, qr_height, qr_rgba_pixels = read_png_rgba(qr_source, "Help QR")
 qr_pixels = flatten_to_rgb565(qr_rgba_pixels, (0xFF, 0xFF, 0xFF))
 remote_qr_width, remote_qr_height, remote_qr_rgba_pixels = read_png_rgba(remote_qr_source, "Remote JSON QR")
 remote_qr_pixels = flatten_to_rgb565(remote_qr_rgba_pixels, (0xFF, 0xFF, 0xFF))
+cyd_color_wheel_size = 138
+cyd_color_wheel_pixels = make_color_wheel_rgb565(cyd_color_wheel_size, (0x16, 0x1F, 0x29))
 
 target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -168,6 +224,8 @@ content = f"""#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "app_config.h"
 
 #if defined(ARDUINO)
 #include <pgmspace.h>
@@ -189,11 +247,18 @@ constexpr size_t kHelpQrPixelCount = {len(qr_pixels)};
 constexpr uint32_t kRemoteJsonQrWidth = {remote_qr_width};
 constexpr uint32_t kRemoteJsonQrHeight = {remote_qr_height};
 constexpr size_t kRemoteJsonQrPixelCount = {len(remote_qr_pixels)};
+#if WLED_BOARD == WLED_BOARD_CYD
+constexpr uint32_t kCydColorWheelSize = {cyd_color_wheel_size};
+constexpr size_t kCydColorWheelPixelCount = {len(cyd_color_wheel_pixels)};
+#endif
 
 extern const uint16_t kWledLogoPixels[] PROGMEM;
 extern const uint16_t kWledLogoHeaderPixels[] PROGMEM;
 extern const uint16_t kHelpQrPixels[] PROGMEM;
 extern const uint16_t kRemoteJsonQrPixels[] PROGMEM;
+#if WLED_BOARD == WLED_BOARD_CYD
+extern const uint16_t kCydColorWheelPixels[] PROGMEM;
+#endif
 
 #ifdef WLED_LOGO_ASSET_IMPLEMENTATION
 const uint16_t kWledLogoPixels[] PROGMEM = {{
@@ -211,6 +276,12 @@ const uint16_t kHelpQrPixels[] PROGMEM = {{
 const uint16_t kRemoteJsonQrPixels[] PROGMEM = {{
 {format_pixels(remote_qr_pixels)}
 }};
+
+#if WLED_BOARD == WLED_BOARD_CYD
+const uint16_t kCydColorWheelPixels[] PROGMEM = {{
+{format_pixels(cyd_color_wheel_pixels)}
+}};
+#endif
 #endif
 """
 

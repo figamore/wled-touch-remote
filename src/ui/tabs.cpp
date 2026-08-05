@@ -50,7 +50,11 @@ lv_color_t* color_wheel_pixels = nullptr;
 lv_img_dsc_t color_wheel_image = {
     {LV_IMG_CF_TRUE_COLOR, 0, 0, kColorWheelSize, kColorWheelSize},
     kColorWheelSize * kColorWheelSize * sizeof(lv_color_t),
+#if WLED_BOARD == WLED_BOARD_CYD
+    reinterpret_cast<const uint8_t*>(kCydColorWheelPixels),
+#else
     nullptr,
+#endif
 };
 bool fx_controls_pending = false;
 bool fx_rebuild_pending = false;
@@ -420,24 +424,20 @@ void wheelSampleRgb(float dx, float dy, float radius, float bg_r, float bg_g, fl
 }
 
 void generateColorWheelImage() {
-  static bool generated = false;
-  if (generated) return;
+  // The CYD's 138px wheel is generated at build time and memory-mapped from
+  // flash. Large P4 builds retain their full-resolution PSRAM-backed image.
+  if (color_wheel_image.data) return;
 
-  if (!color_wheel_pixels) {
-    const size_t bytes = kColorWheelSize * kColorWheelSize * sizeof(lv_color_t);
+  const size_t bytes = kColorWheelSize * kColorWheelSize * sizeof(lv_color_t);
 #if !WLED_TOUCH_SIMULATOR && WLED_BOARD == WLED_BOARD_JC4880P443
-    color_wheel_pixels = static_cast<lv_color_t*>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  color_wheel_pixels = static_cast<lv_color_t*>(
+      heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 #else
-    color_wheel_pixels = static_cast<lv_color_t*>(malloc(bytes));
+  color_wheel_pixels = static_cast<lv_color_t*>(malloc(bytes));
 #endif
-    if (!color_wheel_pixels) return;
-    color_wheel_image.data = reinterpret_cast<const uint8_t*>(color_wheel_pixels);
-  }
-  generated = true;
+  if (!color_wheel_pixels) return;
+  color_wheel_image.data = reinterpret_cast<const uint8_t*>(color_wheel_pixels);
 
-  // A single sample per pixel keeps the large display's full-size LVGL image
-  // responsive during first-tab generation. Ordered dithering masks RGB565
-  // banding and blends the rim into the panel surface.
   static const uint8_t kBayer[4][4] = {
       {0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
   const float center = (kColorWheelSize - 1) / 2.0f;
@@ -475,9 +475,8 @@ void setColorControls(uint32_t color) {
   color_syncing = false;
 }
 
-// clamp=false requires the touch to start on the wheel; clamp=true (while a drag is
-// being tracked) projects any point onto the wheel so the finger can wander past the
-// rim without the selection jumping or going dead.
+// Once a drag starts on the disc, project points outside its edge back onto
+// the rim so selection remains continuous under a wandering finger.
 bool colorFromWheelPoint(lv_obj_t* wheel, uint32_t& color, bool clamp) {
   lv_indev_t* indev = lv_indev_get_act();
   if (!indev || !wheel) return false;
@@ -551,8 +550,6 @@ void createColorWheelEditor(lv_obj_t* parent) {
     lv_obj_remove_style_all(color_wheel);
     lv_obj_set_size(color_wheel, kColorWheelSize, kColorWheelSize);
     lv_obj_add_flag(color_wheel, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
-    // no scroll chaining in either direction: a swipe on the wheel picks a colour,
-    // it must never scroll the page underneath (that made the wheel clip and jump)
     lv_obj_clear_flag(color_wheel, LV_OBJ_FLAG_SCROLL_CHAIN | LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(color_wheel, onColorWheel, LV_EVENT_PRESSED, nullptr);
     lv_obj_add_event_cb(color_wheel, onColorWheel, LV_EVENT_PRESSING, nullptr);
@@ -569,7 +566,7 @@ void createColorWheelEditor(lv_obj_t* parent) {
     lv_obj_set_size(color_selector, kColorSelectorSize, kColorSelectorSize);
     lv_obj_set_style_radius(color_selector, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(color_selector, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(color_selector, LV_OPA_COVER, LV_PART_MAIN);  // filled with the picked colour
+    lv_obj_set_style_bg_opa(color_selector, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_color(color_selector, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_border_width(color_selector, 3, LV_PART_MAIN);
     lv_obj_set_style_outline_color(color_selector, lv_color_hex(kColorBg), LV_PART_MAIN);
@@ -584,7 +581,6 @@ void createColorWheelEditor(lv_obj_t* parent) {
     lv_obj_add_style(error, &style_label_muted, LV_PART_MAIN);
   }
 
-  
   solid_color_button = lv_btn_create(editor);
   styleButton(solid_color_button, true);
   lv_obj_set_size(solid_color_button, uiScaled(88, 200), uiScaled(44, 60));
@@ -594,7 +590,6 @@ void createColorWheelEditor(lv_obj_t* parent) {
   lv_obj_t* solid_label = lv_label_create(solid_color_button);
   lv_label_set_text(solid_label, "Solid");
   lv_obj_center(solid_label);
-  
 
   setColorControls(current);
   updateWledControlAvailability();
