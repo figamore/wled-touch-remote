@@ -41,8 +41,20 @@ lv_disp_draw_buf_t draw_buf;
 // A full-frame LVGL buffer lets the renderer work without 40-line tiles.  Keep
 // the small pair only as a safe fallback if external RAM is unavailable.
 lv_color_t* p4_full_draw_buf = nullptr;
+#if WLED_TOUCH_SIMULATOR
 lv_color_t p4_fallback_draw_buf_1[kScreenWidth * kLvglBufferLines];
 lv_color_t p4_fallback_draw_buf_2[kScreenWidth * kLvglBufferLines];
+#else
+// Allocated only if the full-frame PSRAM buffer cannot be had, never on a
+// board that has PSRAM. As static arrays the pair costs 76.8 KiB of internal
+// DRAM that nothing ever reads, and internal DRAM is the scarce resource on
+// this chip: PSRAM is 32 MB, internal was down to ~110 KB free with these
+// reserved. That shortfall broke OTA -- TLS and the ESP-Hosted receive path
+// draw from it, and the hardware AES DMA failed to allocate an alignment
+// buffer part-way through a download.
+lv_color_t* p4_fallback_draw_buf_1 = nullptr;
+lv_color_t* p4_fallback_draw_buf_2 = nullptr;
+#endif
 #elif WLED_TOUCH_SIMULATOR
 lv_color_t draw_buf_1[kScreenWidth * kLvglBufferLines];
 lv_color_t draw_buf_2_storage[kScreenWidth * kLvglBufferLines];
@@ -920,7 +932,14 @@ void initDisplay() {
                   unsigned(p4_full_frame_pixels * sizeof(lv_color_t)),
                   unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
   } else {
-    Serial.println("LVGL: full-frame PSRAM buffer unavailable; using two 40-line buffers");
+    constexpr size_t fallback_bytes = size_t(kScreenWidth) * kLvglBufferLines * sizeof(lv_color_t);
+    p4_fallback_draw_buf_1 = static_cast<lv_color_t*>(
+        heap_caps_malloc(fallback_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+    // The second buffer only lets LVGL draw ahead; one is enough to run.
+    p4_fallback_draw_buf_2 = static_cast<lv_color_t*>(
+        heap_caps_malloc(fallback_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+    Serial.printf("LVGL: full-frame PSRAM buffer unavailable; using %s 40-line buffer%s\n",
+                  p4_fallback_draw_buf_2 ? "two" : "one", p4_fallback_draw_buf_2 ? "s" : "");
     lv_disp_draw_buf_init(&draw_buf, p4_fallback_draw_buf_1, p4_fallback_draw_buf_2,
                           kScreenWidth * kLvglBufferLines);
   }

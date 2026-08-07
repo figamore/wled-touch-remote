@@ -212,11 +212,7 @@ void loop() {
   last_tick_ms = now;
   lv_tick_inc(elapsed);
 
-  // Slow-frame monitor: any loop pass long enough to drop a touch gesture
-  // names the stage that spent the time.  Quiet in normal operation.
-  uint32_t t = millis();
   wifilink::loop(now);
-  const uint32_t wifi_ms = millis() - t;
   updater::loop(now);
   if (updatehelper::active()) {
     updatehelper::loop(now);
@@ -226,32 +222,16 @@ void loop() {
     delay(1);
     return;
   }
-  t = millis();
   wled::loop(now);
-  const uint32_t wled_ms = millis() - t;
-  t = millis();
   uiSyncFromModel();
   updatePeekStrip();
-  const uint32_t sync_ms = millis() - t;
 
   displayUpdateIdle(now);
   pollShutdownControl();
-  t = millis();
   lv_timer_handler();
-  const uint32_t lvgl_ms = millis() - t;
-  t = millis();
   // Catch up with Peek immediately after a blocking UI/SPI render, before the
   // next touch or redraw can add more receive backlog.
   wled::servicePeekSocket();
-  const uint32_t peek_ms = millis() - t;
-  const uint32_t flush_ms = displayTakeFlushMs();
-  const uint32_t pass_ms = millis() - now;
-  if (pass_ms > 120) {
-    Serial.printf("[SLOW] pass=%lums wifi=%lu wled=%lu sync=%lu lvgl=%lu (flush=%lu) peek=%lu\n",
-                  (unsigned long)pass_ms, (unsigned long)wifi_ms, (unsigned long)wled_ms,
-                  (unsigned long)sync_ms, (unsigned long)lvgl_ms, (unsigned long)flush_ms,
-                  (unsigned long)peek_ms);
-  }
 #if !WLED_TOUCH_SIMULATOR && WLED_CYD_ENABLE_SERIAL_SCREENSHOT
   pollSerialCommands();
 #endif

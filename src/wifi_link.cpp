@@ -264,6 +264,7 @@ bool g_scanHarvestPending = false;
 uint32_t g_connectionAttempt = 0;
 bool g_connectionConfigQueued = false;
 bool g_statsJobPending = false;
+volatile bool g_linkWatchdogSuspended = false;
 
 // The ESP-Hosted SDIO transport to the C6 can wedge for good under sustained
 // UDP load: every RPC then blocks until the 5 s esp-hosted timeout, all sends
@@ -534,6 +535,10 @@ void processRadioResults(uint32_t now_ms) {
                     g_ip.c_str(), unsigned(g_channel), int(g_rssi));
     } else if (result.kind == RadioJobKind::kSampleStats) {
       g_statsJobPending = false;
+      if (g_linkWatchdogSuspended) {
+        g_hostedRpcTimeouts = 0;
+        continue;
+      }
       if (result.rssi == 0 && result.rssiElapsedMs >= kHostedRpcTimeoutMs) {
         if (++g_hostedRpcTimeouts >= kHostedRpcTimeoutLimit) {
           Serial.println("[WIFI] C6 radio link unresponsive; restarting to reset the coprocessor");
@@ -855,7 +860,8 @@ void loop(uint32_t now_ms) {
       }
       return;
     }
-    if (now_ms - g_statsSampledAt >= kStatsIntervalMs && !g_statsJobPending) {
+    if (!g_linkWatchdogSuspended && now_ms - g_statsSampledAt >= kStatsIntervalMs &&
+        !g_statsJobPending) {
       g_statsJobPending = queueStatsSample();
       if (g_statsJobPending) g_statsSampledAt = now_ms;
     }
@@ -988,6 +994,15 @@ int rssi() {
   return g_status == Status::kConnected ? -52 : (g_accessPointEnabled ? -42 : 0);
 #else
   return g_status == Status::kConnected ? g_rssi : (g_accessPointRunning ? -42 : 0);
+#endif
+}
+
+void suspendLinkWatchdog(bool suspended) {
+#if !WLED_TOUCH_SIMULATOR && WLED_BOARD == WLED_BOARD_JC4880P443
+  g_linkWatchdogSuspended = suspended;
+  g_hostedRpcTimeouts = 0;
+#else
+  (void)suspended;
 #endif
 }
 

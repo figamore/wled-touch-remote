@@ -91,8 +91,12 @@ void render() {
     case updater::State::kDownloading:
       snprintf(message, sizeof(message), "Downloading firmware... %u%%", unsigned(update.progress));
       break;
-    case updater::State::kVerifying:
     case updater::State::kInstalling:
+      // Writing the image takes far longer than the CYD's; without a live
+      // percentage the screen looks hung and invites a power cycle mid-write.
+      snprintf(message, sizeof(message), "%s %u%%", update.message, unsigned(update.progress));
+      break;
+    case updater::State::kVerifying:
     case updater::State::kRestarting:
       snprintf(message, sizeof(message), "%s", update.message);
       break;

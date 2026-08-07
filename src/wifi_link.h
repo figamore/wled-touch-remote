@@ -40,6 +40,13 @@ std::string connectedSsid();
 // Signal strength of the current association in dBm; 0 when not connected.
 int rssi();
 
+// Holds off the periodic ESP-Hosted status RPC and the unresponsive-link
+// recovery restart it drives. An OTA install keeps the flash cache disabled for
+// long stretches, which starves the SDIO host driver and makes those RPCs time
+// out even though the C6 is healthy; restarting there would abort the install
+// mid-write. This is a no-op on single-chip boards.
+void suspendLinkWatchdog(bool suspended);
+
 // Saved credentials; ssid() is empty when the device has never successfully
 // joined a network.
 std::string ssid();

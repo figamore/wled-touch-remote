@@ -1,6 +1,7 @@
 #include "update_manager.h"
 
 #include <Arduino.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -15,6 +16,8 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include <WiFiClientSecure.h>
+#include <esp_heap_caps.h>
+#include <lwip/sockets.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -139,6 +142,17 @@ void setState(State state, const char* message = nullptr) {
   xSemaphoreGive(g_lock);
 #endif
 }
+void setProgress(uint32_t done, uint32_t total) {
+#if !WLED_TOUCH_SIMULATOR
+  const uint8_t value = total ? static_cast<uint8_t>((uint64_t(done) * 100U) / total) : 0;
+  xSemaphoreTake(g_lock, portMAX_DELAY);
+  g_snapshot.progress = value;
+  xSemaphoreGive(g_lock);
+#else
+  (void)done;
+  (void)total;
+#endif
+}
 void setFailure(Failure failure, const char* message) {
 #if !WLED_TOUCH_SIMULATOR
   xSemaphoreTake(g_lock, portMAX_DELAY);
@@ -224,6 +238,16 @@ bool expectedDigest(const char* input, char* output, size_t output_size) {
   return true;
 }
 
+// Writing the image keeps the flash cache disabled for long stretches, which
+// can make the ESP-Hosted status RPC time out on a healthy C6. Without this
+// the radio watchdog would take that for a dead link and restart the device
+// part-way through an install.
+class LinkWatchdogGuard {
+ public:
+  LinkWatchdogGuard() { wifilink::suspendLinkWatchdog(true); }
+  ~LinkWatchdogGuard() { wifilink::suspendLinkWatchdog(false); }
+};
+
 bool fetchRelease(ReleaseChoice& result) {
   constexpr int kMaxReleaseResponseBytes = 64 * 1024;
   char url[192];
@@ -240,21 +264,23 @@ bool fetchRelease(ReleaseChoice& result) {
     setFailure(Failure::kServer, "Could not check for updates. Please try again later.");
     return false;
   }
+  // getSize() is -1 when GitHub answers chunked and sends no Content-Length;
+  // that is a valid response, so only an oversized one is rejected up front.
   const int expected_size = http.getSize();
-  if (expected_size <= 0 || expected_size > kMaxReleaseResponseBytes) {
+  Serial.printf("[UPDATE] release response HTTP %d, length %d\n", response, expected_size);
+  if (expected_size > kMaxReleaseResponseBytes) {
     Serial.printf("[UPDATE] unexpected release response size: %d\n", expected_size);
     http.end();
     setFailure(Failure::kServer, "Unexpected update response.");
     return false;
   }
 
-  // HTTPClient decodes transfer framing in getString(); getStream() exposes
-  // the raw socket and can make ArduinoJson report IncompleteInput. Buffering
-  // this small, bounded response also lets TLS release its memory before the
-  // filtered JSON document is allocated.
+  // getString() decodes HTTP framing, which ArduinoJson must not see, and lets
+  // TLS release its memory before the filtered JSON document is allocated.
   String payload = http.getString();
   http.end();
-  if (payload.length() != static_cast<size_t>(expected_size)) {
+  if (payload.isEmpty() || payload.length() > size_t(kMaxReleaseResponseBytes) ||
+      (expected_size > 0 && payload.length() != static_cast<size_t>(expected_size))) {
     Serial.printf("[UPDATE] incomplete release response: expected %d bytes, received %u\n",
                   expected_size, unsigned(payload.length()));
     setFailure(Failure::kServer, "The update response was interrupted. Please try again.");
@@ -330,6 +356,8 @@ void publishAvailable(const ReleaseChoice& release) {
   copyText(g_snapshot.message, sizeof(g_snapshot.message), "A verified firmware update is available.");
   xSemaphoreGive(g_lock);
 }
+// Streams straight into the OTA partition, hashing as it goes. Used where there
+// is no RAM to stage the image: one connection, no resume.
 class FirmwareSink final : public Stream {
  public:
   FirmwareSink(mbedtls_sha256_context& sha, uint32_t expected_size) : sha_(sha), expected_size_(expected_size) {}
@@ -351,9 +379,7 @@ class FirmwareSink final : public Stream {
     }
     mbedtls_sha256_update(&sha_, data, size);
     written_ += size;
-    xSemaphoreTake(g_lock, portMAX_DELAY);
-    g_snapshot.progress = static_cast<uint8_t>((uint64_t(written_) * 100U) / expected_size_);
-    xSemaphoreGive(g_lock);
+    setProgress(written_, expected_size_);
     return size;
   }
 
@@ -372,32 +398,316 @@ class FirmwareSink final : public Stream {
   bool no_network_ = false;
   bool write_failed_ = false;
 };
+
+// Accumulates the image in RAM. written() doubles as the resume offset, so a
+// range request that dies part-way simply continues from where it stopped. The
+// digest is taken from the finished buffer rather than inline, because a
+// retried range would otherwise hash the same bytes twice.
+class StagingSink final : public Stream {
+ public:
+  StagingSink(uint8_t* image, uint32_t total) : image_(image), total_(total) {}
+
+  size_t write(uint8_t byte) override { return write(&byte, 1); }
+  size_t write(const uint8_t* data, size_t size) override {
+    if (!size) return 0;
+    if (size > total_ - written_) {
+      setWriteError();
+      return 0;
+    }
+    std::memcpy(image_ + written_, data, size);
+    written_ += size;
+    setProgress(written_, total_);
+    return size;
+  }
+
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+
+  uint32_t written() const { return written_; }
+
+ private:
+  uint8_t* const image_;
+  const uint32_t total_;
+  uint32_t written_ = 0;
+};
+
+// Assembling the image in PSRAM buys two things the CYD does not need. The
+// download never touches flash, so Update.write() cannot erase a sector -- and
+// so disable the cache on both cores -- while the C6 link is carrying data.
+// And the buffer's fill level is a resume point, which is what lets a failed
+// range be retried without losing the megabytes already fetched. It also means
+// the partition is not written until the digest verifies.
+uint8_t* reserveStagingBuffer(uint32_t size) {
+#if WLED_BOARD == WLED_BOARD_JC4880P443
+  uint8_t* const buffer =
+      static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!buffer) {
+    Serial.printf("[UPDATE] no PSRAM for a %lu-byte staging buffer (%u free); writing flash inline\n",
+                  static_cast<unsigned long>(size),
+                  unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+  }
+  return buffer;
+#else
+  (void)size;
+  return nullptr;
+#endif
+}
+
+// Pauses the receive after every kBurstBytes so the TCP window closes and the
+// stack can hand its buffers back. This limits the download to roughly
+// 270 KB/s on a link measured at 1.5-2 MB/s, which is a real cost; it is here
+// because it keeps lwIP from holding a full window of pbufs in internal DRAM,
+// which is the resource this board actually runs out of. Untested without.
+constexpr uint32_t kBurstBytes = 16 * 1024;
+constexpr uint32_t kBurstPauseMs = 60;
+// Same purpose: LWIP_TCP_WND_DEFAULT is 65534, so without this the sender may
+// have a full 64 KiB of unread data buffered in internal DRAM at any moment.
+constexpr int kSocketReceiveBytes = 8 * 1024;
+
+struct BodyResult {
+  uint32_t received = 0;
+  uint32_t active_ms = 0;  // to the last byte, excluding any trailing stall
+  uint32_t paused_ms = 0;  // of active_ms, time spent deliberately throttling
+  bool stalled = false;
+  bool closed = false;
+};
+
+// Reads the body itself because HTTPClient::writeToStream() panics the device
+// here. Its loop only reaches the delay(1) branch when the length is unknown;
+// with a Content-Length it spins on delay(0), and vTaskDelay(0) yields solely
+// to tasks of equal or higher priority, so IDLE0 never runs and the task
+// watchdog fires after 5 s. An empty read is the normal case, not an edge
+// case: ssl_client.cpp sets O_NONBLOCK to select() on connect and never clears
+// it (unlike NetworkClient), so a read with nothing buffered returns
+// MBEDTLS_ERR_SSL_WANT_READ immediately and SO_RCVTIMEO is dead config.
+// NetworkClient::readBytes() does have a delay(2) for that case, but
+// NetworkClientSecure::read() reports an empty socket as -1 rather than 0,
+// which readBytes treats as an error and breaks on first. The CYD survives
+// writeToStream() only by accident: its inline Update.write() blocks in the
+// flash erase yield often enough to feed the watchdog.
+BodyResult receiveBody(WiFiClientSecure& client, Stream& sink, uint32_t expected_size) {
+  constexpr size_t kReadSize = 2048;
+  constexpr uint32_t kStallTimeoutMs = 10000;
+  constexpr uint32_t kYieldIntervalMs = 100;
+
+  BodyResult result;
+  // Off the 12 KiB task stack, which TLS already draws on heavily.
+  uint8_t* const buffer = static_cast<uint8_t*>(malloc(kReadSize));
+  if (!buffer) return result;
+
+  const uint32_t started_at = millis();
+  uint32_t last_data_at = started_at;
+  uint32_t last_yield_at = started_at;
+  uint32_t since_pause = 0;
+  while (result.received < expected_size) {
+    const size_t wanted = std::min<size_t>(kReadSize, expected_size - result.received);
+    const int count = client.read(buffer, wanted);
+    if (count > 0) {
+      if (sink.write(buffer, static_cast<size_t>(count)) != static_cast<size_t>(count)) break;
+      result.received += static_cast<uint32_t>(count);
+      since_pause += static_cast<uint32_t>(count);
+      last_data_at = millis();
+      result.active_ms = last_data_at - started_at;
+    } else if (!client.connected()) {
+      result.closed = true;
+      break;
+    }
+    if (since_pause >= kBurstBytes) {
+      since_pause = 0;
+      delay(kBurstPauseMs);
+      result.paused_ms += kBurstPauseMs;
+      last_yield_at = millis();
+      continue;
+    }
+    // A blocking delay, never delay(0): only this lets IDLE0 run. It is taken
+    // on every empty read and at least ten times a second while data flows.
+    const uint32_t now = millis();
+    if (count <= 0 || now - last_yield_at >= kYieldIntervalMs) {
+      delay(1);
+      last_yield_at = millis();
+    }
+    if (millis() - last_data_at >= kStallTimeoutMs) {
+      result.stalled = true;
+      break;
+    }
+  }
+  free(buffer);
+  return result;
+}
+
+// One connection per call, torn down on return. Appends to sink, which tracks
+// the resume offset itself, so a short result is a resumable partial success.
+bool fetchRange(const char* url, StagingSink& sink, uint32_t length) {
+  const uint32_t offset = sink.written();
+  char range[48];
+  std::snprintf(range, sizeof(range), "bytes=%lu-%lu", static_cast<unsigned long>(offset),
+                static_cast<unsigned long>(offset + length - 1));
+
+  WiFiClientSecure client;
+  HTTPClient http;
+  if (!beginGet(http, client, url)) return false;
+  http.addHeader("Range", range);
+  const int response = http.GET();
+  // 206 is the contract. A 200 means Range was ignored and the whole body is
+  // coming, which is only usable when nothing has been stored yet.
+  if (response != HTTP_CODE_PARTIAL_CONTENT && !(response == HTTP_CODE_OK && offset == 0)) {
+    Serial.printf("[UPDATE] range %s refused: HTTP %d\n", range, response);
+    http.end();
+    return false;
+  }
+
+  // Only settable now: HTTPClient owns the connect, so there is no socket to
+  // configure until the response headers are in.
+  const int receive_bytes = kSocketReceiveBytes;
+  client.setSocketOption(SOL_SOCKET, SO_RCVBUF, &receive_bytes, sizeof(receive_bytes));
+
+  const BodyResult body = receiveBody(client, sink, length);
+  http.end();
+  // Report the wire time with the deliberate throttle pauses taken out, so a
+  // genuinely slow link stays distinguishable from a healthy, throttled one.
+  const uint32_t wire_ms = body.active_ms > body.paused_ms ? body.active_ms - body.paused_ms : 0;
+  // Internal free and largest-block are logged per range because internal DRAM
+  // is what this path runs out of, and a TLS session is rebuilt for each one.
+  // Exhaustion here surfaces as "esp-aes: Failed to allocate memory for start
+  // alignment buffer", DNS failures and refused connects -- all of which read
+  // as a dead radio link unless these two numbers say otherwise.
+  Serial.printf("[UPDATE] range %s: %lu bytes, %lu ms wire + %lu ms throttle (%lu KB/s)%s%s, "
+                "%lu total, %u internal free / %u largest\n",
+                range, static_cast<unsigned long>(body.received),
+                static_cast<unsigned long>(wire_ms), static_cast<unsigned long>(body.paused_ms),
+                static_cast<unsigned long>(wire_ms ? body.received / wire_ms : 0),
+                body.stalled ? ", STALLED" : "", body.closed ? ", CLOSED" : "",
+                static_cast<unsigned long>(sink.written()),
+                unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+  return body.received == length;
+}
+
+// A retried chunk resumes from sink.written(), so progress is never lost as
+// long as some attempt moves forward; the attempt budget only resets on one
+// that completes.
+bool downloadStagedImage(const char* url, StagingSink& sink, uint32_t size) {
+  constexpr uint32_t kChunkBytes = 128 * 1024;
+  constexpr uint8_t kMaxAttempts = 4;
+  constexpr uint32_t kRetryDelayMs = 2000;
+  constexpr uint32_t kSettleDelayMs = 100;
+
+  uint8_t attempts = 0;
+  while (sink.written() < size) {
+    if (!wifilink::connected()) return false;
+    const uint32_t length = std::min<uint32_t>(kChunkBytes, size - sink.written());
+    if (fetchRange(url, sink, length)) {
+      attempts = 0;
+      delay(kSettleDelayMs);
+      continue;
+    }
+    if (++attempts >= kMaxAttempts) return false;
+    Serial.printf("[UPDATE] retrying from %lu bytes (attempt %u)\n",
+                  static_cast<unsigned long>(sink.written()), unsigned(attempts + 1));
+    delay(kRetryDelayMs);
+  }
+  return true;
+}
+
+// Hashing 3 MiB in one mbedtls call would hold the CPU far too long.
+void hashImage(mbedtls_sha256_context& sha, const uint8_t* image, uint32_t size) {
+  constexpr uint32_t kChunkSize = 64 * 1024;
+  for (uint32_t offset = 0; offset < size; offset += kChunkSize) {
+    mbedtls_sha256_update(&sha, image + offset, std::min<uint32_t>(kChunkSize, size - offset));
+    delay(1);
+  }
+}
+
+// Update.write() programs flash with the cache disabled, so feed it in chunks
+// and yield in between: the idle task must keep running or the task watchdog
+// panics part-way through the install.
+bool writeStagedImage(const uint8_t* image, uint32_t size) {
+  constexpr uint32_t kChunkSize = 32 * 1024;
+  for (uint32_t offset = 0; offset < size; offset += kChunkSize) {
+    const uint32_t count = std::min<uint32_t>(kChunkSize, size - offset);
+    if (Update.write(const_cast<uint8_t*>(image) + offset, count) != count) return false;
+    setProgress(offset + count, size);
+    delay(1);
+  }
+  return true;
+}
+
 void downloadInstall(const ReleaseChoice& release) {
+  // Scoped here rather than in installTask(): that task ends in vTaskDelete(),
+  // which never unwinds the stack, so a guard held there would never release.
+  LinkWatchdogGuard watchdog_guard;
   char reason[160] = {};
   if (!safeToInstall(reason, sizeof(reason))) { setFailure(wifilink::connected() ? Failure::kUnsafe : Failure::kNoNetwork, reason); return; }
   setState(State::kDownloading, "Downloading firmware...");
-  WiFiClientSecure client; HTTPClient http;
-  if (!beginGet(http, client, release.firmware_url)) { setFailure(Failure::kDownload, "Could not start the firmware download."); return; }
-  const int response = http.GET(), length = http.getSize();
-  if (response != HTTP_CODE_OK || length <= 0 || uint32_t(length) != release.size) { http.end(); setFailure(Failure::kDownload, "The firmware download was incomplete or unexpectedly sized."); return; }
-  if (!Update.begin(release.size, U_FLASH)) { http.end(); setFailure(Failure::kInstall, "Not enough update space is available on this device."); return; }
+  // ESP-Hosted takes its receive buffers from internal DRAM, so log that too:
+  // exhaustion there would explain a transport that dies under bulk receive.
+  Serial.printf("[UPDATE] requesting %lu-byte firmware (%u internal, %u PSRAM free)\n",
+                static_cast<unsigned long>(release.size),
+                unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+  uint8_t* const staging = reserveStagingBuffer(release.size);
   mbedtls_sha256_context sha; mbedtls_sha256_init(&sha); mbedtls_sha256_starts(&sha, 0);
-  FirmwareSink sink(sha, release.size);
-  const int transferred = http.writeToStream(&sink);
-  http.end(); uint8_t digest[32] = {}; mbedtls_sha256_finish(&sha, digest); mbedtls_sha256_free(&sha);
-  if (sink.noNetwork()) { Update.abort(); setFailure(Failure::kNoNetwork, "Wi-Fi disconnected while downloading the update."); return; }
-  if (sink.writeFailed()) { Update.abort(); setFailure(Failure::kInstall, "Writing the firmware update to flash failed."); return; }
-  if (transferred != static_cast<int>(release.size) || sink.written() != release.size) {
-    Serial.printf("[UPDATE] firmware transfer incomplete: expected %lu bytes, received %d / wrote %lu\n",
-                  static_cast<unsigned long>(release.size), transferred,
-                  static_cast<unsigned long>(sink.written()));
-    Update.abort(); setFailure(Failure::kDownload, "The firmware download failed before it was complete."); return;
+  uint8_t digest[32] = {};
+
+  // Only the inline path has an open OTA handle to unwind. mbedtls_sha256_free
+  // zeroizes and is safe on a context already finished below.
+  const auto fail = [staging, &sha](Failure failure, const char* message) {
+    if (!staging) Update.abort();
+    mbedtls_sha256_free(&sha);
+    heap_caps_free(staging);
+    setFailure(failure, message);
+  };
+
+  if (staging) {
+    StagingSink sink(staging, release.size);
+    const bool complete = downloadStagedImage(release.firmware_url, sink, release.size);
+    if (!complete || sink.written() != release.size) {
+      Serial.printf("[UPDATE] firmware transfer incomplete: expected %lu bytes, received %lu\n",
+                    static_cast<unsigned long>(release.size),
+                    static_cast<unsigned long>(sink.written()));
+      fail(wifilink::connected() ? Failure::kDownload : Failure::kNoNetwork,
+           wifilink::connected() ? "The firmware download failed before it was complete."
+                                 : "Wi-Fi disconnected while downloading the update.");
+      return;
+    }
+    hashImage(sha, staging, release.size);
+  } else {
+    WiFiClientSecure client; HTTPClient http;
+    if (!beginGet(http, client, release.firmware_url)) { fail(Failure::kDownload, "Could not start the firmware download."); return; }
+    const int response = http.GET(), length = http.getSize();
+    Serial.printf("[UPDATE] firmware response HTTP %d, length %d\n", response, length);
+    if (response != HTTP_CODE_OK || length <= 0 || uint32_t(length) != release.size) { http.end(); fail(Failure::kDownload, "The firmware download was incomplete or unexpectedly sized."); return; }
+    if (!Update.begin(release.size, U_FLASH)) { http.end(); fail(Failure::kInstall, "Not enough update space is available on this device."); return; }
+    FirmwareSink sink(sha, release.size);
+    const uint32_t transferred = receiveBody(client, sink, release.size).received;
+    http.end();
+    if (sink.noNetwork()) { fail(Failure::kNoNetwork, "Wi-Fi disconnected while downloading the update."); return; }
+    if (sink.writeFailed()) { fail(Failure::kInstall, "Writing the firmware update to flash failed."); return; }
+    if (transferred != release.size || sink.written() != release.size) {
+      Serial.printf("[UPDATE] firmware transfer incomplete: expected %lu bytes, received %lu\n",
+                    static_cast<unsigned long>(release.size),
+                    static_cast<unsigned long>(transferred));
+      fail(Failure::kDownload, "The firmware download failed before it was complete."); return;
+    }
   }
+  mbedtls_sha256_finish(&sha, digest); mbedtls_sha256_free(&sha);
+  Serial.println("[UPDATE] firmware download complete");
   setState(State::kVerifying, "Verifying firmware...");
   char actual[65] = {}; for (size_t i = 0; i < sizeof(digest); ++i) std::snprintf(actual + i * 2, 3, "%02x", digest[i]);
-  if (strcmp(actual, release.sha256)) { Update.abort(); setFailure(Failure::kVerification, "Firmware verification failed. Your current software is unchanged."); return; }
+  if (strcmp(actual, release.sha256)) { fail(Failure::kVerification, "Firmware verification failed. Your current software is unchanged."); return; }
+  Serial.println("[UPDATE] firmware digest verified");
+
+  // A staged image reaches flash only here, with the TLS socket already closed:
+  // nothing is left on the radio link to lose while the cache is off, and the
+  // partition is never touched until the download verifies.
   setState(State::kInstalling, "Installing verified firmware...");
-  if (!Update.end(true)) { Update.abort(); setFailure(Failure::kInstall, "Installation could not finish. Your current software is unchanged."); return; }
+  setProgress(0, release.size);
+  if (staging && !Update.begin(release.size, U_FLASH)) { heap_caps_free(staging); setFailure(Failure::kInstall, "Not enough update space is available on this device."); return; }
+  const bool installed = (!staging || writeStagedImage(staging, release.size)) && Update.end(true);
+  heap_caps_free(staging);
+  if (!installed) { Update.abort(); setFailure(Failure::kInstall, "Installation could not finish. Your current software is unchanged."); return; }
+  Serial.println("[UPDATE] firmware installed successfully");
   setState(State::kSuccess, "Firmware installed successfully.");
 }
 void checkTask(void*) {
