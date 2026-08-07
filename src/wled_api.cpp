@@ -40,12 +40,12 @@ constexpr uint16_t kWledPort = 80;
 // remote header renders a 64-pixel strip, so retain only those evenly spaced
 // samples and never let socket draining monopolize the UI loop.
 constexpr size_t kLivePreviewSamples = 64;
-#if !WLED_TOUCH_SIMULATOR && WLED_BOARD == WLED_BOARD_JC4880P443
-// The P4 renders a full 480x800 screen; a tab switch blocks loop() for over
-// 100 ms while a 900+ LED Peek stream keeps arriving at ~100 KB/s.  The
-// buffer must absorb that whole redraw without filling, or the TCP window
-// closes and the stream stalls for retransmit round trips.  The larger drain
-// budget clears the backlog within a few loop passes afterwards.
+#if !WLED_TOUCH_SIMULATOR && WLED_SCREEN_WIDTH >= 480
+// The large panels redraw a full 480x800 or 800x480 screen; a tab switch
+// blocks loop() for over 100 ms while a 900+ LED Peek stream keeps arriving
+// at ~100 KB/s.  The buffer must absorb that whole redraw without filling, or
+// the TCP window closes and the stream stalls for retransmit round trips.  The
+// larger drain budget clears the backlog within a few loop passes afterwards.
 constexpr size_t kSocketReadBudgetBytes = 8192;
 constexpr size_t kSocketRxCapacity = 16384;
 constexpr uint8_t kMaxSocketFramesPerLoop = 4;

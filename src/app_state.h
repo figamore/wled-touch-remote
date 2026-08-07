@@ -12,6 +12,9 @@ constexpr int kScreenHeight = WLED_SCREEN_HEIGHT;
 // The JC4880P443 panel is ~1.5x the pixel density of a CYD, so every touch
 // target and font gets its own large-screen size instead of the CYD pixels.
 constexpr bool kLargeScreen = WLED_SCREEN_WIDTH >= 480;
+// Size alone does not decide a layout: the JC4880P443 is a large portrait
+// panel while the JC8048W550C is a large landscape one.
+constexpr bool kPortraitScreen = WLED_SCREEN_HEIGHT > WLED_SCREEN_WIDTH;
 constexpr lv_coord_t uiScaled(lv_coord_t compact, lv_coord_t large) {
   return kLargeScreen ? large : compact;
 }

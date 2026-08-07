@@ -1003,9 +1003,9 @@ void createUi() {
   // The compact CYD needs a capped preview width to preserve room for the
   // controller and status controls.
   lv_obj_set_size(peek_bar, uiScaled(130, 250), uiScaled(14, 22));
-#if WLED_BOARD == WLED_BOARD_JC4880P443
-  // On the P4, let the preview consume every pixel left between the target
-  // selector and status icons instead of holding it to a fixed 250 px width.
+#if WLED_SCREEN_WIDTH >= 480
+  // On the large panels, let the preview consume every pixel left between the
+  // target selector and status icons instead of holding it to 250 px.
   lv_obj_set_flex_grow(peek_bar, 1);
 #endif
   lv_obj_set_style_bg_color(peek_bar, lv_color_hex(kColorBg), LV_PART_MAIN);

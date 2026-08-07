@@ -117,7 +117,7 @@ Settings are saved on the ESP32 and restored after reboot.
 
 ### Software updates
 
-Open **Settings → Software Update → Check for Updates** to compare the installed semantic version with the newest compatible stable GitHub Release. Drafts and prereleases are ignored. The remote only accepts the application firmware asset for its own board (`esp32-cyd` or `jc4880p443`), downloads it, and verifies the GitHub-provided SHA-256 digest before committing it to the OTA partition.
+Open **Settings → Software Update → Check for Updates** to compare the installed semantic version with the newest compatible stable GitHub Release. Drafts and prereleases are ignored. The remote only accepts the application firmware asset for its own board (`esp32-cyd`, `jc4880p443`, or `jc8048w550c`), downloads it, and verifies the GitHub-provided SHA-256 digest before committing it to the OTA partition.
 
 Keep the remote powered and connected to Wi-Fi during installation. A download, validation, or install failure aborts the pending OTA image and leaves the currently running firmware intact.
 
@@ -131,6 +131,7 @@ Supported devices:
 
 - **Guition ESP32-P4 JC4880P443, 4.3-inch display** - highly recommended
 - **Guition JC2432W328C** - recommended capacitive CYD
+- **Guition JC8048W550C, 5-inch 800x480 display** (untested)
 - **ESP32-024 and ESP32-2432S028-style resistive CYDs** - largely supported but **not recommended**
 
 On first boot, the firmware shows a one-time touch setup screen to confirm the touch hardware.
@@ -234,7 +235,7 @@ pio run -e esp32-cyd
 pio run -e esp32-cyd -t upload
 ```
 
-For the JC4880P443, use `pio run -e jc4880p443`. See `platformio.ini` for all available environments and `include/app_config.h` for board-specific options.
+For the JC4880P443, use `pio run -e jc4880p443`; for the JC8048W550C, use `pio run -e jc8048w550c`. See `platformio.ini` for all available environments and `include/app_config.h` for board-specific options.
 
 ## macOS simulator
 
@@ -250,6 +251,10 @@ pio run -e macos
 # 480x800 ESP32-P4 JC4880P443
 pio run -e macos-jc4880p443
 .pio/build/macos-jc4880p443/program
+
+# 800x480 ESP32-S3 JC8048W550C
+pio run -e macos-jc8048w550c
+.pio/build/macos-jc8048w550c/program
 ```
 
 Each command opens a resizable SDL window. Click or drag in the window to

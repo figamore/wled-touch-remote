@@ -130,7 +130,7 @@
 
       /* ---------- Hero / installer ---------- */
       .hero {
-        max-width: 38rem;
+        max-width: 42rem;
         margin-inline: auto;
         padding: clamp(3rem, 9vw, 5.5rem) 0 clamp(2.5rem, 6vw, 4rem);
         text-align: center;
@@ -170,7 +170,7 @@
       /* the install card is the focal point */
       .installer {
         margin: 2.25rem auto 0;
-        max-width: 27rem;
+        max-width: 34rem;
         padding: 1.25rem;
         background: var(--bg);
         border: 1px solid var(--border);
@@ -179,12 +179,15 @@
       }
       .device-picker {
         display: flex;
+        flex-wrap: wrap;
         gap: 0.75rem;
         margin-bottom: 0.9rem;
       }
       .device-option {
         position: relative;
-        flex: 1;
+        /* Three cards share a row on the card's full width; below that they
+           wrap rather than squeezing the board names. */
+        flex: 1 1 8rem;
         min-width: 0;
         padding: 0.55rem;
         border: 1px solid var(--border-strong);
@@ -203,13 +206,23 @@
       }
       .device-option .device-name {
         display: block;
-        min-height: 2.5rem;
-        padding: 0 0.9rem;
+        min-height: 2.6rem;
+        padding: 0 1.6rem;
         color: var(--text);
         font: inherit;
         font-size: 0.82rem;
         font-weight: 700;
+        line-height: 1.3;
         text-align: center;
+        overflow-wrap: anywhere;
+      }
+      /* The model number is the long part of every name; keeping it on its own
+         quieter line stops it from colliding with the radio or the card edge. */
+      .device-name small {
+        display: block;
+        color: var(--faint);
+        font-size: 0.72rem;
+        font-weight: 600;
       }
       .device-option input:focus-visible + .device-name {
         outline: 2px solid #7c3aed;
@@ -556,9 +569,15 @@
             </label>
             <label class="device-option">
               <input type="radio" name="device" value="manifest-jc4880p443.json" />
-              <span class="device-name">ESP32-P4 (JC4880P443)</span>
+              <span class="device-name">ESP32-P4 <small>JC4880P443</small></span>
               <span class="device-radio" aria-hidden="true"></span>
               <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/case/esp32-p4-back.png" alt="ESP32-P4" />
+            </label>
+            <label class="device-option">
+              <input type="radio" name="device" value="manifest-jc8048w550c.json" />
+              <span class="device-name">ESP32-S3 <small>JC8048W550C</small></span>
+              <span class="device-radio" aria-hidden="true"></span>
+              <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/case/esp32-s3-jc8048w550-back.png" alt="ESP32-S3 JC8048W550C" />
             </label>
           </div>
 

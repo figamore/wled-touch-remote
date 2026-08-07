@@ -7,12 +7,11 @@ on:
         description: "Release version, for example 1.0.0 or v1.0.0"
         required: true
 
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -45,6 +44,8 @@ jobs:
           cp -a .pio/build/esp32-cyd release-build/esp32-cyd
           pio run -e jc4880p443
           cp -a .pio/build/jc4880p443 release-build/jc4880p443
+          pio run -e jc8048w550c
+          cp -a .pio/build/jc8048w550c release-build/jc8048w550c
 
       - name: Package firmware
         run: |
@@ -85,6 +86,7 @@ jobs:
 
           package_env esp32-cyd esp32 4MB 0x1000
           package_env jc4880p443 esp32p4 16MB 0x2000
+          package_env jc8048w550c esp32s3 16MB 0x0
           cp remote.json "dist/remote.json"
           sha256sum dist/* > "dist/SHA256SUMS.txt"
 
@@ -95,3 +97,11 @@ jobs:
           gh release create "${{ steps.version.outputs.tag }}" dist/* \
             --title "WLED Touch Remote ${{ steps.version.outputs.tag }}" \
             --notes "Firmware release ${{ steps.version.outputs.tag }}."
+
+  publish-web-installer:
+    needs: build
+    uses: ./.github/workflows/publish-web-installer.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

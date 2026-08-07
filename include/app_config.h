@@ -5,9 +5,34 @@
 
 #define WLED_BOARD_CYD 0
 #define WLED_BOARD_JC4880P443 1
+#define WLED_BOARD_JC8048W550C 2
 
 #ifndef WLED_BOARD
 #define WLED_BOARD WLED_BOARD_CYD
+#endif
+
+// Panel transport and touch controller per board.  The rest of the code asks
+// for a capability rather than repeating the board comparison.
+#define WLED_PANEL_SPI (WLED_BOARD == WLED_BOARD_CYD)
+#define WLED_PANEL_DSI (WLED_BOARD == WLED_BOARD_JC4880P443)
+#define WLED_PANEL_RGB (WLED_BOARD == WLED_BOARD_JC8048W550C)
+#define WLED_TOUCH_GT911 (WLED_PANEL_DSI || WLED_PANEL_RGB)
+#define WLED_BOARD_HAS_PSRAM (WLED_PANEL_DSI || WLED_PANEL_RGB)
+
+#if WLED_BOARD == WLED_BOARD_JC8048W550C
+// Jingcai JC8048W550C (also sold as Sunton ESP32-8048S050): ESP32-S3 with a 5"
+// 800x480 ST7262 RGB panel and GT911 touch.  This panel is wired landscape, so
+// the app runs it unrotated and mirrors the framebuffer for the flipped view.
+#define WLED_SCREEN_WIDTH 800
+#define WLED_SCREEN_HEIGHT 480
+// Twenty lines is 32 KiB per buffer; two of those still fit in internal RAM
+// beside Wi-Fi and TLS, which is what keeps LVGL rendering out of PSRAM.
+#define WLED_LVGL_BUFFER_LINES 20
+#define WLED_DISPLAY_ROTATION 0
+#define WLED_DISPLAY_ROTATION_FLIPPED 2
+#ifndef WLED_CYD_ENABLE_BATTERY
+#define WLED_CYD_ENABLE_BATTERY 0
+#endif
 #endif
 
 #if WLED_BOARD == WLED_BOARD_JC4880P443
@@ -113,16 +138,56 @@
 #define CYD_PROFILE_ILI9341_XPT2046 3
 #define CYD_PROFILE_ST7789_XPT2046 4
 #define CYD_PROFILE_ST7701_GT911 5
+#define CYD_PROFILE_ST7262_GT911 6
 
 #ifndef CYD_HARDWARE_PROFILE
 #if WLED_BOARD == WLED_BOARD_JC4880P443
 #define CYD_HARDWARE_PROFILE CYD_PROFILE_ST7701_GT911
+#elif WLED_BOARD == WLED_BOARD_JC8048W550C
+#define CYD_HARDWARE_PROFILE CYD_PROFILE_ST7262_GT911
 #else
 #define CYD_HARDWARE_PROFILE CYD_PROFILE_AUTO
 #endif
 #endif
 
-#if WLED_BOARD == WLED_BOARD_JC4880P443
+#if WLED_BOARD == WLED_BOARD_JC8048W550C
+
+// The ST7262 is a plain RGB receiver: no command bus and no init sequence, so
+// only the parallel timing pins, the backlight and the GT911 are configured.
+#define JC8048_TFT_BL 2
+#define JC8048_PANEL_WIDTH 800
+#define JC8048_PANEL_HEIGHT 480
+#define JC8048_RGB_PCLK_HZ (16 * 1000 * 1000)
+#define JC8048_RGB_PCLK_ACTIVE_NEG 1
+#define JC8048_HSYNC_PULSE_WIDTH 4
+#define JC8048_HSYNC_BACK_PORCH 8
+#define JC8048_HSYNC_FRONT_PORCH 8
+#define JC8048_VSYNC_PULSE_WIDTH 4
+#define JC8048_VSYNC_BACK_PORCH 8
+#define JC8048_VSYNC_FRONT_PORCH 8
+#define JC8048_RGB_IO_HSYNC 39
+#define JC8048_RGB_IO_VSYNC 41
+#define JC8048_RGB_IO_DE 40
+#define JC8048_RGB_IO_PCLK 42
+#define JC8048_RGB_IO_DISP -1
+// 16-bit RGB565 bus: B0-B4, G0-G5, R0-R4 in that order.
+#define JC8048_RGB_DATA_PINS \
+  { 8, 3, 46, 9, 1, 5, 6, 7, 15, 16, 4, 45, 48, 47, 21, 14 }
+// The LCD DMA reads these internal-RAM buffers instead of the PSRAM frame
+// buffer; without them the S3 drops pixels and the image drifts sideways.
+#define JC8048_RGB_BOUNCE_LINES 10
+
+// The GT911's reset and interrupt lines are not broken out on this board, so
+// its I2C address is whatever the controller latched at power-up.
+#define GT911_TOUCH_SDA 19
+#define GT911_TOUCH_SCL 20
+#define GT911_TOUCH_RST -1
+#define GT911_TOUCH_INT -1
+#define GT911_TOUCH_ADDR 0x5D
+
+#define CYD_BOARD_CAPACITIVE 1
+
+#elif WLED_BOARD == WLED_BOARD_JC4880P443
 
 // Panel is driven over MIPI-DSI, so there are no SPI pins; only the reset and
 // backlight lines are GPIOs. Timings match the panel's 480x800 ST7701S module.
@@ -148,6 +213,13 @@
 #define JC4880_TOUCH_INT -1
 #define JC4880_TOUCH_ADDR 0x5D
 #define JC4880_TOUCH_I2C_PORT 0
+
+// The GT911 driver is shared with the JC8048W550C, which wires it elsewhere.
+#define GT911_TOUCH_SDA JC4880_TOUCH_SDA
+#define GT911_TOUCH_SCL JC4880_TOUCH_SCL
+#define GT911_TOUCH_RST JC4880_TOUCH_RST
+#define GT911_TOUCH_INT JC4880_TOUCH_INT
+#define GT911_TOUCH_ADDR JC4880_TOUCH_ADDR
 
 #define CYD_BOARD_CAPACITIVE 1
 

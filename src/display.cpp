@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 
+#include <algorithm>
 #include <cstring>
 
 #include "generated/wled_logo_png.h"
@@ -14,20 +15,26 @@
 #include <Wire.h>
 #endif
 
-#if !WLED_TOUCH_SIMULATOR && WLED_BOARD != WLED_BOARD_JC4880P443
+#if !WLED_TOUCH_SIMULATOR && WLED_PANEL_SPI
 #include <driver/spi_master.h>
 #include <esp_heap_caps.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_io_spi.h>
 #endif
 
-#if WLED_BOARD == WLED_BOARD_JC4880P443 && !WLED_TOUCH_SIMULATOR
+#if WLED_PANEL_DSI && !WLED_TOUCH_SIMULATOR
 #include <esp_cache.h>
 #include <esp_heap_caps.h>
 #include <esp_lcd_mipi_dsi.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_ldo_regulator.h>
+#endif
+
+#if WLED_PANEL_RGB && !WLED_TOUCH_SIMULATOR
+#include <esp_heap_caps.h>
+#include <esp_lcd_panel_ops.h>
+#include <esp_lcd_panel_rgb.h>
 #endif
 
 #if WLED_TOUCH_SIMULATOR
@@ -37,7 +44,12 @@ uint16_t sim_framebuffer[kScreenWidth * kScreenHeight] = {};
 namespace {
 
 lv_disp_draw_buf_t draw_buf;
-#if WLED_BOARD == WLED_BOARD_JC4880P443
+#if WLED_PANEL_RGB && !WLED_TOUCH_SIMULATOR
+// Rendering into PSRAM would halve the S3's fill rate, so both buffers are
+// taken from internal RAM and only fall back to PSRAM if that fails.
+lv_color_t* rgb_draw_buf_1 = nullptr;
+lv_color_t* rgb_draw_buf_2 = nullptr;
+#elif WLED_BOARD == WLED_BOARD_JC4880P443
 // A full-frame LVGL buffer lets the renderer work without 40-line tiles.  Keep
 // the small pair only as a safe fallback if external RAM is unavailable.
 lv_color_t* p4_full_draw_buf = nullptr;
@@ -92,7 +104,11 @@ esp_lcd_panel_io_handle_t dsi_io = nullptr;
 esp_lcd_panel_handle_t dpi_panel = nullptr;
 esp_ldo_channel_handle_t dsi_ldo = nullptr;
 uint16_t* dsi_framebuffer = nullptr;
-uint8_t gt911_address = JC4880_TOUCH_ADDR;
+#elif WLED_PANEL_RGB
+esp_lcd_panel_handle_t rgb_panel = nullptr;
+uint16_t* rgb_framebuffer = nullptr;
+// Scratch line for the boot art, which is drawn before LVGL owns a buffer.
+uint16_t rgb_row[kScreenWidth] = {};
 #else
 SPIClass panel_spi(HSPI);
 SPIClass touch_spi(VSPI);
@@ -121,7 +137,7 @@ void setBacklight(uint8_t pin, uint8_t brightness) {
 #endif
 }
 
-#if !WLED_TOUCH_SIMULATOR && WLED_BOARD != WLED_BOARD_JC4880P443
+#if !WLED_TOUCH_SIMULATOR && WLED_PANEL_SPI
 void spiCommand(uint8_t command, const uint8_t* data = nullptr, size_t length = 0) {
   digitalWrite(CYD_TFT_CS, LOW);
   digitalWrite(CYD_TFT_DC, LOW);
@@ -417,8 +433,9 @@ bool readXpt2046(uint16_t& x, uint16_t& y) {
 }
 #endif
 
-#if WLED_BOARD == WLED_BOARD_JC4880P443 && !WLED_TOUCH_SIMULATOR
-bool p4Write(uint8_t command, const uint8_t* data, size_t len) { return dsi_io && esp_lcd_panel_io_tx_param(dsi_io, command, data, len) == ESP_OK; }
+#if WLED_TOUCH_GT911 && !WLED_TOUCH_SIMULATOR
+uint8_t gt911_address = GT911_TOUCH_ADDR;
+
 bool gt911Read(uint8_t address, uint16_t reg, uint8_t* dst, size_t length) {
   Wire.beginTransmission(address);
   Wire.write(uint8_t(reg >> 8));
@@ -435,26 +452,21 @@ void gt911ClearStatus() {
   Wire.endTransmission();
 }
 
-void cacheWriteback(void* address, size_t size) {
-  constexpr uintptr_t kCacheLineBytes = 128;
-  const uintptr_t first = reinterpret_cast<uintptr_t>(address) & ~(kCacheLineBytes - 1);
-  const uintptr_t last = (reinterpret_cast<uintptr_t>(address) + size + kCacheLineBytes - 1) & ~(kCacheLineBytes - 1);
-  esp_cache_msync(reinterpret_cast<void*>(first), last - first,
-                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
-}
-
-bool initP4Touch() {
+bool initGt911Touch() {
   // GT911 needs a hardware reset before its I2C interface becomes reliable.
-  // Its INT pin is not connected on this board, so probe both legal addresses.
-  pinMode(JC4880_TOUCH_RST, OUTPUT);
-  digitalWrite(JC4880_TOUCH_RST, LOW);
-  delay(5);
-  digitalWrite(JC4880_TOUCH_RST, HIGH);
-  delay(50);
+  // Its INT pin is not connected on either board, and the JC8048W550C leaves
+  // the reset line unwired too, so probe both legal addresses.
+  if (GT911_TOUCH_RST >= 0) {
+    pinMode(GT911_TOUCH_RST, OUTPUT);
+    digitalWrite(GT911_TOUCH_RST, LOW);
+    delay(5);
+    digitalWrite(GT911_TOUCH_RST, HIGH);
+    delay(50);
+  }
   Wire.end();
-  Wire.begin(JC4880_TOUCH_SDA, JC4880_TOUCH_SCL, 400000);
+  Wire.begin(GT911_TOUCH_SDA, GT911_TOUCH_SCL, 400000);
   uint8_t status = 0;
-  for (const uint8_t address : {uint8_t(JC4880_TOUCH_ADDR), uint8_t(0x14)}) {
+  for (const uint8_t address : {uint8_t(GT911_TOUCH_ADDR), uint8_t(0x14)}) {
     if (gt911Read(address, 0x814E, &status, 1)) {
       gt911_address = address;
       Serial.printf("GT911: found at 0x%02X\n", address);
@@ -463,6 +475,36 @@ bool initP4Touch() {
   }
   Serial.println("GT911: not detected");
   return false;
+}
+
+bool readGt911Touch(uint16_t& x, uint16_t& y) {
+  uint8_t status = 0;
+  if (!gt911Read(gt911_address, 0x814E, &status, 1)) return false;
+  if (!(status & 0x80)) return false;
+  if (!(status & 0x0F)) {
+    gt911ClearStatus();
+    return false;
+  }
+  uint8_t point[8] = {};
+  if (!gt911Read(gt911_address, 0x8150, point, sizeof(point))) return false;
+  gt911ClearStatus();
+  // We explicitly start at 0x8150, where the first point's X low byte
+  // lives. (The track ID is at 0x814F and is intentionally not read here.)
+  x = point[0] | (uint16_t(point[1]) << 8);
+  y = point[2] | (uint16_t(point[3]) << 8);
+  return x < kScreenWidth && y < kScreenHeight;
+}
+#endif
+
+#if WLED_PANEL_DSI && !WLED_TOUCH_SIMULATOR
+bool p4Write(uint8_t command, const uint8_t* data, size_t len) { return dsi_io && esp_lcd_panel_io_tx_param(dsi_io, command, data, len) == ESP_OK; }
+
+void cacheWriteback(void* address, size_t size) {
+  constexpr uintptr_t kCacheLineBytes = 128;
+  const uintptr_t first = reinterpret_cast<uintptr_t>(address) & ~(kCacheLineBytes - 1);
+  const uintptr_t last = (reinterpret_cast<uintptr_t>(address) + size + kCacheLineBytes - 1) & ~(kCacheLineBytes - 1);
+  esp_cache_msync(reinterpret_cast<void*>(first), last - first,
+                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
 }
 
 bool initP4Panel() {
@@ -495,26 +537,71 @@ bool initP4Panel() {
   cmd(0xED,{0xB0,0x2B,0x98,0xA4,0x56,0x7F,0xFF,0xFF,0xFF,0xFF,0xF7,0x65,0x4A,0x89,0xB2,0x0B}); cmd(0xEF,{0x08,0x08,0x08,0x45,0x3F,0x54}); cmd(0xFF,{0x77,0x01,0x00,0x00,0x00});
   const uint8_t colmod[] = {0x55}; p4Write(0x3A,colmod,1); p4Write(0x11,nullptr,0); delay(120); p4Write(0x29,nullptr,0);
   if (esp_lcd_panel_init(dpi_panel) != ESP_OK || esp_lcd_dpi_panel_get_frame_buffer(dpi_panel, 1, reinterpret_cast<void**>(&dsi_framebuffer)) != ESP_OK) return false;
-  initP4Touch();
+  initGt911Touch();
   return dsi_framebuffer != nullptr;
 }
+#endif
 
-bool readP4Touch(uint16_t& x, uint16_t& y) {
-  uint8_t status = 0;
-  if (!gt911Read(gt911_address, 0x814E, &status, 1)) return false;
-  if (!(status & 0x80)) return false;
-  if (!(status & 0x0F)) {
-    gt911ClearStatus();
+#if WLED_PANEL_RGB && !WLED_TOUCH_SIMULATOR
+bool initRgbPanel() {
+  esp_lcd_rgb_panel_config_t config = {};
+  config.clk_src = LCD_CLK_SRC_DEFAULT;
+  config.timings.pclk_hz = JC8048_RGB_PCLK_HZ;
+  config.timings.h_res = JC8048_PANEL_WIDTH;
+  config.timings.v_res = JC8048_PANEL_HEIGHT;
+  config.timings.hsync_pulse_width = JC8048_HSYNC_PULSE_WIDTH;
+  config.timings.hsync_back_porch = JC8048_HSYNC_BACK_PORCH;
+  config.timings.hsync_front_porch = JC8048_HSYNC_FRONT_PORCH;
+  config.timings.vsync_pulse_width = JC8048_VSYNC_PULSE_WIDTH;
+  config.timings.vsync_back_porch = JC8048_VSYNC_BACK_PORCH;
+  config.timings.vsync_front_porch = JC8048_VSYNC_FRONT_PORCH;
+  config.timings.flags.pclk_active_neg = JC8048_RGB_PCLK_ACTIVE_NEG;
+  config.data_width = 16;
+  config.bits_per_pixel = 16;
+  config.num_fbs = 1;
+  config.bounce_buffer_size_px = JC8048_PANEL_WIDTH * JC8048_RGB_BOUNCE_LINES;
+  config.hsync_gpio_num = JC8048_RGB_IO_HSYNC;
+  config.vsync_gpio_num = JC8048_RGB_IO_VSYNC;
+  config.de_gpio_num = JC8048_RGB_IO_DE;
+  config.pclk_gpio_num = JC8048_RGB_IO_PCLK;
+  config.disp_gpio_num = JC8048_RGB_IO_DISP;
+  static const int data_pins[] = JC8048_RGB_DATA_PINS;
+  static_assert(sizeof(data_pins) == sizeof(config.data_gpio_nums),
+                "JC8048_RGB_DATA_PINS must list one GPIO per RGB data line");
+  memcpy(config.data_gpio_nums, data_pins, sizeof(data_pins));
+  // 800x480x16 does not fit in internal RAM; the bounce buffers above keep the
+  // DMA fed from SRAM, which also makes CPU writes to this buffer coherent.
+  config.flags.fb_in_psram = 1;
+
+  esp_err_t error = esp_lcd_new_rgb_panel(&config, &rgb_panel);
+  if (error == ESP_OK) error = esp_lcd_panel_reset(rgb_panel);
+  if (error == ESP_OK) error = esp_lcd_panel_init(rgb_panel);
+  if (error == ESP_OK) {
+    error = esp_lcd_rgb_panel_get_frame_buffer(rgb_panel, 1, reinterpret_cast<void**>(&rgb_framebuffer));
+  }
+  if (error != ESP_OK) {
+    Serial.printf("Display RGB: panel init failed: %s\n", esp_err_to_name(error));
+    rgb_panel = nullptr;
     return false;
   }
-  uint8_t point[8] = {};
-  if (!gt911Read(gt911_address, 0x8150, point, sizeof(point))) return false;
-  gt911ClearStatus();
-  // We explicitly start at 0x8150, where the first point's X low byte
-  // lives. (The track ID is at 0x814F and is intentionally not read here.)
-  x = point[0] | (uint16_t(point[1]) << 8);
-  y = point[2] | (uint16_t(point[3]) << 8);
-  return x < kScreenWidth && y < kScreenHeight;
+  initGt911Touch();
+  return rgb_framebuffer != nullptr;
+}
+
+// The RGB panel has no rotation register, so the flipped view is produced by
+// mirroring both axes into the point-symmetric rectangle.
+void drawRgbPixels(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint16_t* pixels) {
+  if (!rgb_panel) return;
+  if (!display_flipped) {
+    esp_lcd_panel_draw_bitmap(rgb_panel, x, y, x + width, y + height, pixels);
+    return;
+  }
+  for (uint16_t row = 0; row < height; ++row) {
+    const uint16_t* source = pixels + size_t(row) * width;
+    for (uint16_t i = 0; i < width; ++i) rgb_row[i] = source[width - 1 - i];
+    const uint16_t dest_y = kScreenHeight - 1 - (y + row);
+    esp_lcd_panel_draw_bitmap(rgb_panel, kScreenWidth - x - width, dest_y, kScreenWidth - x, dest_y + 1, rgb_row);
+  }
 }
 #endif
 
@@ -522,7 +609,7 @@ void mapPhysicalToLogical(uint16_t physical_x, uint16_t physical_y, uint8_t rota
 #if WLED_TOUCH_SIMULATOR
   logical_x = physical_x;
   logical_y = physical_y;
-#elif WLED_BOARD == WLED_BOARD_JC4880P443
+#elif WLED_TOUCH_GT911
   if (rotation == 2) { logical_x = kScreenWidth - 1 - physical_x; logical_y = kScreenHeight - 1 - physical_y; }
   else { logical_x = physical_x; logical_y = physical_y; }
 #else
@@ -606,6 +693,8 @@ void drawSplashTextRow(uint16_t x, uint16_t y, uint16_t width) {
     cacheWriteback(dsi_framebuffer + (kScreenHeight - 1 - y) * kScreenWidth + physical_x,
                    width * sizeof(uint16_t));
   }
+#elif WLED_PANEL_RGB
+  drawRgbPixels(x, y, width, 1, splash_text_row);
 #else
   drawCydPixels(x, y, width, 1, splash_text_row);
 #endif
@@ -673,6 +762,8 @@ void drawDisplaySplash() {
   }
   cacheWriteback(dsi_framebuffer + y0 * kScreenWidth,
                  size_t(kWledLogoHeight) * kScreenWidth * sizeof(uint16_t));
+#elif WLED_PANEL_RGB
+  drawRgbPixels(x0, y0, kWledLogoWidth, kWledLogoHeight, kWledLogoPixels);
 #else
   drawCydPixels(x0, y0, kWledLogoWidth, kWledLogoHeight, kWledLogoPixels);
 #endif
@@ -720,6 +811,18 @@ void flushDisplay(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_
   }
   const uint16_t py0 = flip ? kScreenHeight - 1 - area->y2 : area->y1;
   cacheWriteback(dsi_framebuffer + py0 * kScreenWidth, size_t(height) * kScreenWidth * sizeof(uint16_t));
+#elif WLED_PANEL_RGB
+  if (rgb_panel) {
+    if (display_flipped) {
+      // Reversing the tile as a whole is exactly a 180-degree turn, so the
+      // rows land in order once it is drawn into the mirrored rectangle.
+      std::reverse(color_p, color_p + size_t(width) * height);
+      esp_lcd_panel_draw_bitmap(rgb_panel, kScreenWidth - 1 - area->x2, kScreenHeight - 1 - area->y2,
+                                kScreenWidth - area->x1, kScreenHeight - area->y1, color_p);
+    } else {
+      esp_lcd_panel_draw_bitmap(rgb_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_p);
+    }
+  }
 #else
   if (cyd_panel_io) {
     const size_t pixel_count = size_t(width) * height;
@@ -761,8 +864,8 @@ void readTouch(lv_indev_drv_t*, lv_indev_data_t* data) {
   bool down = false;
 #if WLED_TOUCH_SIMULATOR
   down = sim_touch_down; physical_x = sim_touch_x; physical_y = sim_touch_y;
-#elif WLED_BOARD == WLED_BOARD_JC4880P443
-  down = readP4Touch(physical_x, physical_y);
+#elif WLED_TOUCH_GT911
+  down = readGt911Touch(physical_x, physical_y);
 #else
   const bool resistive = isResistiveCyd();
   if (resistive) down = readXpt2046(physical_x, physical_y);
@@ -782,7 +885,7 @@ void readTouch(lv_indev_drv_t*, lv_indev_data_t* data) {
 #if WLED_TOUCH_SIMULATOR
     data->point.x = physical_x;
     data->point.y = physical_y;
-#elif WLED_BOARD == WLED_BOARD_JC4880P443
+#elif WLED_TOUCH_GT911
     mapPhysicalToLogical(physical_x, physical_y, display_flipped ? 2 : 0, data->point.x, data->point.y);
 #else
     mapPhysicalToLogical(physical_x, physical_y, (display_flipped ? WLED_DISPLAY_ROTATION_FLIPPED : WLED_DISPLAY_ROTATION) + cyd_touch_offset_rotation, data->point.x, data->point.y);
@@ -815,7 +918,7 @@ void touchActivity() {
 }
 void applyDisplayRotation() {
   suppress_touch_until_release = true;
-#if !WLED_TOUCH_SIMULATOR && WLED_BOARD != WLED_BOARD_JC4880P443
+#if !WLED_TOUCH_SIMULATOR && WLED_PANEL_SPI
   const uint8_t rotation = ((display_flipped ? WLED_DISPLAY_ROTATION_FLIPPED : WLED_DISPLAY_ROTATION) + cyd_panel_offset_rotation) & 3;
   // Match the controller's complete MADCTL rotation table. In particular,
   // the horizontal/vertical refresh-order bits matter on CYD ST7789/ILI9341
@@ -833,8 +936,10 @@ void applyDisplayRotation() {
 #endif
 }
 void displaySetBrightness(uint8_t brightness) {
-#if !WLED_TOUCH_SIMULATOR && WLED_BOARD == WLED_BOARD_JC4880P443
+#if !WLED_TOUCH_SIMULATOR && WLED_PANEL_DSI
   setBacklight(JC4880_TFT_BL, brightness);
+#elif !WLED_TOUCH_SIMULATOR && WLED_PANEL_RGB
+  setBacklight(JC8048_TFT_BL, brightness);
 #elif !WLED_TOUCH_SIMULATOR
   setBacklight(cyd_backlight_pin, brightness);
 #else
@@ -843,9 +948,12 @@ void displaySetBrightness(uint8_t brightness) {
 }
 
 void displayPrepareForBoot() {
-#if !WLED_TOUCH_SIMULATOR && WLED_BOARD == WLED_BOARD_JC4880P443
+#if !WLED_TOUCH_SIMULATOR && WLED_PANEL_DSI
   pinMode(JC4880_TFT_BL, OUTPUT);
   digitalWrite(JC4880_TFT_BL, LOW);
+#elif !WLED_TOUCH_SIMULATOR && WLED_PANEL_RGB
+  pinMode(JC8048_TFT_BL, OUTPUT);
+  digitalWrite(JC8048_TFT_BL, LOW);
 #elif !WLED_TOUCH_SIMULATOR
   // Auto detection has not selected the board profile yet, so hold both CYD
   // backlight possibilities inactive until a complete first frame is ready.
@@ -872,6 +980,12 @@ void displayClear(uint16_t rgb565) {
 #elif WLED_BOARD == WLED_BOARD_JC4880P443
   for (uint32_t i = 0; i < uint32_t(kScreenWidth) * kScreenHeight; ++i) dsi_framebuffer[i] = rgb565;
   cacheWriteback(dsi_framebuffer, size_t(kScreenWidth) * kScreenHeight * sizeof(uint16_t));
+#elif WLED_PANEL_RGB
+  // A uniform fill is symmetric, so the flipped view needs no transform here.
+  for (uint16_t x = 0; x < kScreenWidth; ++x) rgb_row[x] = rgb565;
+  for (uint16_t y = 0; y < kScreenHeight; ++y) {
+    esp_lcd_panel_draw_bitmap(rgb_panel, 0, y, kScreenWidth, y + 1, rgb_row);
+  }
 #else
   if (cyd_panel_io) {
     if (!waitForCydDma()) return;
@@ -907,8 +1021,10 @@ void initDisplay() {
   Serial.println("Display init: native LVGL backend");
 #if WLED_TOUCH_SIMULATOR
   display_hardware_ready = true;
-#elif WLED_BOARD == WLED_BOARD_JC4880P443
+#elif WLED_PANEL_DSI
   display_hardware_ready = initP4Panel();
+#elif WLED_PANEL_RGB
+  display_hardware_ready = initRgbPanel();
 #else
   chooseCydProfile();
   if (isResistiveCyd()) initXpt2046();
@@ -919,10 +1035,10 @@ void initDisplay() {
   else displayClear();
   if (display_hardware_ready) displaySetBrightness(UI_ACTIVE_BRIGHTNESS);
   lv_init();
-#if !WLED_TOUCH_SIMULATOR && WLED_BOARD != WLED_BOARD_JC4880P443
+#if !WLED_TOUCH_SIMULATOR && WLED_PANEL_SPI
   initCydDmaTransport();
 #endif
-#if WLED_BOARD == WLED_BOARD_JC4880P443 && !WLED_TOUCH_SIMULATOR
+#if WLED_PANEL_DSI && !WLED_TOUCH_SIMULATOR
   constexpr size_t p4_full_frame_pixels = size_t(kScreenWidth) * kScreenHeight;
   p4_full_draw_buf = static_cast<lv_color_t*>(
       heap_caps_malloc(p4_full_frame_pixels * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -943,9 +1059,24 @@ void initDisplay() {
     lv_disp_draw_buf_init(&draw_buf, p4_fallback_draw_buf_1, p4_fallback_draw_buf_2,
                           kScreenWidth * kLvglBufferLines);
   }
-#elif WLED_BOARD == WLED_BOARD_JC4880P443
+#elif WLED_PANEL_DSI
   lv_disp_draw_buf_init(&draw_buf, p4_fallback_draw_buf_1, p4_fallback_draw_buf_2,
                         kScreenWidth * kLvglBufferLines);
+#elif WLED_PANEL_RGB && !WLED_TOUCH_SIMULATOR
+  constexpr size_t rgb_buffer_bytes = size_t(kScreenWidth) * kLvglBufferLines * sizeof(lv_color_t);
+  // Flushing is a copy into the panel's PSRAM frame buffer rather than DMA, so
+  // these only need to be fast to render into, not DMA-capable.
+  rgb_draw_buf_1 = static_cast<lv_color_t*>(heap_caps_malloc(rgb_buffer_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  // The second buffer only lets LVGL draw ahead; one is enough to run.
+  rgb_draw_buf_2 = static_cast<lv_color_t*>(heap_caps_malloc(rgb_buffer_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  const bool rgb_buffers_in_psram = rgb_draw_buf_1 == nullptr;
+  if (rgb_buffers_in_psram) {
+    rgb_draw_buf_1 = static_cast<lv_color_t*>(heap_caps_malloc(rgb_buffer_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  }
+  Serial.printf("LVGL: using %s %u-byte %s buffer%s\n", rgb_draw_buf_2 ? "two" : "one",
+                unsigned(rgb_buffer_bytes), rgb_buffers_in_psram ? "PSRAM" : "internal",
+                rgb_draw_buf_2 ? "s" : "");
+  lv_disp_draw_buf_init(&draw_buf, rgb_draw_buf_1, rgb_draw_buf_2, kScreenWidth * kLvglBufferLines);
 #else
   lv_disp_draw_buf_init(&draw_buf, draw_buf_1, draw_buf_2, kScreenWidth * kLvglBufferLines);
 #endif
@@ -962,7 +1093,7 @@ void finishDisplaySplash() {
   splash_visible = false;
 }
 bool displayHardwareReady() { return display_hardware_ready; }
-bool displaySupportsBatteryMonitor() { return WLED_BOARD != WLED_BOARD_JC4880P443; }
+bool displaySupportsBatteryMonitor() { return WLED_PANEL_SPI; }
 uint32_t displayTakeFlushMs() { const uint32_t total = flush_ms_accum; flush_ms_accum = 0; return total; }
 void displayUpdateIdle(uint32_t now) {
   // Always On deliberately bypasses the inactivity timer.  In particular, it
@@ -1008,7 +1139,9 @@ void displayUpdateIdle(uint32_t now) {
 void displayReadLineRgb888(uint16_t y, uint8_t* rgb, uint16_t width) { for (uint16_t x = 0; x < width; ++x) { uint16_t p = 0;
 #if WLED_TOUCH_SIMULATOR
   p = sim_framebuffer[y * kScreenWidth + x];
-#elif WLED_BOARD == WLED_BOARD_JC4880P443
+#elif WLED_PANEL_DSI
   p = dsi_framebuffer[y * kScreenWidth + x];
+#elif WLED_PANEL_RGB
+  p = rgb_framebuffer ? rgb_framebuffer[y * kScreenWidth + x] : 0;
 #endif
   rgb[x * 3] = ((p >> 11) & 31) * 255 / 31; rgb[x * 3 + 1] = ((p >> 5) & 63) * 255 / 63; rgb[x * 3 + 2] = (p & 31) * 255 / 31; } }

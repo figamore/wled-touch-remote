@@ -33,7 +33,13 @@ const lv_img_dsc_t kHelpQrImage = {
 };
 
 
-constexpr lv_coord_t kColorWheelSize = kLargeScreen ? kScreenWidth - 40 : 138;
+// The wheel is bounded by whichever page dimension runs out first: the width
+// on the large portrait panel, the height under the nested Colors tabs on a
+// large landscape one.
+constexpr lv_coord_t kColorWheelSize = !kLargeScreen ? 138
+                                       : kPortraitScreen
+                                           ? kScreenWidth - 40
+                                           : kTabCardHeight - kTabButtonHeight - 24;
 constexpr lv_coord_t kColorSelectorSize = uiScaled(18, 28);
 constexpr lv_coord_t kPaletteRowPadTop = uiScaled(7, 10);
 constexpr lv_coord_t kPaletteRowPadBottom = uiScaled(21, 30);
@@ -429,7 +435,7 @@ void generateColorWheelImage() {
   if (color_wheel_image.data) return;
 
   const size_t bytes = kColorWheelSize * kColorWheelSize * sizeof(lv_color_t);
-#if !WLED_TOUCH_SIMULATOR && WLED_BOARD == WLED_BOARD_JC4880P443
+#if !WLED_TOUCH_SIMULATOR && WLED_BOARD_HAS_PSRAM
   color_wheel_pixels = static_cast<lv_color_t*>(
       heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 #else
@@ -539,7 +545,8 @@ void createColorWheelEditor(lv_obj_t* parent) {
   lv_obj_set_size(editor, LV_PCT(100), LV_PCT(100));
   // The near-full-width wheel leaves no room beside it on the large portrait
   // panel, so the Solid button moves underneath.
-  lv_obj_set_flex_flow(editor, kLargeScreen ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_flow(editor, kLargeScreen && kPortraitScreen ? LV_FLEX_FLOW_COLUMN
+                                                               : LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(editor, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(editor, 18, LV_PART_MAIN);
   lv_obj_set_style_pad_row(editor, 18, LV_PART_MAIN);
