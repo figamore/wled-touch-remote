@@ -209,7 +209,7 @@ Status statusForReason(uint8_t reason) {
 // C6 coprocessor; issued from loop() each one stalls touch and rendering for
 // the RPC round trip.  A dedicated worker owns those calls, and routing them
 // all through one queue preserves connect/disconnect ordering.
-enum class RadioJobKind : uint8_t { kConnect, kDisconnect, kStopScan, kStartScan, kHarvestScan, kConfigureAccessPoint, kConfigureConnected, kSampleStats };
+enum class RadioJobKind : uint8_t { kConnect, kDisconnect, kStopScan, kStartScan, kHarvestScan, kConfigureAccessPoint, kConfigureConnected, kSampleStats, kSampleAccessPoint };
 constexpr size_t kMaxScanResults = 32;
 struct RadioScanNetwork {
   char ssid[kMaxSsidLength + 1] = {};
@@ -234,6 +234,9 @@ struct RadioResult {
   uint32_t connectionAttempt = 0;
   uint32_t accessPointGeneration = 0;
   bool accessPointRunning = false;
+  bool accessPointProbeOk = false;
+  uint32_t accessPointElapsedMs = 0;
+  uint8_t accessPointStations = 0;
   bool sleepDisabled = false;
   bool txPowerSet = false;
   int8_t txPower = 0;
@@ -278,6 +281,23 @@ volatile bool g_linkWatchdogSuspended = false;
 constexpr uint32_t kHostedRpcTimeoutMs = 3000;
 constexpr uint8_t kHostedRpcTimeoutLimit = 3;
 uint8_t g_hostedRpcTimeouts = 0;
+
+// Hotspot mode has no station association, so the RSSI probe above never runs
+// and the same wedge goes undetected for as long as the remote stays in it. The
+// AP station list is the equivalent probe: a cheap RPC that also reports
+// whether the C6 still has the AP up at all.
+constexpr uint32_t kAccessPointHealthIntervalMs = 5000;
+// One failed query can be a transient RPC error rather than a stopped AP.
+constexpr uint8_t kAccessPointDownLimit = 2;
+// Starting the AP is three RPCs. Past this the worker is stuck in a call that
+// will never return, which no amount of waiting resolves.
+constexpr uint32_t kAccessPointApplyTimeoutMs = 30000;
+uint32_t g_accessPointApplyStartedAt = 0;
+uint32_t g_accessPointSampledAt = 0;
+bool g_accessPointSampleJobPending = false;
+uint8_t g_accessPointDownSamples = 0;
+int g_accessPointStations = 0;
+volatile bool g_accessPointStopSeen = false;
 
 bool configureAccessPointRadio(bool enabled, const char* ssid, const char* password) {
   if (!enabled) {
@@ -338,6 +358,20 @@ void runRadioJob(const RadioJob& job) {
     result.accessPointRunning = job.accessPointEnabled &&
                                 configureAccessPointRadio(true, job.ssid, job.password);
     if (!job.accessPointEnabled) configureAccessPointRadio(false, nullptr, nullptr);
+    if (g_radioResults) xQueueSend(g_radioResults, &result, portMAX_DELAY);
+  } else if (job.kind == RadioJobKind::kSampleAccessPoint) {
+    RadioResult result;
+    result.kind = job.kind;
+    result.accessPointGeneration = job.accessPointGeneration;
+    wifi_sta_list_t stations = {};
+    const uint32_t started = millis();
+    // This fails with ESP_ERR_WIFI_MODE once the C6 is no longer running an AP,
+    // which is exactly the state the health check has to notice.
+    const esp_err_t status = esp_wifi_ap_get_sta_list(&stations);
+    result.accessPointElapsedMs = millis() - started;
+    result.accessPointProbeOk = status == ESP_OK;
+    result.accessPointRunning = status == ESP_OK;
+    result.accessPointStations = status == ESP_OK ? uint8_t(stations.num) : 0;
     if (g_radioResults) xQueueSend(g_radioResults, &result, portMAX_DELAY);
   } else {
 #if WLED_BOARD == WLED_BOARD_JC4880P443
@@ -436,6 +470,7 @@ void applyAccessPointConfiguration() {
   // it pending and let loop() retry submission until the worker accepts it.
   if (++g_accessPointConfigurationGeneration == 0) ++g_accessPointConfigurationGeneration;
   g_accessPointApplyPending = true;
+  g_accessPointApplyStartedAt = millis();
   g_accessPointJobQueued = queueAccessPointConfiguration();
 #else
   g_accessPointRunning = g_accessPointEnabled &&
@@ -465,6 +500,13 @@ bool queueStatsSample() {
   return submitRadioJob(job);
 }
 
+bool queueAccessPointSample() {
+  RadioJob job;
+  job.kind = RadioJobKind::kSampleAccessPoint;
+  job.accessPointGeneration = g_accessPointConfigurationGeneration;
+  return submitRadioJob(job);
+}
+
 void processRadioResults(uint32_t now_ms) {
   RadioResult result;
   while (g_radioResults && xQueueReceive(g_radioResults, &result, 0) == pdTRUE) {
@@ -473,9 +515,49 @@ void processRadioResults(uint32_t now_ms) {
       g_accessPointApplyPending = false;
       g_accessPointJobQueued = false;
       g_accessPointRunning = result.accessPointRunning;
+      g_accessPointDownSamples = 0;
+      g_accessPointStations = 0;
+      g_accessPointSampledAt = now_ms;
       Serial.printf("[WIFI] mobile access point %s%s\n",
                     g_accessPointRunning ? "started: " : "stopped",
                     g_accessPointRunning ? g_accessPointName.c_str() : "");
+      continue;
+    }
+    if (result.kind == RadioJobKind::kSampleAccessPoint) {
+      g_accessPointSampleJobPending = false;
+      if (result.accessPointGeneration != g_accessPointConfigurationGeneration) continue;
+      if (g_linkWatchdogSuspended) {
+        g_hostedRpcTimeouts = 0;
+        continue;
+      }
+      if (!result.accessPointProbeOk && result.accessPointElapsedMs >= kHostedRpcTimeoutMs) {
+        if (++g_hostedRpcTimeouts >= kHostedRpcTimeoutLimit) {
+          Serial.println("[WIFI] C6 radio link unresponsive; restarting to reset the coprocessor");
+          Serial.flush();
+          esp_unregister_shutdown_handler(reinterpret_cast<shutdown_handler_t>(esp_wifi_stop));
+          displayRestart();
+        }
+        continue;
+      }
+      g_hostedRpcTimeouts = 0;
+      if (result.accessPointRunning) {
+        g_accessPointDownSamples = 0;
+        g_accessPointClientListErrorLogged = false;
+        g_accessPointStations = result.accessPointStations;
+        continue;
+      }
+      if (!g_accessPointClientListErrorLogged) {
+        g_accessPointClientListErrorLogged = true;
+        Serial.println("[WIFI] hotspot station list unavailable; the C6 may have dropped the AP");
+      }
+      if (++g_accessPointDownSamples < kAccessPointDownLimit) continue;
+      Serial.println("[WIFI] mobile access point is no longer running; restarting it");
+      g_accessPointRunning = false;
+      g_accessPointStations = 0;
+      clearAccessPointClientLeases();
+      g_lastAccessPointClientCount = -1;
+      g_lastAccessPointClientFingerprint = UINT32_MAX;
+      applyAccessPointConfiguration();
       continue;
     }
     if (result.kind == RadioJobKind::kHarvestScan) {
@@ -576,6 +658,7 @@ void registerWifiEvents() {
     WiFi.onEvent(removeAccessPointClientLease, ARDUINO_EVENT_WIFI_AP_STADISCONNECTED);
     WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t) {
       clearAccessPointClientLeases();
+      g_accessPointStopSeen = true;
     }, ARDUINO_EVENT_WIFI_AP_STOP);
   }
 }
@@ -795,7 +878,29 @@ void loop(uint32_t now_ms) {
 #endif
   // AP and STA are intentionally exclusive. This keeps discovery scoped to
   // exactly one local network and avoids channel-sharing surprises.
-  if (g_accessPointEnabled) return;
+  if (g_accessPointEnabled) {
+#if WLED_BOARD == WLED_BOARD_JC4880P443
+    if (g_accessPointStopSeen) {
+      // The C6 reported the AP down. Confirm it with the health probe instead
+      // of reacting here: this event also fires during an intentional teardown.
+      g_accessPointStopSeen = false;
+      g_accessPointSampledAt = now_ms - kAccessPointHealthIntervalMs;
+    }
+    if (g_accessPointApplyPending && g_radioJobs && !g_linkWatchdogSuspended &&
+        now_ms - g_accessPointApplyStartedAt >= kAccessPointApplyTimeoutMs) {
+      Serial.println("[WIFI] mobile access point did not start; restarting to reset the coprocessor");
+      Serial.flush();
+      esp_unregister_shutdown_handler(reinterpret_cast<shutdown_handler_t>(esp_wifi_stop));
+      displayRestart();
+    }
+    if (g_accessPointRunning && !g_accessPointApplyPending && !g_accessPointSampleJobPending &&
+        now_ms - g_accessPointSampledAt >= kAccessPointHealthIntervalMs) {
+      g_accessPointSampleJobPending = queueAccessPointSample();
+      if (g_accessPointSampleJobPending) g_accessPointSampledAt = now_ms;
+    }
+#endif
+    return;
+  }
   if (g_restartPending) {
     // A disconnected station may not emit an event.  Waiting briefly handles
     // both that case and the normal asynchronous disconnect without racing it.
@@ -1142,6 +1247,12 @@ std::vector<uint32_t> accessPointClientAddresses() {
 
   // Before an IP is assigned, retain the association count only to indicate
   // that discovery should wait; never use it as a guessed destination.
+#if WLED_BOARD == WLED_BOARD_JC4880P443
+  // Enumerating stations is an ESP-Hosted RPC, and this runs on the display
+  // task every pass while no lease is known. The AP health probe already
+  // samples the count on the radio worker; read its result instead.
+  const int stationCount = g_accessPointStations;
+#else
   wifi_sta_list_t stations = {};
   const esp_err_t stationStatus = esp_wifi_ap_get_sta_list(&stations);
   if (stationStatus != ESP_OK) {
@@ -1152,10 +1263,12 @@ std::vector<uint32_t> accessPointClientAddresses() {
     return addresses;
   }
   g_accessPointClientListErrorLogged = false;
-  if (stations.num != g_lastAccessPointClientCount) {
-    g_lastAccessPointClientCount = stations.num;
+  const int stationCount = stations.num;
+#endif
+  if (stationCount != g_lastAccessPointClientCount) {
+    g_lastAccessPointClientCount = stationCount;
     g_lastAccessPointClientFingerprint = 0;
-    Serial.printf("[WIFI] hotspot client count: %d; waiting for DHCP assignment\n", stations.num);
+    Serial.printf("[WIFI] hotspot client count: %d; waiting for DHCP assignment\n", stationCount);
   }
 #endif
   return addresses;

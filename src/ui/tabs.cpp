@@ -1678,21 +1678,33 @@ void openAccessPointDialog(lv_event_t*) {
   access_point_dialog = createDialogShell("Mobile hotspot", closeAccessPointDialog);
   lv_obj_add_event_cb(access_point_dialog, onAccessPointDialogDeleted, LV_EVENT_DELETE, nullptr);
 
-  lv_obj_t* enabled_label = lv_label_create(access_point_dialog);
-  lv_label_set_text(enabled_label, "Enable local Wi-Fi");
-  lv_obj_add_style(enabled_label, &style_label_muted, LV_PART_MAIN);
-  lv_obj_align(enabled_label, LV_ALIGN_TOP_LEFT, 12, kDialogHeaderHeight + uiScaled(8, 14));
+  // The row is taller than the switch so the extended click area below has room
+  // to grow inside it; a hit area larger than the parent would be clipped away.
+  lv_obj_t* enabled_row = lv_obj_create(access_point_dialog);
+  lv_obj_remove_style_all(enabled_row);
+  lv_obj_set_size(enabled_row, kDialogWidth - 24, uiScaled(48, 72));
+  lv_obj_align(enabled_row, LV_ALIGN_TOP_MID, 0, kDialogHeaderHeight + uiScaled(16, 26));
+  lv_obj_set_flex_flow(enabled_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(enabled_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_left(enabled_row, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(enabled_row, 4, LV_PART_MAIN);
+  lv_obj_clear_flag(enabled_row, LV_OBJ_FLAG_SCROLLABLE);
 
-  access_point_switch = lv_switch_create(access_point_dialog);
-  lv_obj_set_size(access_point_switch, uiScaled(46, 72), uiScaled(24, 38));
-  lv_obj_align(access_point_switch, LV_ALIGN_TOP_RIGHT, -12, kDialogHeaderHeight + uiScaled(5, 10));
+  lv_obj_t* enabled_label = lv_label_create(enabled_row);
+  lv_label_set_text(enabled_label, "Enable local Wi-Fi");
+  lv_obj_set_style_text_font(enabled_label, UI_FONT_HEADER, LV_PART_MAIN);
+  lv_obj_set_style_text_color(enabled_label, lv_color_hex(kColorText), LV_PART_MAIN);
+
+  access_point_switch = lv_switch_create(enabled_row);
+  lv_obj_set_size(access_point_switch, uiScaled(60, 92), uiScaled(32, 50));
+  lv_obj_set_ext_click_area(access_point_switch, uiScaled(8, 11));
   if (wifilink::accessPointEnabled()) lv_obj_add_state(access_point_switch, LV_STATE_CHECKED);
   lv_obj_add_event_cb(access_point_switch, onAccessPointSwitchChanged, LV_EVENT_VALUE_CHANGED, nullptr);
 
   createAccessPointValueRow(access_point_dialog, "SSID", &access_point_name_value, AccessPointEdit::kName,
-                            kDialogHeaderHeight + uiScaled(46, 82));
+                            kDialogHeaderHeight + uiScaled(72, 114));
   createAccessPointValueRow(access_point_dialog, "Password", &access_point_password_value,
-                            AccessPointEdit::kPassword, kDialogHeaderHeight + uiScaled(86, 146));
+                            AccessPointEdit::kPassword, kDialogHeaderHeight + uiScaled(112, 178));
   updateAccessPointDialogValues();
 }
 
