@@ -265,7 +265,11 @@ void startShutdownUi() {
   shutdown_countdown_label = lv_label_create(shutdown_overlay);
   lv_label_set_text(shutdown_countdown_label, "10");
   lv_obj_set_style_text_color(shutdown_countdown_label, lv_color_hex(kColorText), LV_PART_MAIN);
+#if LV_FONT_MONTSERRAT_48
   lv_obj_set_style_text_font(shutdown_countdown_label, &lv_font_montserrat_48, LV_PART_MAIN);
+#else
+  lv_obj_set_style_text_font(shutdown_countdown_label, &lv_font_montserrat_20, LV_PART_MAIN);
+#endif
   lv_obj_set_style_text_align(shutdown_countdown_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_size(shutdown_countdown_label, LV_PCT(100), 64);
 
