@@ -2298,8 +2298,66 @@ void openFxControls() {
 
 }
 
+// ── Scrub strip ──────────────────────────────────────────────────────────────
+// LVGL 8 scrollbars are display-only, and a ~190-row effect list is dozens of
+// flings end to end.  Pressing in a strip along the right edge and dragging
+// maps the finger's position onto the whole scroll range instead, like
+// dragging a phone's scroll indicator.  A press in the strip without movement
+// still behaves as a normal tap so the gear column keeps working.
+constexpr lv_coord_t kScrubStripWidth = 18;
+constexpr lv_coord_t kScrubMoveThreshold = 4;
+lv_obj_t* scrub_target = nullptr;
+bool scrub_moved = false;
+lv_coord_t scrub_press_y = 0;
+
+bool scrubConsumedGesture() { return scrub_target && scrub_moved; }
+
+void onScrubStrip(lv_event_t* event) {
+  lv_obj_t* obj = lv_event_get_target(event);
+  lv_indev_t* indev = lv_indev_get_act();
+  if (!indev) return;
+  lv_point_t point;
+  lv_indev_get_point(indev, &point);
+  const lv_event_code_t code = lv_event_get_code(event);
+  lv_area_t area;
+  lv_obj_get_coords(obj, &area);
+  if (code == LV_EVENT_PRESSED) {
+    if (point.x < area.x2 - kScrubStripWidth) return;
+    scrub_target = obj;
+    scrub_moved = false;
+    scrub_press_y = point.y;
+    // Keep LVGL's own drag-to-scroll out of the way for this press.
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+  } else if (code == LV_EVENT_PRESSING) {
+    if (scrub_target != obj) return;
+    if (!scrub_moved && LV_ABS(point.y - scrub_press_y) < kScrubMoveThreshold) return;
+    scrub_moved = true;
+    const lv_coord_t height = lv_area_get_height(&area);
+    if (height <= 0) return;
+    const lv_coord_t range = lv_obj_get_scroll_top(obj) + lv_obj_get_scroll_bottom(obj);
+    lv_coord_t offset = point.y - area.y1;
+    if (offset < 0) offset = 0;
+    if (offset > height) offset = height;
+    lv_obj_scroll_to_y(obj, int32_t(range) * offset / height, LV_ANIM_OFF);
+  } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    if (scrub_target != obj) return;
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    scrub_target = nullptr;
+    scrub_moved = false;
+  }
+}
+
+void attachScrubStrip(lv_obj_t* scrollable) {
+  lv_obj_add_event_cb(scrollable, onScrubStrip, LV_EVENT_PRESSED, nullptr);
+  lv_obj_add_event_cb(scrollable, onScrubStrip, LV_EVENT_PRESSING, nullptr);
+  lv_obj_add_event_cb(scrollable, onScrubStrip, LV_EVENT_RELEASED, nullptr);
+  lv_obj_add_event_cb(scrollable, onScrubStrip, LV_EVENT_PRESS_LOST, nullptr);
+}
+
 void onEffectTableClicked(lv_event_t* event) {
   if (!wledControlsAvailable()) return;
+  // The table reports a cell "click" on release even after a scrub drag.
+  if (scrubConsumedGesture()) return;
   lv_obj_t* table = lv_event_get_target(event);
   uint16_t row = LV_TABLE_CELL_NONE;
   uint16_t col = LV_TABLE_CELL_NONE;
@@ -2892,6 +2950,7 @@ void createFxTab(lv_obj_t* tab) {
     lv_table_set_cell_value(table, i, 1, LV_SYMBOL_SETTINGS);
   }
   lv_obj_add_event_cb(table, onEffectTableClicked, LV_EVENT_VALUE_CHANGED, nullptr);
+  attachScrubStrip(table);
   lv_obj_add_event_cb(table, onEffectTableDrawPart, LV_EVENT_DRAW_PART_BEGIN, nullptr);
 
   revealSelectedEffect(false, false);
