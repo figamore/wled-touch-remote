@@ -93,7 +93,6 @@ constexpr uint8_t kLiveRetryMaxAttempts = 5;
 // pushed from any client, a command, or the periodic poll) keeps streaming
 // only this long before parking again.
 constexpr uint32_t kLiveIdleSampleMs = 2000;
-constexpr uint32_t kDeviceOfflineMs = 20000;
 constexpr uint32_t kCommandRetryMs = 750;
 constexpr uint8_t kMaxCommandAttempts = 3;
 // A state frame already in the WebSocket receive buffer can describe the
@@ -187,10 +186,14 @@ bool g_httpCommandInFlight = false;
 uint32_t g_httpCommandGeneration = 0;
 uint8_t g_httpCommandTarget = 0;
 char g_httpCommandPayload[kMaxRequestLength] = {};
-struct AccessPointProbeJob { uint32_t ipv4; uint32_t networkGeneration; };
+// One worker answers two questions with the same GET /json/info: "is this
+// hotspot client a WLED?" and "is this known LAN controller still alive?".
+enum class ProbeKind : uint8_t { kHotspotClient, kLiveness };
+struct AccessPointProbeJob { uint32_t ipv4; uint32_t networkGeneration; ProbeKind kind; };
 struct AccessPointProbeResult {
   uint32_t ipv4;
   uint32_t networkGeneration;
+  ProbeKind kind;
   bool success;
   bool hasMac;
   uint8_t mac[6];
@@ -618,6 +621,68 @@ bool rememberMdnsDevice(uint32_t ipv4, const char* hostname, const uint8_t* mac,
   return addressIndex < 0 || identityChanged;
 }
 
+// ── Liveness of controllers we are not connected to ──────────────────────────
+// Only the focused controller has a websocket telling us it is alive.  The
+// mDNS browse cannot stand in for the others: on ESP-IDF 5 it is a persistent
+// browse whose callback fires only for new or changed records, so a controller
+// is reported once at discovery and then never again while it sits there
+// answering.  Demoting on browse silence therefore marked every non-focused
+// controller offline within seconds and left it that way until WLED happened
+// to re-announce.  Instead, ask each of them directly, one at a time.
+constexpr uint32_t kLivenessProbeIntervalMs = 15000;
+size_t g_nextLivenessProbe = 0;
+uint32_t g_lastLivenessProbeAt = 0;
+
+#if !WLED_TOUCH_SIMULATOR
+void applyLivenessProbeResult(const AccessPointProbeResult& result, uint32_t now) {
+  const int index = deviceIndexForAddress(result.ipv4);
+  if (index < 0) return;
+  DeviceSlot& device = g_devices[index];
+  if (result.success) {
+    device.lastSeen = now;
+    if (!device.model.online) {
+      device.model.online = true;
+      g_deviceRev++;
+      Serial.printf("[WIFI] %s answered a liveness probe; back online\n", ipToString(result.ipv4).c_str());
+    }
+    return;
+  }
+  // The focused controller's socket is the authority on its own state; a
+  // probe that lost a race with a reconnect must not override it.
+  if (size_t(index) == g_wsDevice && g_wsConnected) return;
+  if (device.model.online) {
+    device.model.online = false;
+    g_deviceRev++;
+    Serial.printf("[WIFI] %s did not answer a liveness probe; offline\n", ipToString(result.ipv4).c_str());
+  }
+}
+#endif
+
+void probeDeviceLiveness(uint32_t now) {
+#if !WLED_TOUCH_SIMULATOR
+  if (!g_accessPointProbeJobs || g_accessPointProbeInFlight || wifilink::accessPointActive()) return;
+  if (!wifilink::connected() || g_deviceCount < 2) return;
+  if (now - g_lastLivenessProbeAt < kLivenessProbeIntervalMs / std::max<size_t>(1, g_deviceCount - 1)) return;
+  // Round-robin over every controller except the one the websocket covers.
+  for (size_t attempt = 0; attempt < g_deviceCount; ++attempt) {
+    const size_t index = (g_nextLivenessProbe + attempt) % g_deviceCount;
+    if (index == g_wsDevice && (g_wsConnected || g_wsHandshaking)) continue;
+    if (!g_devices[index].ipv4) continue;
+    if (now - g_devices[index].lastSeen < kLivenessProbeIntervalMs) continue;
+    const AccessPointProbeJob job{g_devices[index].ipv4, g_networkGeneration, ProbeKind::kLiveness};
+    if (xQueueSend(g_accessPointProbeJobs, &job, 0) != pdTRUE) return;
+    g_accessPointProbeInFlight = true;
+    g_accessPointProbeAddress = job.ipv4;
+    g_accessPointProbeGeneration = job.networkGeneration;
+    g_lastLivenessProbeAt = now;
+    g_nextLivenessProbe = index + 1;
+    return;
+  }
+#else
+  (void)now;
+#endif
+}
+
 // The remote is the AP's DHCP server, so this is more reliable than waiting
 // for a controller to send an mDNS announcement. HTTP identification runs on
 // a worker; this loop task only submits one exact DHCP client at a time.
@@ -631,7 +696,9 @@ void pumpAccessPointProbeResults(uint32_t now) {
       continue;
     }
     g_accessPointProbeInFlight = false;
-    if (!wifilink::accessPointActive() || result.networkGeneration != g_networkGeneration) continue;
+    if (result.networkGeneration != g_networkGeneration) continue;
+    if (result.kind == ProbeKind::kLiveness) { applyLivenessProbeResult(result, now); continue; }
+    if (!wifilink::accessPointActive()) continue;
     if (!result.success) {
       if (result.ipv4 != g_lastAccessPointProbeFailure ||
           now - g_lastAccessPointProbeFailureAt >= 10000) {
@@ -675,7 +742,7 @@ void probeAccessPointClients(uint32_t now) {
   if (!address || (knownDevice >= 0 && g_devices[knownDevice].model.online)) return;
 #if !WLED_TOUCH_SIMULATOR
   if (!g_accessPointProbeJobs) return;
-  const AccessPointProbeJob job{address, g_networkGeneration};
+  const AccessPointProbeJob job{address, g_networkGeneration, ProbeKind::kHotspotClient};
   if (xQueueSend(g_accessPointProbeJobs, &job, 0) != pdTRUE) return;
   g_accessPointProbeInFlight = true;
   g_accessPointProbeAddress = address;
@@ -1363,6 +1430,7 @@ void accessPointProbeTask(void*) {
     AccessPointProbeResult result{};
     result.ipv4 = job.ipv4;
     result.networkGeneration = job.networkGeneration;
+    result.kind = job.kind;
     if (job.networkGeneration == g_networkGeneration) {
       std::string name;
       result.success = isWled(job.ipv4, name, result.mac, &result.hasMac);
@@ -1487,7 +1555,11 @@ bool decodeLive(const uint8_t* data, size_t length) {
   return true;
 }
 
-void socketDisconnected(bool connectionLost = true, bool markOffline = true) {
+// A dropped socket says nothing about whether the controller is gone: WLED
+// closes idle websockets and the reconnect lands three seconds later.  The
+// connection status reports the gap; only a failed liveness probe (or losing
+// Wi-Fi) demotes a controller.
+void socketDisconnected(bool connectionLost = true) {
   if (g_ws.connected()) g_ws.stop();
   const bool wasConnected = g_wsConnected;
   g_wsConnected = false;
@@ -1504,12 +1576,6 @@ void socketDisconnected(bool connectionLost = true, bool markOffline = true) {
   if (wasConnected && connectionLost) {
     g_connectionLostAt = millis();
     Serial.println("[WIFI] WLED websocket disconnected");
-  }
-  if (markOffline && wasConnected && g_wsDevice < g_deviceCount &&
-      g_devices[g_wsDevice].model.online) {
-    g_devices[g_wsDevice].model.online = false;
-    if (g_wsDevice == g_focusDevice) g_model = g_devices[g_wsDevice].model;
-    g_stateRev++; g_deviceRev++;
   }
 }
 
@@ -1769,7 +1835,8 @@ void checkSocket(uint32_t now) {
   if (g_wsDevice == g_focusDevice && (g_wsConnected || g_wsHandshaking)) return;
   if (now - g_lastSocketAttempt < kReconnectIntervalMs) return;
   // Switching the user's selected controller is expected, not a connection
-  // failure. Keep that transition out of the "connection lost" state.
+  // failure: keep it out of the "connection lost" state and do not mark the
+  // previous controller offline just because it is no longer our socket peer.
   if (g_wsDevice != SIZE_MAX) socketDisconnected(false);
   g_wsDevice = g_focusDevice;
   g_lastSocketAttempt = now;
@@ -2022,6 +2089,7 @@ void loop(uint32_t now) {
   if (g_mdnsStarted && !wifilink::accessPointActive()) pumpDiscovery(now);
   pumpAccessPointProbeResults(now);
   probeAccessPointClients(now);
+  probeDeviceLiveness(now);
   checkSocket(now);
   pumpSocket();
   if (g_wsConnected) {
@@ -2068,7 +2136,7 @@ void loop(uint32_t now) {
             // starves completely. Preserve the controller's online state so
             // this brief repair does not flash a false disconnect in the UI.
             Serial.println("[WIFI] WLED websocket stopped responding; reconnecting");
-            socketDisconnected(false, false);
+            socketDisconnected(false);
             g_lastSocketAttempt = now - kReconnectIntervalMs;
             break;
           }
@@ -2114,10 +2182,6 @@ void loop(uint32_t now) {
     if (now - g_lastPoll >= kStatePollIntervalMs) { g_lastPoll = now; socketSendText("{\"v\":true}"); }
   }
   pumpPresetFetch(now);
-  for (size_t i = 0; i < g_deviceCount; ++i) {
-    if (i != g_wsDevice && g_devices[i].model.online && g_devices[i].lastSeen &&
-        now - g_devices[i].lastSeen > kDeviceOfflineMs) { g_devices[i].model.online = false; g_deviceRev++; }
-  }
 #endif
   pumpTransactions(now);
   updateConnectionStatus(now);

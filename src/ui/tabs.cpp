@@ -1803,7 +1803,9 @@ void showTargetDialog() {
     styleButton(button, true);
     lv_obj_set_height(button, uiScaled(38, 56));
     lv_obj_set_flex_grow(button, 1);
-    if (!device.online) lv_obj_add_state(button, LV_STATE_DISABLED);
+    // An offline controller stays selectable: choosing it focuses it, and the
+    // reconnect attempt is the fastest way to learn whether it is really gone.
+    if (!device.online) lv_obj_set_style_opa(button, LV_OPA_60, LV_PART_MAIN);
     if (!wled::targetingAll() && wled::focusedDevice() == i) lv_obj_add_state(button, LV_STATE_CHECKED);
     lv_obj_add_event_cb(button, onTargetSelected, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<uintptr_t>(i + 1)));
