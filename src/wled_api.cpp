@@ -104,6 +104,7 @@ struct DeviceSlot {
   uint8_t id[6] = {};
   uint32_t ipv4 = 0;
   uint32_t lastSeen = 0;
+  uint8_t missedProbes = 0;
   char alias[kMaxDeviceAliasLength + 1] = {};
   Model model;
   uint8_t pendingPreset = 0;
@@ -630,6 +631,7 @@ bool rememberMdnsDevice(uint32_t ipv4, const char* hostname, const uint8_t* mac,
 // controller offline within seconds and left it that way until WLED happened
 // to re-announce.  Instead, ask each of them directly, one at a time.
 constexpr uint32_t kLivenessProbeIntervalMs = 15000;
+constexpr uint8_t kProbeMissesBeforeOffline = 2;
 size_t g_nextLivenessProbe = 0;
 uint32_t g_lastLivenessProbeAt = 0;
 
@@ -640,6 +642,7 @@ void applyLivenessProbeResult(const AccessPointProbeResult& result, uint32_t now
   DeviceSlot& device = g_devices[index];
   if (result.success) {
     device.lastSeen = now;
+    device.missedProbes = 0;
     if (!device.model.online) {
       device.model.online = true;
       g_deviceRev++;
@@ -650,6 +653,10 @@ void applyLivenessProbeResult(const AccessPointProbeResult& result, uint32_t now
   // The focused controller's socket is the authority on its own state; a
   // probe that lost a race with a reconnect must not override it.
   if (size_t(index) == g_wsDevice && g_wsConnected) return;
+  // WLED can be too busy for one request (it serves the websocket and the
+  // preset fetch on the same small heap); one miss is not absence.
+  if (device.missedProbes < 255) ++device.missedProbes;
+  if (device.missedProbes < kProbeMissesBeforeOffline) return;
   if (device.model.online) {
     device.model.online = false;
     g_deviceRev++;
