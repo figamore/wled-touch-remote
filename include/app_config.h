@@ -6,6 +6,7 @@
 #define WLED_BOARD_CYD 0
 #define WLED_BOARD_JC4880P443 1
 #define WLED_BOARD_JC8048W550C 2
+#define WLED_BOARD_JC4827W543C 3
 
 #ifndef WLED_BOARD
 #define WLED_BOARD WLED_BOARD_CYD
@@ -16,8 +17,28 @@
 #define WLED_PANEL_SPI (WLED_BOARD == WLED_BOARD_CYD)
 #define WLED_PANEL_DSI (WLED_BOARD == WLED_BOARD_JC4880P443)
 #define WLED_PANEL_RGB (WLED_BOARD == WLED_BOARD_JC8048W550C)
-#define WLED_TOUCH_GT911 (WLED_PANEL_DSI || WLED_PANEL_RGB)
-#define WLED_BOARD_HAS_PSRAM (WLED_PANEL_DSI || WLED_PANEL_RGB)
+#define WLED_PANEL_QSPI (WLED_BOARD == WLED_BOARD_JC4827W543C)
+#define WLED_TOUCH_GT911 (WLED_PANEL_DSI || WLED_PANEL_RGB || WLED_PANEL_QSPI)
+#define WLED_BOARD_HAS_PSRAM (WLED_PANEL_DSI || WLED_PANEL_RGB || WLED_PANEL_QSPI)
+
+#if WLED_BOARD == WLED_BOARD_JC4827W543C
+// Guition JC4827W543C: ESP32-S3 with a 4.3" 480x272 NV3041A panel on a QSPI
+// bus and GT911 touch.  The panel is wired landscape and rotates itself, so
+// the flipped view is a MADCTL change rather than a framebuffer transform.
+#define WLED_SCREEN_WIDTH 480
+#define WLED_SCREEN_HEIGHT 272
+// 272 px of height is closer to the CYD's 240 than to the 480+ px of the
+// other large panels, and the pixel pitch matches the CYD too, so this board
+// keeps the compact fonts and touch targets on its wider canvas.
+#define WLED_LARGE_UI 0
+// Thirty-two lines is 30 KiB per buffer; the pair stays in internal DMA RAM.
+#define WLED_LVGL_BUFFER_LINES 32
+#define WLED_DISPLAY_ROTATION 0
+#define WLED_DISPLAY_ROTATION_FLIPPED 2
+#ifndef WLED_CYD_ENABLE_BATTERY
+#define WLED_CYD_ENABLE_BATTERY 0
+#endif
+#endif
 
 #if WLED_BOARD == WLED_BOARD_JC8048W550C
 // Jingcai JC8048W550C (also sold as Sunton ESP32-8048S050): ESP32-S3 with a 5"
@@ -47,6 +68,11 @@
 #ifndef WLED_CYD_ENABLE_BATTERY
 #define WLED_CYD_ENABLE_BATTERY 0
 #endif
+#endif
+
+// The large fonts and touch targets suit the 480x800 and 800x480 panels.
+#ifndef WLED_LARGE_UI
+#define WLED_LARGE_UI (WLED_SCREEN_WIDTH >= 480)
 #endif
 
 // CYD panels are wired portrait too, but the app runs them landscape.
@@ -139,18 +165,49 @@
 #define CYD_PROFILE_ST7789_XPT2046 4
 #define CYD_PROFILE_ST7701_GT911 5
 #define CYD_PROFILE_ST7262_GT911 6
+#define CYD_PROFILE_NV3041A_GT911 7
 
 #ifndef CYD_HARDWARE_PROFILE
 #if WLED_BOARD == WLED_BOARD_JC4880P443
 #define CYD_HARDWARE_PROFILE CYD_PROFILE_ST7701_GT911
 #elif WLED_BOARD == WLED_BOARD_JC8048W550C
 #define CYD_HARDWARE_PROFILE CYD_PROFILE_ST7262_GT911
+#elif WLED_BOARD == WLED_BOARD_JC4827W543C
+#define CYD_HARDWARE_PROFILE CYD_PROFILE_NV3041A_GT911
 #else
 #define CYD_HARDWARE_PROFILE CYD_PROFILE_AUTO
 #endif
 #endif
 
-#if WLED_BOARD == WLED_BOARD_JC8048W550C
+#if WLED_BOARD == WLED_BOARD_JC4827W543C
+
+// Some units ship with the module's antenna jumper on R7, the U.FL connector;
+// without an antenna there, scans work but every join fails with AUTH_EXPIRE.
+// Moving the 0 ohm resistor to R6 selects the PCB antenna instead.
+
+// The NV3041A has no reset line broken out; it is reset by command instead.
+#define JC4827_TFT_BL 1
+#define JC4827_QSPI_CS 45
+#define JC4827_QSPI_SCLK 47
+#define JC4827_QSPI_D0 21
+#define JC4827_QSPI_D1 48
+#define JC4827_QSPI_D2 40
+#define JC4827_QSPI_D3 39
+#define JC4827_QSPI_PCLK_HZ (32 * 1000 * 1000)
+// MADCTL values for the upright and flipped views; the panel's own scan
+// direction needs both mirror bits set to appear upright.
+#define JC4827_MADCTL_NORMAL 0xC0
+#define JC4827_MADCTL_FLIPPED 0x00
+
+#define GT911_TOUCH_SDA 8
+#define GT911_TOUCH_SCL 4
+#define GT911_TOUCH_RST 38
+#define GT911_TOUCH_INT 3
+#define GT911_TOUCH_ADDR 0x5D
+
+#define CYD_BOARD_CAPACITIVE 1
+
+#elif WLED_BOARD == WLED_BOARD_JC8048W550C
 
 // The ST7262 is a plain RGB receiver: no command bus and no init sequence, so
 // only the parallel timing pins, the backlight and the GT911 are configured.

@@ -185,9 +185,10 @@
       }
       .device-option {
         position: relative;
-        /* Three cards share a row on the card's full width; below that they
-           wrap rather than squeezing the board names. */
-        flex: 1 1 8rem;
+        /* Four cards sit two to a row, which avoids a lone straggler on the
+           last row; below 8rem per card they stack instead of squeezing the
+           board names. */
+        flex: 1 1 max(8rem, calc(50% - 0.375rem));
         min-width: 0;
         padding: 0.55rem;
         border: 1px solid var(--border-strong);
@@ -579,6 +580,14 @@
               <span class="device-radio" aria-hidden="true"></span>
               <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/case/esp32-s3-jc8048w550-back.png" alt="ESP32-S3 JC8048W550C" />
             </label>
+            <!-- board:jc4827w543c -->
+            <label class="device-option">
+              <input type="radio" name="device" value="manifest-jc4827w543c.json" />
+              <span class="device-name">ESP32-S3 <small>JC4827W543C</small></span>
+              <span class="device-radio" aria-hidden="true"></span>
+              <img src="https://raw.githubusercontent.com/figamore/wled-touch-remote/main/screenshots/case/esp32-s3-jc4827w543-back.png" alt="ESP32-S3 JC4827W543C" />
+            </label>
+            <!-- /board:jc4827w543c -->
           </div>
 
           <div class="device-simulators">

@@ -1,0 +1,8 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# 4 MB ESP32-S3: two 1.94 MiB app slots for verified OTA updates. Nothing uses
+# a filesystem partition, so the space goes to the app slots instead.
+nvs,      data, nvs,     0x9000,  0x5000,
+otadata,  data, ota,     0xe000,  0x2000,
+app0,     app,  ota_0,   0x10000, 0x1F0000,
+app1,     app,  ota_1,   0x200000,0x1F0000,
+coredump, data, coredump,0x3F0000,0x10000,

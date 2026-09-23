@@ -46,6 +46,8 @@ jobs:
           cp -a .pio/build/jc4880p443 release-build/jc4880p443
           pio run -e jc8048w550c
           cp -a .pio/build/jc8048w550c release-build/jc8048w550c
+          pio run -e jc4827w543c
+          cp -a .pio/build/jc4827w543c release-build/jc4827w543c
 
       - name: Package firmware
         run: |
@@ -87,6 +89,7 @@ jobs:
           package_env esp32-cyd esp32 4MB 0x1000
           package_env jc4880p443 esp32p4 16MB 0x2000
           package_env jc8048w550c esp32s3 16MB 0x0
+          package_env jc4827w543c esp32s3 4MB 0x0
           cp remote.json "dist/remote.json"
           sha256sum dist/* > "dist/SHA256SUMS.txt"
 

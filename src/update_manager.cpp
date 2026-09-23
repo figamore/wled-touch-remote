@@ -107,6 +107,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 constexpr const char* kBuildTarget = "jc4880p443";
 #elif WLED_BOARD == WLED_BOARD_JC8048W550C
 constexpr const char* kBuildTarget = "jc8048w550c";
+#elif WLED_BOARD == WLED_BOARD_JC4827W543C
+constexpr const char* kBuildTarget = "jc4827w543c";
 #else
 constexpr const char* kBuildTarget = "esp32-cyd";
 #endif

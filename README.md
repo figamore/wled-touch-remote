@@ -117,7 +117,7 @@ Settings are saved on the ESP32 and restored after reboot.
 
 ### Software updates
 
-Open **Settings → Software Update → Check for Updates** to compare the installed semantic version with the newest compatible stable GitHub Release. Drafts and prereleases are ignored. The remote only accepts the application firmware asset for its own board (`esp32-cyd`, `jc4880p443`, or `jc8048w550c`), downloads it, and verifies the GitHub-provided SHA-256 digest before committing it to the OTA partition.
+Open **Settings → Software Update → Check for Updates** to compare the installed semantic version with the newest compatible stable GitHub Release. Drafts and prereleases are ignored. The remote only accepts the application firmware asset for its own board (`esp32-cyd`, `jc4880p443`, `jc8048w550c`, or `jc4827w543c`), downloads it, and verifies the GitHub-provided SHA-256 digest before committing it to the OTA partition.
 
 Keep the remote powered and connected to Wi-Fi during installation. A download, validation, or install failure aborts the pending OTA image and leaves the currently running firmware intact.
 
@@ -134,9 +134,12 @@ Only the following devices are officially supported and tested:
 
 All other hardware is unsupported. In particular, the following CYD variants are untested and are **not** officially supported:
 - **Guition JC8048W550C, 5-inch 800x480 display** (untested)
+- **Guition JC4827W543C, 4.3-inch 480x272 capacitive display** - see the antenna note below
 - **ESP32-024 and ESP32-2432S028, and other resistive CYDs** - implemented for only a few variants, not guaranteed to work on many variants due to the large combination of touch/display drivers; **STRONGLY NOT RECOMMENDED**
 
 On first boot, the firmware shows a one-time touch setup screen to confirm the touch hardware.
+
+**JC4827W543C antenna:** its ESP32-S3 module has both a PCB antenna and a U.FL connector, selected by a 0 Ω resistor beside the connector. Some units ship with the resistor on R7, which routes the radio to the U.FL connector. With nothing attached, the remote still lists nearby networks but cannot join them, and the join fails as if the password were wrong. Either attach a 2.4 GHz U.FL (IPEX MHF1) antenna, or move the resistor from R7 to R6 to use the PCB antenna.
 
 ## Bill of materials
 
@@ -237,7 +240,7 @@ pio run -e esp32-cyd
 pio run -e esp32-cyd -t upload
 ```
 
-For the JC4880P443, use `pio run -e jc4880p443`; for the JC8048W550C, use `pio run -e jc8048w550c`. See `platformio.ini` for all available environments and `include/app_config.h` for board-specific options.
+For the JC4880P443, use `pio run -e jc4880p443`; for the JC8048W550C, use `pio run -e jc8048w550c`; for the JC4827W543C, use `pio run -e jc4827w543c`. See `platformio.ini` for all available environments and `include/app_config.h` for board-specific options.
 
 ## macOS simulator
 
@@ -257,6 +260,10 @@ pio run -e macos-jc4880p443
 # 800x480 ESP32-S3 JC8048W550C
 pio run -e macos-jc8048w550c
 .pio/build/macos-jc8048w550c/program
+
+# 480x272 ESP32-S3 JC4827W543C
+pio run -e macos-jc4827w543c
+.pio/build/macos-jc4827w543c/program
 ```
 
 Each command opens a resizable SDL window. Click or drag in the window to

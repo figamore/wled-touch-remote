@@ -37,6 +37,13 @@
 #include <esp_lcd_panel_rgb.h>
 #endif
 
+#if WLED_PANEL_QSPI && !WLED_TOUCH_SIMULATOR
+#include <driver/spi_master.h>
+#include <esp_heap_caps.h>
+#include <esp_lcd_io_spi.h>
+#include <esp_lcd_panel_io.h>
+#endif
+
 #if WLED_TOUCH_SIMULATOR
 uint16_t sim_framebuffer[kScreenWidth * kScreenHeight] = {};
 #endif
@@ -49,6 +56,11 @@ lv_disp_draw_buf_t draw_buf;
 // taken from internal RAM and only fall back to PSRAM if that fails.
 lv_color_t* rgb_draw_buf_1 = nullptr;
 lv_color_t* rgb_draw_buf_2 = nullptr;
+#elif WLED_PANEL_QSPI && !WLED_TOUCH_SIMULATOR
+// Allocated from internal DMA-capable RAM when the panel bus comes up, since
+// the boot art is sent through the first one before LVGL starts.
+lv_color_t* qspi_draw_buf_1 = nullptr;
+lv_color_t* qspi_draw_buf_2 = nullptr;
 #elif WLED_BOARD == WLED_BOARD_JC4880P443
 // A full-frame LVGL buffer lets the renderer work without 40-line tiles.  Keep
 // the small pair only as a safe fallback if external RAM is unavailable.
@@ -104,6 +116,10 @@ esp_lcd_panel_io_handle_t dsi_io = nullptr;
 esp_lcd_panel_handle_t dpi_panel = nullptr;
 esp_ldo_channel_handle_t dsi_ldo = nullptr;
 uint16_t* dsi_framebuffer = nullptr;
+#elif WLED_PANEL_QSPI
+esp_lcd_panel_io_handle_t qspi_io = nullptr;
+lv_disp_drv_t* volatile qspi_flushing_disp = nullptr;
+volatile bool qspi_dma_done = true;
 #elif WLED_PANEL_RGB
 esp_lcd_panel_handle_t rgb_panel = nullptr;
 uint16_t* rgb_framebuffer = nullptr;
@@ -136,6 +152,25 @@ void setBacklight(uint8_t pin, uint8_t brightness) {
   ledcWrite(pin, brightness);
 #endif
 }
+
+#if !WLED_TOUCH_SIMULATOR && (WLED_PANEL_SPI || WLED_PANEL_QSPI)
+void swapRgb565Bytes(lv_color_t* pixels, size_t count) {
+  // LCD controllers consume RGB565 most-significant byte first, whereas LVGL
+  // stores each color as a native little-endian uint16_t on ESP32.
+  while (count >= 4) {
+    pixels[0].full = __builtin_bswap16(pixels[0].full);
+    pixels[1].full = __builtin_bswap16(pixels[1].full);
+    pixels[2].full = __builtin_bswap16(pixels[2].full);
+    pixels[3].full = __builtin_bswap16(pixels[3].full);
+    pixels += 4;
+    count -= 4;
+  }
+  while (count--) {
+    pixels->full = __builtin_bswap16(pixels->full);
+    ++pixels;
+  }
+}
+#endif
 
 #if !WLED_TOUCH_SIMULATOR && WLED_PANEL_SPI
 void spiCommand(uint8_t command, const uint8_t* data = nullptr, size_t length = 0) {
@@ -262,23 +297,6 @@ void setCydDmaWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
   const uint8_t row[] = {uint8_t(y0 >> 8), uint8_t(y0), uint8_t(y1 >> 8), uint8_t(y1)};
   esp_lcd_panel_io_tx_param(cyd_panel_io, 0x2A, column, sizeof(column));
   esp_lcd_panel_io_tx_param(cyd_panel_io, 0x2B, row, sizeof(row));
-}
-
-void swapRgb565Bytes(lv_color_t* pixels, size_t count) {
-  // LCD controllers consume RGB565 most-significant byte first, whereas LVGL
-  // stores each color as a native little-endian uint16_t on ESP32.
-  while (count >= 4) {
-    pixels[0].full = __builtin_bswap16(pixels[0].full);
-    pixels[1].full = __builtin_bswap16(pixels[1].full);
-    pixels[2].full = __builtin_bswap16(pixels[2].full);
-    pixels[3].full = __builtin_bswap16(pixels[3].full);
-    pixels += 4;
-    count -= 4;
-  }
-  while (count--) {
-    pixels->full = __builtin_bswap16(pixels->full);
-    ++pixels;
-  }
 }
 
 bool waitForCydDma() {
@@ -454,14 +472,23 @@ void gt911ClearStatus() {
 
 bool initGt911Touch() {
   // GT911 needs a hardware reset before its I2C interface becomes reliable.
-  // Its INT pin is not connected on either board, and the JC8048W550C leaves
-  // the reset line unwired too, so probe both legal addresses.
+  // Where INT is wired, holding it low through reset latches address 0x5D;
+  // elsewhere INT floats, and the JC8048W550C leaves the reset line unwired
+  // too, so probe both legal addresses.
   if (GT911_TOUCH_RST >= 0) {
+    if (GT911_TOUCH_INT >= 0) {
+      pinMode(GT911_TOUCH_INT, OUTPUT);
+      digitalWrite(GT911_TOUCH_INT, LOW);
+    }
     pinMode(GT911_TOUCH_RST, OUTPUT);
     digitalWrite(GT911_TOUCH_RST, LOW);
-    delay(5);
+    delay(10);
     digitalWrite(GT911_TOUCH_RST, HIGH);
-    delay(50);
+    delay(GT911_TOUCH_INT >= 0 ? 10 : 50);
+    if (GT911_TOUCH_INT >= 0) {
+      delay(50);
+      pinMode(GT911_TOUCH_INT, INPUT);
+    }
   }
   Wire.end();
   Wire.begin(GT911_TOUCH_SDA, GT911_TOUCH_SCL, 400000);
@@ -469,7 +496,13 @@ bool initGt911Touch() {
   for (const uint8_t address : {uint8_t(GT911_TOUCH_ADDR), uint8_t(0x14)}) {
     if (gt911Read(address, 0x814E, &status, 1)) {
       gt911_address = address;
-      Serial.printf("GT911: found at 0x%02X\n", address);
+      // Touch reports are in the controller's configured resolution, which
+      // must match the panel for readGt911Touch() to accept them.
+      uint8_t resolution[4] = {};
+      gt911Read(address, 0x8048, resolution, sizeof(resolution));
+      Serial.printf("GT911: found at 0x%02X, %ux%u\n", address,
+                    unsigned(resolution[0] | resolution[1] << 8),
+                    unsigned(resolution[2] | resolution[3] << 8));
       return true;
     }
   }
@@ -605,6 +638,155 @@ void drawRgbPixels(uint16_t x, uint16_t y, uint16_t width, uint16_t height, cons
 }
 #endif
 
+#if WLED_PANEL_QSPI && !WLED_TOUCH_SIMULATOR
+// NV3041A QSPI framing: opcode 0x02 writes a register over one data line and
+// opcode 0x32 streams pixels over all four, with the register in the middle
+// byte of the 24-bit address that follows.  Pixel runs use RAMWRC (0x3C)
+// after a plain RAMWR, which is the sequence the vendor driver sends.
+constexpr int qspiRegister(uint8_t reg) { return (0x02 << 24) | (int(reg) << 8); }
+constexpr int kQspiPixelCommand = (0x32 << 24) | (0x3C << 8);
+
+bool qspiWrite(uint8_t reg, std::initializer_list<uint8_t> params = {}) {
+  return esp_lcd_panel_io_tx_param(qspi_io, qspiRegister(reg), params.size() ? params.begin() : nullptr,
+                                   params.size()) == ESP_OK;
+}
+
+bool onQspiColorTransferDone(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void*) {
+  lv_disp_drv_t* disp = qspi_flushing_disp;
+  if (disp) {
+    qspi_flushing_disp = nullptr;
+    lv_disp_flush_ready(disp);
+  }
+  qspi_dma_done = true;
+  return false;
+}
+
+bool waitForQspiDma() {
+  constexpr uint32_t kTimeoutMs = 1000;
+  const uint32_t started = millis();
+  while (!qspi_dma_done) {
+    if (millis() - started >= kTimeoutMs) {
+      Serial.println("Display QSPI: DMA wait timed out");
+      return false;
+    }
+    delay(1);
+  }
+  return true;
+}
+
+void setQspiWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+  qspiWrite(0x2A, {uint8_t(x0 >> 8), uint8_t(x0), uint8_t(x1 >> 8), uint8_t(x1)});
+  qspiWrite(0x2B, {uint8_t(y0 >> 8), uint8_t(y0), uint8_t(y1 >> 8), uint8_t(y1)});
+  qspiWrite(0x2C);
+}
+
+// Sends the first `lines` rows of qspi_draw_buf_1, already byte-swapped, and
+// waits so the caller can refill the buffer.
+bool sendQspiStrip(uint16_t x, uint16_t y, uint16_t width, uint16_t lines) {
+  setQspiWindow(x, y, x + width - 1, y + lines - 1);
+  qspi_dma_done = false;
+  const esp_err_t error = esp_lcd_panel_io_tx_color(qspi_io, kQspiPixelCommand, qspi_draw_buf_1,
+                                                    size_t(width) * lines * sizeof(lv_color_t));
+  if (error != ESP_OK) {
+    qspi_dma_done = true;
+    Serial.printf("Display QSPI: direct draw failed: %s\n", esp_err_to_name(error));
+    return false;
+  }
+  return waitForQspiDma();
+}
+
+void drawQspiPixels(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint16_t* pixels) {
+  if (!qspi_io || !waitForQspiDma()) return;
+  for (uint16_t row = 0; row < height; row += kLvglBufferLines) {
+    const uint16_t lines = min<uint16_t>(kLvglBufferLines, height - row);
+    const size_t pixel_count = size_t(width) * lines;
+    for (size_t i = 0; i < pixel_count; ++i) {
+      qspi_draw_buf_1[i].full = __builtin_bswap16(pixels[size_t(row) * width + i]);
+    }
+    if (!sendQspiStrip(x, y + row, width, lines)) return;
+  }
+}
+
+bool initQspiPanel() {
+  constexpr size_t buffer_bytes = size_t(kScreenWidth) * kLvglBufferLines * sizeof(lv_color_t);
+  qspi_draw_buf_1 = static_cast<lv_color_t*>(heap_caps_malloc(buffer_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+  // The second buffer only lets LVGL draw ahead; one is enough to run.
+  qspi_draw_buf_2 = static_cast<lv_color_t*>(heap_caps_malloc(buffer_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+  if (!qspi_draw_buf_1) {
+    Serial.println("Display QSPI: no DMA memory for a draw buffer");
+    return false;
+  }
+
+  spi_bus_config_t bus_config = {};
+  bus_config.sclk_io_num = JC4827_QSPI_SCLK;
+  bus_config.data0_io_num = JC4827_QSPI_D0;
+  bus_config.data1_io_num = JC4827_QSPI_D1;
+  bus_config.data2_io_num = JC4827_QSPI_D2;
+  bus_config.data3_io_num = JC4827_QSPI_D3;
+  bus_config.data4_io_num = -1;
+  bus_config.data5_io_num = -1;
+  bus_config.data6_io_num = -1;
+  bus_config.data7_io_num = -1;
+  bus_config.max_transfer_sz = buffer_bytes;
+  esp_err_t error = spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_CH_AUTO);
+  if (error == ESP_OK) {
+    esp_lcd_panel_io_spi_config_t io_config = {};
+    io_config.cs_gpio_num = JC4827_QSPI_CS;
+    io_config.dc_gpio_num = -1;
+    io_config.spi_mode = 0;
+    io_config.pclk_hz = JC4827_QSPI_PCLK_HZ;
+    io_config.trans_queue_depth = 4;
+    io_config.on_color_trans_done = onQspiColorTransferDone;
+    io_config.lcd_cmd_bits = 32;
+    io_config.lcd_param_bits = 8;
+    io_config.flags.quad_mode = 1;
+    error = esp_lcd_new_panel_io_spi(SPI2_HOST, &io_config, &qspi_io);
+  }
+  if (error != ESP_OK) {
+    Serial.printf("Display QSPI: bus init failed: %s\n", esp_err_to_name(error));
+    qspi_io = nullptr;
+    return false;
+  }
+
+  qspiWrite(0x01);  // Software reset; the panel's reset line is not wired.
+  delay(120);
+  // JC4827W543's NV3041A vendor sequence: power, gate and source timing, then
+  // gamma, all in the 0xA5 vendor page.  Kept here beside the bus setup, like
+  // the ST7701S sequence, rather than hidden in a graphics library.
+  static constexpr uint8_t kInit[][2] = {
+      {0xFF, 0xA5}, {0x36, JC4827_MADCTL_NORMAL}, {0x3A, 0x01}, {0x41, 0x03}, {0x44, 0x15},
+      {0x45, 0x15}, {0x7D, 0x03}, {0xC1, 0xBB}, {0xC2, 0x05}, {0xC3, 0x10}, {0xC6, 0x3E},
+      {0xC7, 0x25}, {0xC8, 0x11}, {0x7A, 0x5F}, {0x6F, 0x44}, {0x78, 0x70}, {0xC9, 0x00},
+      {0x67, 0x21}, {0x51, 0x0A}, {0x52, 0x76}, {0x53, 0x0A}, {0x54, 0x76}, {0x46, 0x0A},
+      {0x47, 0x2A}, {0x48, 0x0A}, {0x49, 0x1A}, {0x56, 0x43}, {0x57, 0x42}, {0x58, 0x3C},
+      {0x59, 0x64}, {0x5A, 0x41}, {0x5B, 0x3C}, {0x5C, 0x02}, {0x5D, 0x3C}, {0x5E, 0x1F},
+      {0x60, 0x80}, {0x61, 0x3F}, {0x62, 0x21}, {0x63, 0x07}, {0x64, 0xE0}, {0x65, 0x02},
+      {0xCA, 0x20}, {0xCB, 0x52}, {0xCC, 0x10}, {0xCD, 0x42}, {0xD0, 0x20}, {0xD1, 0x52},
+      {0xD2, 0x10}, {0xD3, 0x42}, {0xD4, 0x0A}, {0xD5, 0x32},
+      {0x80, 0x00}, {0xA0, 0x00}, {0x81, 0x07}, {0xA1, 0x06}, {0x82, 0x02}, {0xA2, 0x01},
+      {0x86, 0x11}, {0xA6, 0x10}, {0x87, 0x27}, {0xA7, 0x27}, {0x83, 0x37}, {0xA3, 0x37},
+      {0x84, 0x35}, {0xA4, 0x35}, {0x85, 0x3F}, {0xA5, 0x3F}, {0x88, 0x0B}, {0xA8, 0x0B},
+      {0x89, 0x14}, {0xA9, 0x14}, {0x8A, 0x1A}, {0xAA, 0x1A}, {0x8B, 0x0A}, {0xAB, 0x0A},
+      {0x8C, 0x14}, {0xAC, 0x08}, {0x8D, 0x17}, {0xAD, 0x07}, {0x8E, 0x16}, {0xAE, 0x06},
+      {0x8F, 0x1B}, {0xAF, 0x07}, {0x90, 0x04}, {0xB0, 0x04}, {0x91, 0x0A}, {0xB1, 0x0A},
+      {0x92, 0x16}, {0xB2, 0x15},
+      {0xFF, 0x00},
+  };
+  bool ok = true;
+  for (const auto& entry : kInit) ok &= qspiWrite(entry[0], {entry[1]});
+  ok &= qspiWrite(0x11, {0x00});  // Sleep out
+  delay(120);
+  ok &= qspiWrite(0x21);  // The IPS panel needs inversion on for true colors.
+  ok &= qspiWrite(0x29, {0x00});  // Display on
+  if (!ok) {
+    Serial.println("Display QSPI: panel did not accept its init sequence");
+    return false;
+  }
+  initGt911Touch();
+  return true;
+}
+#endif
+
 void mapPhysicalToLogical(uint16_t physical_x, uint16_t physical_y, uint8_t rotation, int16_t& logical_x, int16_t& logical_y) {
 #if WLED_TOUCH_SIMULATOR
   logical_x = physical_x;
@@ -695,6 +877,8 @@ void drawSplashTextRow(uint16_t x, uint16_t y, uint16_t width) {
   }
 #elif WLED_PANEL_RGB
   drawRgbPixels(x, y, width, 1, splash_text_row);
+#elif WLED_PANEL_QSPI
+  drawQspiPixels(x, y, width, 1, splash_text_row);
 #else
   drawCydPixels(x, y, width, 1, splash_text_row);
 #endif
@@ -764,6 +948,8 @@ void drawDisplaySplash() {
                  size_t(kWledLogoHeight) * kScreenWidth * sizeof(uint16_t));
 #elif WLED_PANEL_RGB
   drawRgbPixels(x0, y0, kWledLogoWidth, kWledLogoHeight, kWledLogoPixels);
+#elif WLED_PANEL_QSPI
+  drawQspiPixels(x0, y0, kWledLogoWidth, kWledLogoHeight, kWledLogoPixels);
 #else
   drawCydPixels(x0, y0, kWledLogoWidth, kWledLogoHeight, kWledLogoPixels);
 #endif
@@ -823,6 +1009,22 @@ void flushDisplay(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_
       esp_lcd_panel_draw_bitmap(rgb_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_p);
     }
   }
+#elif WLED_PANEL_QSPI
+  const size_t pixel_count = size_t(width) * height;
+  swapRgb565Bytes(color_p, pixel_count);
+  setQspiWindow(area->x1, area->y1, area->x2, area->y2);
+  qspi_dma_done = false;
+  qspi_flushing_disp = disp;
+  const esp_err_t error =
+      esp_lcd_panel_io_tx_color(qspi_io, kQspiPixelCommand, color_p, pixel_count * sizeof(*color_p));
+  if (error == ESP_OK) {
+    // The DMA completion callback releases this LVGL buffer.
+    flush_ms_accum += millis() - started;
+    return;
+  }
+  qspi_flushing_disp = nullptr;
+  qspi_dma_done = true;
+  Serial.printf("Display QSPI: flush failed: %s\n", esp_err_to_name(error));
 #else
   if (cyd_panel_io) {
     const size_t pixel_count = size_t(width) * height;
@@ -933,6 +1135,8 @@ void applyDisplayRotation() {
     spiCommand(0x36, &madctl, 1);
     panel_spi.endTransaction();
   }
+#elif !WLED_TOUCH_SIMULATOR && WLED_PANEL_QSPI
+  if (qspi_io) qspiWrite(0x36, {uint8_t(display_flipped ? JC4827_MADCTL_FLIPPED : JC4827_MADCTL_NORMAL)});
 #endif
 }
 void displaySetBrightness(uint8_t brightness) {
@@ -940,6 +1144,8 @@ void displaySetBrightness(uint8_t brightness) {
   setBacklight(JC4880_TFT_BL, brightness);
 #elif !WLED_TOUCH_SIMULATOR && WLED_PANEL_RGB
   setBacklight(JC8048_TFT_BL, brightness);
+#elif !WLED_TOUCH_SIMULATOR && WLED_PANEL_QSPI
+  setBacklight(JC4827_TFT_BL, brightness);
 #elif !WLED_TOUCH_SIMULATOR
   setBacklight(cyd_backlight_pin, brightness);
 #else
@@ -954,6 +1160,9 @@ void displayPrepareForBoot() {
 #elif !WLED_TOUCH_SIMULATOR && WLED_PANEL_RGB
   pinMode(JC8048_TFT_BL, OUTPUT);
   digitalWrite(JC8048_TFT_BL, LOW);
+#elif !WLED_TOUCH_SIMULATOR && WLED_PANEL_QSPI
+  pinMode(JC4827_TFT_BL, OUTPUT);
+  digitalWrite(JC4827_TFT_BL, LOW);
 #elif !WLED_TOUCH_SIMULATOR
   // Auto detection has not selected the board profile yet, so hold both CYD
   // backlight possibilities inactive until a complete first frame is ready.
@@ -985,6 +1194,13 @@ void displayClear(uint16_t rgb565) {
   for (uint16_t x = 0; x < kScreenWidth; ++x) rgb_row[x] = rgb565;
   for (uint16_t y = 0; y < kScreenHeight; ++y) {
     esp_lcd_panel_draw_bitmap(rgb_panel, 0, y, kScreenWidth, y + 1, rgb_row);
+  }
+#elif WLED_PANEL_QSPI
+  if (!waitForQspiDma()) return;
+  const uint16_t wire_color = __builtin_bswap16(rgb565);
+  for (size_t i = 0; i < size_t(kScreenWidth) * kLvglBufferLines; ++i) qspi_draw_buf_1[i].full = wire_color;
+  for (uint16_t y = 0; y < kScreenHeight; y += kLvglBufferLines) {
+    if (!sendQspiStrip(0, y, kScreenWidth, min<uint16_t>(kLvglBufferLines, kScreenHeight - y))) return;
   }
 #else
   if (cyd_panel_io) {
@@ -1025,6 +1241,8 @@ void initDisplay() {
   display_hardware_ready = initP4Panel();
 #elif WLED_PANEL_RGB
   display_hardware_ready = initRgbPanel();
+#elif WLED_PANEL_QSPI
+  display_hardware_ready = initQspiPanel();
 #else
   chooseCydProfile();
   if (isResistiveCyd()) initXpt2046();
@@ -1077,6 +1295,11 @@ void initDisplay() {
                 unsigned(rgb_buffer_bytes), rgb_buffers_in_psram ? "PSRAM" : "internal",
                 rgb_draw_buf_2 ? "s" : "");
   lv_disp_draw_buf_init(&draw_buf, rgb_draw_buf_1, rgb_draw_buf_2, kScreenWidth * kLvglBufferLines);
+#elif WLED_PANEL_QSPI && !WLED_TOUCH_SIMULATOR
+  Serial.printf("LVGL: using %s %u-byte DMA buffer%s\n", qspi_draw_buf_2 ? "two" : "one",
+                unsigned(size_t(kScreenWidth) * kLvglBufferLines * sizeof(lv_color_t)),
+                qspi_draw_buf_2 ? "s" : "");
+  lv_disp_draw_buf_init(&draw_buf, qspi_draw_buf_1, qspi_draw_buf_2, kScreenWidth * kLvglBufferLines);
 #else
   lv_disp_draw_buf_init(&draw_buf, draw_buf_1, draw_buf_2, kScreenWidth * kLvglBufferLines);
 #endif

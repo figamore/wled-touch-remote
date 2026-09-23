@@ -11,7 +11,8 @@ constexpr int kScreenHeight = WLED_SCREEN_HEIGHT;
 
 // The JC4880P443 panel is ~1.5x the pixel density of a CYD, so every touch
 // target and font gets its own large-screen size instead of the CYD pixels.
-constexpr bool kLargeScreen = WLED_SCREEN_WIDTH >= 480;
+// The JC4827W543C is 480 px wide at CYD density, so it keeps the CYD sizes.
+constexpr bool kLargeScreen = WLED_LARGE_UI;
 // Size alone does not decide a layout: the JC4880P443 is a large portrait
 // panel while the JC8048W550C is a large landscape one.
 constexpr bool kPortraitScreen = WLED_SCREEN_HEIGHT > WLED_SCREEN_WIDTH;
@@ -31,8 +32,8 @@ constexpr int kPagePadding = 8;
 constexpr int kTabCardHeight = kScreenHeight - kTopBarHeight - kTabButtonHeight - (2 * kPagePadding);
 constexpr size_t kLvglBufferLines = WLED_LVGL_BUFFER_LINES;
 
-// Font roles; the large-screen sizes only exist in the P4 build (lv_conf.h).
-#if WLED_SCREEN_WIDTH >= 480
+// Font roles; the large-screen sizes only exist in large-UI builds (lv_conf.h).
+#if WLED_LARGE_UI
 #define UI_FONT_SMALL (&lv_font_montserrat_16)
 #define UI_FONT_BODY (&lv_font_montserrat_18)
 #define UI_FONT_HEADER (&lv_font_montserrat_24)

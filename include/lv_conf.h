@@ -120,13 +120,13 @@
 #define LV_FONT_MONTSERRAT_18 1
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_22 0
-#if WLED_SCREEN_WIDTH >= 480
+#if WLED_LARGE_UI
 #define LV_FONT_MONTSERRAT_24 1
 #else
 #define LV_FONT_MONTSERRAT_24 0
 #endif
 #define LV_FONT_MONTSERRAT_26 0
-#if WLED_SCREEN_WIDTH >= 480
+#if WLED_LARGE_UI
 #define LV_FONT_MONTSERRAT_28 1
 #else
 #define LV_FONT_MONTSERRAT_28 0
@@ -147,7 +147,7 @@
 #define LV_FONT_SIMSUN_16_CJK 0
 #define LV_FONT_UNSCII_8 0
 #define LV_FONT_UNSCII_16 0
-#if WLED_SCREEN_WIDTH >= 480
+#if WLED_LARGE_UI
 #define LV_FONT_DEFAULT &lv_font_montserrat_20
 #else
 #define LV_FONT_DEFAULT &lv_font_montserrat_14
