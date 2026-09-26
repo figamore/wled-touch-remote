@@ -140,7 +140,13 @@
 #define LV_FONT_MONTSERRAT_42 0
 #define LV_FONT_MONTSERRAT_44 0
 #define LV_FONT_MONTSERRAT_46 0
+#if WLED_SCREEN_WIDTH >= 480
 #define LV_FONT_MONTSERRAT_48 1
+#else
+/* Only the shutdown countdown uses 48px; on 4MB CYDs the ~97KB font overflows
+ * the 1.69MiB OTA app slot, so small screens fall back to montserrat_20. */
+#define LV_FONT_MONTSERRAT_48 0
+#endif
 #define LV_FONT_MONTSERRAT_12_SUBPX 0
 #define LV_FONT_MONTSERRAT_28_COMPRESSED 0
 #define LV_FONT_DEJAVU_16_PERSIAN_HEBREW 0
