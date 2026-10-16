@@ -44,6 +44,8 @@ jobs:
           cp -a .pio/build/esp32-cyd release-build/esp32-cyd
           pio run -e jc4880p443
           cp -a .pio/build/jc4880p443 release-build/jc4880p443
+          pio run -e jc4880p443-v3
+          cp -a .pio/build/jc4880p443-v3 release-build/jc4880p443-v3
           pio run -e jc8048w550c
           cp -a .pio/build/jc8048w550c release-build/jc8048w550c
 
@@ -86,6 +88,7 @@ jobs:
 
           package_env esp32-cyd esp32 4MB 0x1000
           package_env jc4880p443 esp32p4 16MB 0x2000
+          package_env jc4880p443-v3 esp32p4 16MB 0x2000
           package_env jc8048w550c esp32s3 16MB 0x0
           cp remote.json "dist/remote.json"
           sha256sum dist/* > "dist/SHA256SUMS.txt"

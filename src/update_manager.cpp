@@ -103,7 +103,10 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )pem";
 
-#if WLED_BOARD == WLED_BOARD_JC4880P443
+#if WLED_BOARD == WLED_BOARD_JC4880P443 && WLED_P4_SILICON_V3
+// v3.x production silicon needs its own image; the pre-v3 build cannot boot.
+constexpr const char* kBuildTarget = "jc4880p443-v3";
+#elif WLED_BOARD == WLED_BOARD_JC4880P443
 constexpr const char* kBuildTarget = "jc4880p443";
 #elif WLED_BOARD == WLED_BOARD_JC8048W550C
 constexpr const char* kBuildTarget = "jc8048w550c";

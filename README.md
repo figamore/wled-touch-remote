@@ -117,7 +117,7 @@ Settings are saved on the ESP32 and restored after reboot.
 
 ### Software updates
 
-Open **Settings → Software Update → Check for Updates** to compare the installed semantic version with the newest compatible stable GitHub Release. Drafts and prereleases are ignored. The remote only accepts the application firmware asset for its own board (`esp32-cyd`, `jc4880p443`, or `jc8048w550c`), downloads it, and verifies the GitHub-provided SHA-256 digest before committing it to the OTA partition.
+Open **Settings → Software Update → Check for Updates** to compare the installed semantic version with the newest compatible stable GitHub Release. Drafts and prereleases are ignored. The remote only accepts the application firmware asset for its own board (`esp32-cyd`, `jc4880p443`, `jc4880p443-v3`, or `jc8048w550c`), downloads it, and verifies the GitHub-provided SHA-256 digest before committing it to the OTA partition.
 
 Keep the remote powered and connected to Wi-Fi during installation. A download, validation, or install failure aborts the pending OTA image and leaves the currently running firmware intact.
 
@@ -130,6 +130,7 @@ Keep the remote powered and connected to Wi-Fi during installation. A download, 
 Only the following devices are officially supported and tested:
 
 - **Guition ESP32-P4 JC4880P443, 4.3-inch display** - highly recommended due to larger display size
+  - Newer boards sold as **JC4880P443 V3** (SKU `10150002-V3`) carry production ESP32-P4 v3.x silicon and need the separate `jc4880p443-v3` firmware. Run `esptool chip-id`: if it reports `revision v3.x`, pick **ESP32-P4 V3** in the web installer (or build `pio run -e jc4880p443-v3`). The original `jc4880p443` image cannot boot on these chips and leaves the screen blank.
 - **Guition JC2432W328C** - recommended capacitive CYD
 
 All other hardware is unsupported. In particular, the following CYD variants are untested and are **not** officially supported:
@@ -237,7 +238,7 @@ pio run -e esp32-cyd
 pio run -e esp32-cyd -t upload
 ```
 
-For the JC4880P443, use `pio run -e jc4880p443`; for the JC8048W550C, use `pio run -e jc8048w550c`. See `platformio.ini` for all available environments and `include/app_config.h` for board-specific options.
+For the JC4880P443, use `pio run -e jc4880p443` (or `pio run -e jc4880p443-v3` for V3 boards with v3.x silicon); for the JC8048W550C, use `pio run -e jc8048w550c`. See `platformio.ini` for all available environments and `include/app_config.h` for board-specific options.
 
 ## macOS simulator
 

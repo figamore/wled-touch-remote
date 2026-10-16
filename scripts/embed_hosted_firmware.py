@@ -7,7 +7,7 @@ Import("env")
 # generate a tiny assembly include that folds that exact binary into the P4
 # application image.  This avoids asking an old/broken C6 to fetch its own
 # replacement over DNS/HTTPS.
-if env.subst("$PIOENV") == "jc4880p443":
+if env.subst("$PIOENV") in ("jc4880p443", "jc4880p443-v3"):
     project_dir = Path(env.subst("$PROJECT_DIR"))
     libs_dir = Path(env.PioPlatform().get_package_dir("framework-arduinoespressif32-libs"))
     firmware = libs_dir / "hosted" / "esp32c6-v2.12.11.bin"

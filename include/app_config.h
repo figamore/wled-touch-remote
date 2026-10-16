@@ -11,6 +11,12 @@
 #define WLED_BOARD WLED_BOARD_CYD
 #endif
 
+// Set by the jc4880p443-v3 build for boards with production ESP32-P4 v3.x
+// silicon (JC4880P443 V3, SKU 10150002-V3).
+#ifndef WLED_P4_SILICON_V3
+#define WLED_P4_SILICON_V3 0
+#endif
+
 // Panel transport and touch controller per board.  The rest of the code asks
 // for a capability rather than repeating the board comparison.
 #define WLED_PANEL_SPI (WLED_BOARD == WLED_BOARD_CYD)
@@ -220,6 +226,10 @@
 #define GT911_TOUCH_RST JC4880_TOUCH_RST
 #define GT911_TOUCH_INT JC4880_TOUCH_INT
 #define GT911_TOUCH_ADDR JC4880_TOUCH_ADDR
+#if WLED_P4_SILICON_V3
+// Guition's P4_V3X demo for the V3 board runs the GT911 at 100 kHz.
+#define GT911_TOUCH_I2C_HZ 100000
+#endif
 
 #define CYD_BOARD_CAPACITIVE 1
 
@@ -276,6 +286,10 @@
 #else
 #define CYD_BOARD_CAPACITIVE 1
 #endif
+#endif
+
+#ifndef GT911_TOUCH_I2C_HZ
+#define GT911_TOUCH_I2C_HZ 400000
 #endif
 
 #define CYD_BATTERY_ADC (WLED_CYD_ENABLE_BATTERY && CYD_BOARD_CAPACITIVE)

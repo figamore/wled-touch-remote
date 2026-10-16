@@ -464,7 +464,7 @@ bool initGt911Touch() {
     delay(50);
   }
   Wire.end();
-  Wire.begin(GT911_TOUCH_SDA, GT911_TOUCH_SCL, 400000);
+  Wire.begin(GT911_TOUCH_SDA, GT911_TOUCH_SCL, GT911_TOUCH_I2C_HZ);
   uint8_t status = 0;
   for (const uint8_t address : {uint8_t(GT911_TOUCH_ADDR), uint8_t(0x14)}) {
     if (gt911Read(address, 0x814E, &status, 1)) {
@@ -511,7 +511,11 @@ bool initP4Panel() {
   esp_ldo_channel_config_t ldo = {};
   ldo.chan_id = JC4880_DSI_LDO_CHANNEL; ldo.voltage_mv = JC4880_DSI_LDO_MV;
   esp_lcd_dsi_bus_config_t bus = {};
-  bus.bus_id = 0; bus.num_data_lanes = JC4880_DSI_LANES; bus.phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT; bus.lane_bit_rate_mbps = JC4880_DSI_LANE_MBPS;
+  // phy_clk_src is deliberately left at 0: esp_lcd_new_dsi_bus() then picks
+  // the PHY PLL reference that the compiled silicon revision supports (PLL_F20M
+  // before v3.0, XTAL on v3.x). The deprecated MIPI_DSI_PHY_CLK_SRC_DEFAULT
+  // alias always means PLL_F20M, which v3.x production chips no longer offer.
+  bus.bus_id = 0; bus.num_data_lanes = JC4880_DSI_LANES; bus.lane_bit_rate_mbps = JC4880_DSI_LANE_MBPS;
   esp_lcd_dbi_io_config_t dbi = {};
   dbi.virtual_channel = 0; dbi.lcd_cmd_bits = 8; dbi.lcd_param_bits = 8;
   if (esp_ldo_acquire_channel(&ldo, &dsi_ldo) != ESP_OK || esp_lcd_new_dsi_bus(&bus, &dsi_bus) != ESP_OK ||
